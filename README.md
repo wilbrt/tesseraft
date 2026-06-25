@@ -33,6 +33,14 @@ The linter has no Pi, Jira, GitHub, or browser dependency. It only needs Babashk
 ./bin/tesseraft run examples/smoke/workflow.edn --run-id smoke-demo --format json
 ```
 
+Run the safe smoke checks with:
+
+```bash
+bb test
+```
+
+This lints the smoke, prompt-to-pr, and jira-to-pr example workflows, runs only the local smoke workflow, and verifies an invalid fixture fails lint. It does not run Pi, Jira, GitHub, or browser-dependent workflows.
+
 ## Example workflows
 
 - `examples/smoke/workflow.edn` — local-only runner smoke test.

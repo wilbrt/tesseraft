@@ -5,5 +5,8 @@
         :requires ([agent-workflow.lint.cli :as cli])
         :task (apply cli/-main *command-line-args*)}
   run {:doc "Reference workflow runner"
+       :override-builtin true
        :requires ([agent-workflow.runtime.cli :as cli])
-       :task (apply cli/-main *command-line-args*)}}}
+       :task (apply cli/-main *command-line-args*)}
+  test {:doc "Run safe Tesseraft smoke checks"
+        :task (shell "./scripts/test.sh")}}}
