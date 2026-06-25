@@ -25,6 +25,16 @@
   (or (not-empty (get-in ctx [:inputs :branch]))
       (not-empty (artifact-text ctx (get-in node [:inputs :branch-file])))
       (str "agent/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow")))))
+(defn git-ref-exists? [repo ref]
+  (zero? (:exit (p/shell {:dir repo :continue true :out :string :err :string}
+                         "git" "rev-parse" "--verify" "--quiet" ref))))
+(defn base-ref [ctx base]
+  (let [repo (repo-dir ctx)
+        remote-ref (str "origin/" base)]
+    (cond
+      (git-ref-exists? repo remote-ref) remote-ref
+      (git-ref-exists? repo base) base
+      :else remote-ref)))
 
 (defn jira-fetch-ticket! [_wf ctx _state-id node]
   (let [ticket (get-in ctx [:inputs :ticket])
@@ -36,14 +46,15 @@
 
 (defn git-ensure-branch! [_wf ctx _state-id node]
   (let [branch (branch-name ctx node)
-        base (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")]
-    (shell! {:dir (repo-dir ctx)} "git" "fetch" "origin")
-    (let [exists? (zero? (:exit (p/shell {:dir (repo-dir ctx) :continue true}
-                                         "git" "rev-parse" "--verify" branch)))]
+        base (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")
+        repo (repo-dir ctx)]
+    (shell! {:dir repo} "git" "fetch" "origin")
+    (let [exists? (git-ref-exists? repo branch)
+          start-point (base-ref ctx base)]
       (if exists?
-        (shell! {:dir (repo-dir ctx)} "git" "checkout" branch)
-        (shell! {:dir (repo-dir ctx)} "git" "checkout" "-b" branch (str "origin/" base))))
-    {:status "ok" :branch branch :base-branch base}))
+        (shell! {:dir repo} "git" "checkout" branch)
+        (shell! {:dir repo} "git" "checkout" "-b" branch start-point))
+      {:status "ok" :branch branch :base-branch base :start-point start-point})))
 
 (defn git-push! [_wf ctx _state-id node]
   (let [branch (branch-name ctx node)]
