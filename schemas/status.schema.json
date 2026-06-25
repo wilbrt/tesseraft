@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-workflow/status.schema.json",
+  "title": "Agent Workflow Status Artifact",
+  "type": "object",
+  "required": [
+    "status",
+    "summary"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "pass",
+        "fail",
+        "actions_needed",
+        "no_actions",
+        "ok",
+        "error"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "issues_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

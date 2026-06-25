@@ -1,0 +1,6 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "bad"}
+ :initial :start
+ :states {:start {:type :router :next :missing}
+          :done {:type :terminal :status :success}}}

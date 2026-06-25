@@ -1,0 +1,27 @@
+Fresh Pi session: MANUAL BROWSER TESTING.
+
+Use agent-browser only for browser interaction.
+
+Core workflow:
+1. Start the app locally if needed.
+2. Run `agent-browser open <local-url>`.
+3. Run `agent-browser snapshot -i`.
+4. Interact using refs such as @e1 and @e2.
+5. Re-snapshot after page changes.
+6. Use screenshots/network/cookies/storage as needed.
+7. Close the browser.
+
+Inputs:
+- Jira ticket: {{run.dir}}/ticket.json
+- Design doc: {{run.dir}}/design/design.md
+- Repository root: {{inputs.repo-root}}
+
+Rules:
+- Do not edit source code.
+- Actually exercise the app; do not pass by inspection only.
+
+Write:
+- Report: {{run.dir}}/manual-review/report-{{run.round}}.md
+- Status: {{run.dir}}/manual-review/status-{{run.round}}.json
+- If failing: {{run.dir}}/manual-review/issues-{{run.round}}.json
+- Screenshots/artifacts under: {{run.dir}}/manual-review/artifacts/{{run.round}}

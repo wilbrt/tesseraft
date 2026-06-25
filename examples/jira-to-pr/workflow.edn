@@ -1,0 +1,162 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "jira-to-pr"
+            :title "Jira to PR"
+            :description "Implement a Jira ticket with bounded Pi sessions, agent-browser manual testing, code review, PR creation, and PR feedback classification."
+            :owners ["platform-team"]
+            :tags [:jira :github :pi :agent-browser]}
+ :inputs {:ticket {:type :string :required true}
+          :repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :branch {:type :string :required false}}
+ :defaults {:max-rounds 8
+            :state-timeout "45m"
+            :feedback-wait "30m"
+            :base-branch "main"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :fetch-ticket
+ :states
+ {:fetch-ticket
+  {:type :deterministic
+   :title "Fetch Jira ticket"
+   :handler :jira/fetch-ticket
+   :runtime {:timeout "2m"}
+   :outputs {:ticket-json {:path "ticket.json" :required true}}
+   :next :ensure-branch}
+
+  :ensure-branch
+  {:type :deterministic
+   :title "Create or check out branch"
+   :handler :git/ensure-branch
+   :runtime {:timeout "5m"}
+   :next :design}
+
+  :design
+  {:type :agent
+   :title "Design"
+   :executor :pi-cli
+   :prompt-template "prompts/design.md.tmpl"
+   :prompt-output "prompts/generated/design-{{run.attempt}}.md"
+   :session-name "{{inputs.ticket}}-design-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
+             :design-doc {:path "design/design.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :execute}]}
+
+  :execute
+  {:type :agent
+   :title "Implement or fix issues"
+   :executor :pi-cli
+   :prompt-template "prompts/execute.md.tmpl"
+   :prompt-output "prompts/generated/execute-{{run.round}}.md"
+   :session-name "{{inputs.ticket}}-execute-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "90m"}
+   :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary-{{run.round}}.md" :required true}
+             :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :manual-test}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :manual-test
+  {:type :agent
+   :title "Manual browser testing"
+   :executor :pi-cli
+   :prompt-template "prompts/manual-test.md.tmpl"
+   :prompt-output "prompts/generated/manual-test-{{run.round}}.md"
+   :session-name "{{inputs.ticket}}-manual-test-{{run.round}}"
+   :tools [:read :bash :write :grep :find :ls]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "60m" :env {"AGENT_BROWSER" "agent-browser"}}
+   :outputs {:status {:path "manual-review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "manual-review/report-{{run.round}}.md" :required true}
+             :issues {:path "manual-review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}
+             :screenshots {:path "manual-review/artifacts/{{run.round}}" :required false}}
+   :transitions [{:when {:status "pass"} :next :code-review}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :code-review
+  {:type :agent
+   :title "Code review"
+   :executor :pi-cli
+   :prompt-template "prompts/code-review.md.tmpl"
+   :prompt-output "prompts/generated/code-review-{{run.round}}.md"
+   :session-name "{{inputs.ticket}}-code-review-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "code-review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "code-review/report-{{run.round}}.md" :required true}
+             :issues {:path "code-review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :pr-draft
+  {:type :agent
+   :title "Draft PR metadata"
+   :executor :pi-cli
+   :prompt-template "prompts/pr-draft.md.tmpl"
+   :prompt-output "prompts/generated/pr-draft.md"
+   :session-name "{{inputs.ticket}}-pr-draft"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "20m"}
+   :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
+             :title {:path "pr/pr-title.txt" :required true}
+             :body {:path "pr/pr-body.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :create-pr}]}
+
+  :create-pr
+  {:type :deterministic
+   :title "Create pull request"
+   :handler :github/create-pr
+   :runtime {:timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:title-file "pr/pr-title.txt" :body-file "pr/pr-body.md"}
+   :outputs {:pr-json {:path "pr/pr.json" :required true}}
+   :next :wait-for-feedback}
+
+  :wait-for-feedback
+  {:type :timer
+   :title "Wait for review feedback"
+   :duration "{{defaults.feedback-wait}}"
+   :next :fetch-pr-feedback}
+
+  :fetch-pr-feedback
+  {:type :deterministic
+   :title "Fetch PR feedback"
+   :handler :github/fetch-pr-feedback
+   :runtime {:timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:pr-json "pr/pr.json"}
+   :outputs {:feedback-json {:path "pr/feedback/feedback.json" :required true}}
+   :next :classify-feedback}
+
+  :classify-feedback
+  {:type :agent
+   :title "Classify PR feedback"
+   :executor :pi-cli
+   :prompt-template "prompts/feedback-classifier.md.tmpl"
+   :prompt-output "prompts/generated/feedback-classifier-{{run.feedback-cycle}}.md"
+   :session-name "{{inputs.ticket}}-feedback-classifier-{{run.feedback-cycle}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "30m"}
+   :outputs {:status {:path "pr/feedback-status-{{run.feedback-cycle}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "pr/feedback-report-{{run.feedback-cycle}}.md" :required true}
+             :issues {:path "pr/feedback-issues-{{run.feedback-cycle}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "no_actions"} :next :notify}
+                 {:when {:status "actions_needed"} :effects [:merge-issues :inc-round :inc-feedback-cycle] :next :execute}]}
+
+  :notify
+  {:type :deterministic
+   :title "Notify user"
+   :handler :notify/pinga
+   :runtime {:timeout "1m"}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}

@@ -1,0 +1,16 @@
+Fresh Pi session: CODE REVIEW.
+
+Inputs:
+- Jira ticket: {{run.dir}}/ticket.json
+- Design doc: {{run.dir}}/design/design.md
+- Manual test report: {{run.dir}}/manual-review/report-{{run.round}}.md
+
+Rules:
+- Do not edit source code.
+- Review diff against base branch.
+- Produce actionable issues only.
+
+Write:
+- Report: {{run.dir}}/code-review/report-{{run.round}}.md
+- Status: {{run.dir}}/code-review/status-{{run.round}}.json
+- If failing: {{run.dir}}/code-review/issues-{{run.round}}.json

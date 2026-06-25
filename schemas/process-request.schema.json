@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Workflow Process Node Request",
+  "type": "object",
+  "required": [
+    "run",
+    "node",
+    "inputs",
+    "paths"
+  ],
+  "properties": {
+    "run": {
+      "type": "object"
+    },
+    "node": {
+      "type": "object"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "paths": {
+      "type": "object",
+      "required": [
+        "run_dir",
+        "repo_root"
+      ]
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Workflow Definition (normalized JSON shape)",
+  "type": "object",
+  "required": [
+    "api-version",
+    "kind",
+    "metadata",
+    "initial",
+    "states"
+  ],
+  "properties": {
+    "api-version": {
+      "const": "agent.workflow/v1"
+    },
+    "kind": {
+      "const": "workflow"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "defaults": {
+      "type": "object"
+    },
+    "policies": {
+      "type": "object"
+    },
+    "initial": {
+      "type": "string"
+    },
+    "states": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

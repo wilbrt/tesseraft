@@ -1,0 +1,7 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "bad"}
+ :defaults {:state-timeout "1m"}
+ :initial :agent
+ :states {:agent {:type :agent :executor :pi-cli :prompt-template "prompts/missing.md.tmpl" :outputs {:status {:path "status.json" :required true}} :next :done}
+          :done {:type :terminal :status :success}}}

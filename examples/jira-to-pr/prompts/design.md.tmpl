@@ -1,0 +1,18 @@
+Fresh Pi session: DESIGN ONLY.
+
+Inputs:
+- Jira ticket JSON: {{run.dir}}/ticket.json
+- Repository root: {{inputs.repo-root}}
+
+Rules:
+- Inspect the repository.
+- Do not edit source code.
+- Do not call Jira, GitHub, Slack, or external APIs.
+- Write the design document and status, then stop.
+
+Write:
+- Design doc: {{run.dir}}/design/design.md
+- Status JSON: {{run.dir}}/design/status.json
+
+Status JSON:
+{"status":"pass","summary":"short summary","issues_file":null}

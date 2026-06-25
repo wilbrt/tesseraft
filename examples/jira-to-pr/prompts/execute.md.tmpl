@@ -1,0 +1,22 @@
+Fresh Pi session: EXECUTION.
+
+Inputs:
+- Jira ticket: {{run.dir}}/ticket.json
+- Design doc: {{run.dir}}/design/design.md
+- Issues file: {{run.issues-file}}
+- Repository root: {{inputs.repo-root}}
+
+Goal:
+Implement the design or fix all issues.
+
+Rules:
+- You may edit code.
+- Keep changes focused.
+- Run relevant tests/checks.
+- Commit locally.
+- Do not push or create a PR.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- If failing: {{run.dir}}/execution/issues-{{run.round}}.json

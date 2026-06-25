@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-workflow/issues.schema.json",
+  "title": "Agent Workflow Issues Artifact",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "source",
+      "severity",
+      "title",
+      "details",
+      "acceptance_criteria"
+    ],
+    "properties": {
+      "source": {
+        "type": "string"
+      },
+      "severity": {
+        "enum": [
+          "blocker",
+          "major",
+          "minor",
+          "nit"
+        ]
+      },
+      "title": {
+        "type": "string"
+      },
+      "details": {
+        "type": "string"
+      },
+      "acceptance_criteria": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": true
+  }
+}

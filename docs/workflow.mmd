@@ -1,0 +1,16 @@
+flowchart TD
+  fetch-ticket --> ensure-branch
+  ensure-branch --> design
+  design --> execute
+  execute --> manual-test
+  manual-test --> code-review
+  manual-test --> execute
+  code-review --> pr-draft
+  code-review --> execute
+  pr-draft --> create-pr
+  create-pr --> wait-for-feedback
+  wait-for-feedback --> fetch-pr-feedback
+  fetch-pr-feedback --> classify-feedback
+  classify-feedback --> notify
+  classify-feedback --> execute
+  notify --> done

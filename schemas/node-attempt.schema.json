@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Workflow Node Attempt",
+  "type": "object",
+  "required": [
+    "run_id",
+    "node_id",
+    "attempt",
+    "status",
+    "started_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "executor": {
+      "type": "string"
+    },
+    "handler": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_state": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

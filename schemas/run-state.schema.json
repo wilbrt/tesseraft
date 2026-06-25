@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Workflow Run State",
+  "type": "object",
+  "required": [
+    "run_id",
+    "workflow_name",
+    "workflow_version",
+    "state",
+    "status",
+    "round"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "workflow_name": {
+      "type": "string"
+    },
+    "workflow_version": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "created",
+        "running",
+        "paused",
+        "blocked",
+        "done",
+        "failed",
+        "aborted"
+      ]
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  }
+}

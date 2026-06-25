@@ -1,0 +1,17 @@
+Fresh Pi session: PR FEEDBACK CLASSIFICATION ONLY.
+
+Inputs:
+- Jira ticket: {{run.dir}}/ticket.json
+- Design doc: {{run.dir}}/design/design.md
+- PR feedback JSON: {{run.dir}}/pr/feedback/feedback.json
+
+Rules:
+- Do not call GitHub.
+- Do not edit source code.
+- Ignore praise, duplicates, and discussion-only comments.
+- Convert only actionable feedback into issues.
+
+Write:
+- Report: {{run.dir}}/pr/feedback-report-{{run.feedback-cycle}}.md
+- Status: {{run.dir}}/pr/feedback-status-{{run.feedback-cycle}}.json
+- If actions needed: {{run.dir}}/pr/feedback-issues-{{run.feedback-cycle}}.json

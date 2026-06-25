@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-workflow/lint-result.schema.json",
+  "title": "Agent Workflow Lint Result",
+  "type": "object",
+  "required": [
+    "ok",
+    "errors",
+    "warnings",
+    "diagnostics"
+  ],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "workflow": {
+      "type": "string"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "severity",
+        "code",
+        "path",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "code": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

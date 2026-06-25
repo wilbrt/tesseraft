@@ -1,0 +1,9 @@
+{:paths ["src"]
+ :deps {cheshire/cheshire {:mvn/version "5.13.0"}}
+ :tasks
+ {lint {:doc "Standalone workflow linter"
+        :requires ([agent-workflow.lint.cli :as cli])
+        :task (apply cli/-main *command-line-args*)}
+  run {:doc "Reference workflow runner"
+       :requires ([agent-workflow.runtime.cli :as cli])
+       :task (apply cli/-main *command-line-args*)}}}
