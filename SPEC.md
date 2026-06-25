@@ -1,4 +1,4 @@
-# Agent Workflow Specification
+# Tesseraft Workflow Specification
 
 Status: Draft  
 Version: `agent.workflow/v1`

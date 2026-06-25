@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Agent Workflow Process Node Response",
+  "title": "Tesseraft Process Node Response",
   "type": "object",
   "required": [
     "ok",

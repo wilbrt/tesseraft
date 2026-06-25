@@ -1,0 +1,21 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "smoke-demo"
+            :title "Smoke Demo"
+            :description "A local-only workflow for validating the reference runner without Pi, Jira, GitHub, or browser dependencies."}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true}
+ :initial :start
+ :states
+ {:start
+  {:type :deterministic
+   :title "Start smoke demo"
+   :handler :noop/succeed
+   :runtime {:timeout "10s"}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}

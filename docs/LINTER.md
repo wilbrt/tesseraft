@@ -1,4 +1,4 @@
-# Standalone Linter
+# Tesseraft Standalone Linter
 
 The linter is a standalone product surface.
 
@@ -22,9 +22,9 @@ It may be used in:
 ## Commands
 
 ```bash
-agent-workflow-lint workflow.edn
-agent-workflow-lint workflow.edn --format json
-agent-workflow-lint workflow.edn --strict
-agent-workflow-lint workflow.edn --emit graph
-agent-workflow-lint workflow.edn --emit mermaid
+tesseraft lint workflow.edn
+tesseraft lint workflow.edn --format json
+tesseraft lint workflow.edn --strict
+tesseraft lint workflow.edn --emit graph
+tesseraft lint workflow.edn --emit mermaid
 ```

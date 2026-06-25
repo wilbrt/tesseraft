@@ -16,6 +16,15 @@
 (defn artifact-path [ctx p] (str (fs/path (run-dir ctx) p)))
 (defn repo-dir [ctx] (or (get-in ctx [:inputs :repo-root]) (get-in ctx [:inputs :repo]) "."))
 (defn render-command [ctx command-template] (spec/render-template-string command-template ctx))
+(defn artifact-text [ctx p]
+  (when p
+    (let [path (artifact-path ctx p)]
+      (when (fs/exists? path)
+        (str/trim (slurp path))))))
+(defn branch-name [ctx node]
+  (or (not-empty (get-in ctx [:inputs :branch]))
+      (not-empty (artifact-text ctx (get-in node [:inputs :branch-file])))
+      (str "agent/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow")))))
 
 (defn jira-fetch-ticket! [_wf ctx _state-id node]
   (let [ticket (get-in ctx [:inputs :ticket])
@@ -25,9 +34,8 @@
     (spit out-path raw)
     {:status "ok" :ticket ticket :ticket-file out-path}))
 
-(defn git-ensure-branch! [_wf ctx _state-id _node]
-  (let [ticket (get-in ctx [:inputs :ticket] "workflow")
-        branch (or (get-in ctx [:inputs :branch]) (str "agent/" (str/lower-case ticket)))
+(defn git-ensure-branch! [_wf ctx _state-id node]
+  (let [branch (branch-name ctx node)
         base (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")]
     (shell! {:dir (repo-dir ctx)} "git" "fetch" "origin")
     (let [exists? (zero? (:exit (p/shell {:dir (repo-dir ctx) :continue true}
@@ -37,8 +45,8 @@
         (shell! {:dir (repo-dir ctx)} "git" "checkout" "-b" branch (str "origin/" base))))
     {:status "ok" :branch branch :base-branch base}))
 
-(defn git-push! [_wf ctx _state-id _node]
-  (let [branch (or (get-in ctx [:inputs :branch]) (str "agent/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow"))))]
+(defn git-push! [_wf ctx _state-id node]
+  (let [branch (branch-name ctx node)]
     (shell! {:dir (repo-dir ctx)} "git" "push" "origin" branch)
     {:status "ok" :branch branch}))
 
@@ -51,7 +59,7 @@
 
 (defn github-create-pr! [_wf ctx _state-id node]
   (let [repo (github-repo! ctx)
-        branch (or (get-in ctx [:inputs :branch]) (str "agent/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow"))))
+        branch (branch-name ctx node)
         base (or (get-in ctx [:inputs :base-branch]) "main")
         title-file (artifact-path ctx (or (get-in node [:inputs :title-file]) "pr/pr-title.txt"))
         body-file (artifact-path ctx (or (get-in node [:inputs :body-file]) "pr/pr-body.md"))

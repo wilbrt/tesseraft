@@ -1,25 +1,25 @@
-# Package Plan
+# Tesseraft Package Plan
 
-## `agent-workflow-spec`
+## `tesseraft-spec`
 
 Owns the file format, parser, normalizer, template helper functions, and schema references.
 
-## `agent-workflow-lint`
+## `tesseraft-lint`
 
 Standalone CLI/library for static workflow validation. Depends on the spec package only.
 
-## `agent-workflow-runner`
+## `tesseraft-runner`
 
 Reference execution engine. Depends on spec + linter and loads executor/handler registries.
 
-## `agent-workflow-pi-executor`
+## `tesseraft-pi-executor`
 
 Executor package for Pi CLI now and Pi SDK later.
 
-## `agent-workflow-adapter-*`
+## `tesseraft-adapter-*`
 
 Deterministic handlers such as Jira, GitHub, git, notifications, and deployment adapters.
 
-## `agent-workflow-ui`
+## `tesseraft-ui`
 
 Future Workflow Studio and Run Console. It must use spec/linter/runner APIs and never become the source of truth for workflow definitions.

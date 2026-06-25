@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/agent-workflow/issues.schema.json",
-  "title": "Agent Workflow Issues Artifact",
+  "title": "Tesseraft Issues Artifact",
   "type": "array",
   "items": {
     "type": "object",

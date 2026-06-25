@@ -1,25 +1,47 @@
-# Agent Workflow Spec Implementation
+# Tesseraft
 
-This repository is a package-split prototype for a workflow-as-code platform for deterministic and agentic state machines.
+Tesseraft is a package-split prototype for a workflow-as-code platform for deterministic and agentic state machines.
+
+The name comes from tesserae: small pieces composed into intricate patterns. Tesseraft workflows use simple state nodes to build durable, inspectable agentic runs.
 
 The important boundary is the workflow IaC file, not the implementation language. The current implementation is Babashka/Clojure because it is convenient for local CLI tooling, but the standalone contracts are JSON-compatible:
 
 - `SPEC.md` defines the normative platform contract.
 - `schemas/*.schema.json` define portable runtime/linter artifact formats.
-- `bin/agent-workflow-lint` is a standalone linter CLI.
-- `bin/agent-workflow-run` is a lightweight reference runner CLI.
+- `bin/tesseraft lint` is a standalone linter CLI.
+- `bin/tesseraft run` is a lightweight reference runner CLI.
+- `bin/agent-workflow-lint` and `bin/agent-workflow-run` remain compatibility entry points.
 - `examples/jira-to-pr/workflow.edn` is a real workflow declaration.
 
 ## Quick start
 
 ```bash
 ./scripts/check_deps.sh
-./bin/agent-workflow-lint examples/jira-to-pr/workflow.edn
-./bin/agent-workflow-lint examples/jira-to-pr/workflow.edn --format json
-./bin/agent-workflow-lint examples/jira-to-pr/workflow.edn --emit mermaid
+./bin/tesseraft lint examples/jira-to-pr/workflow.edn
+./bin/tesseraft lint examples/jira-to-pr/workflow.edn --format json
+./bin/tesseraft lint examples/jira-to-pr/workflow.edn --emit mermaid
 ```
 
 The linter has no Pi, Jira, GitHub, or browser dependency. It only needs Babashka and the files being linted.
+
+## Local smoke demo
+
+`examples/smoke/workflow.edn` is a local-only workflow for validating the reference runner without Pi, Jira, GitHub, or browser dependencies.
+
+```bash
+./bin/tesseraft lint examples/smoke/workflow.edn
+./bin/tesseraft run examples/smoke/workflow.edn --run-id smoke-demo --format json
+```
+
+## Example workflows
+
+- `examples/smoke/workflow.edn` — local-only runner smoke test.
+- `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
+- `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
+
+```bash
+./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
+```
 
 ## Package split
 
