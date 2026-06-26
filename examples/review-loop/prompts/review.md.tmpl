@@ -1,0 +1,30 @@
+Fresh Pi session: CODE REVIEW.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Review the implementation against the prompt and design, then explicitly emit a pass/fail status artifact that controls the workflow route.
+
+Rules:
+- Do not edit source code.
+- Review the diff against the base branch when available.
+- Check for correctness, regressions, missing tests, security issues, and overbroad changes.
+- Produce actionable issues only.
+- If the implementation is acceptable, pass so the workflow can continue to PR drafting.
+- If the implementation is not acceptable, fail and write issues so the workflow can merge them, increment the round, and return to execution.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- If failing: {{run.dir}}/review/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"review passed","issues_file":null}
+{"status":"fail","summary":"review found issues","issues_file":"review/issues-{{run.round}}.json"}
+
+Failure issues should be JSON matching the issues schema and should contain only actionable review findings for the next execution round.
