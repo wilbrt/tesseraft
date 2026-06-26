@@ -11,12 +11,14 @@ Inspect:
 - {{run.dir}}/comment-repair/feedback-summary.md
 - {{run.dir}}/comment-repair/handle-summary-{{run.round}}.md
 - {{run.dir}}/comment-repair/response-draft-{{run.round}}.md
+- {{run.dir}}/comment-repair/response-post-{{run.round}}.md
 - {{run.dir}}/comment-repair/change-summary.md
 - {{run.dir}}/comment-repair/test-summary.md if it exists
 
 Review criteria:
 1. Every detected comment or requested-change concern has a response draft.
-2. If code changed, the changes are focused and address the comments.
+2. The post-ready response body is concise and suitable to post directly to GitHub; it must not include internal headings like "Draft Responses", "Review comment", or "Draft response".
+3. If code changed, the changes are focused and address the comments.
 3. If no code changed, the no-change rationale is reasonable.
 4. Tests passed when code changed, or any limitation is clearly documented.
 5. It is safe for the subsequent deterministic node to push code changes with `git push --force-with-lease` only if gates are enabled.

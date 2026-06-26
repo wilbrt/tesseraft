@@ -217,6 +217,7 @@
    :outputs {:status {:path "comment-repair/handle-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "comment-repair/handle-summary-{{run.round}}.md" :required true}
              :response-draft {:path "comment-repair/response-draft-{{run.round}}.md" :required true}
+             :response-post {:path "comment-repair/response-post-{{run.round}}.md" :required true}
              :issues {:path "comment-repair/handle-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :detect-comment-changes}
                  {:when {:status "fail"} :next :failed}]}

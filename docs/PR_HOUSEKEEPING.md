@@ -66,7 +66,7 @@ To handle comments and possible code changes for one PR without pushing:
   --format json
 ```
 
-This writes feedback summaries and response drafts. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push and response posting are skipped.
+This writes feedback summaries, internal response drafts, and a separate post-ready response body. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push and response posting are skipped.
 
 To allow the final conflict-repair push after the rebase/fix, tests, and review pass, set both gates:
 
@@ -138,7 +138,8 @@ fix-comments / respond-only:
   commit changes when code changed
   push branch with --force-with-lease only when code changed, dry-run=false, and push-comment-fixes=true
   draft responses for every addressed comment
-  post the reviewed response draft as a consolidated PR comment only when dry-run=false and post-comment-responses=true
+  write a concise post-ready response body without internal draft headings
+  post the reviewed post-ready response as a consolidated PR comment only when dry-run=false and post-comment-responses=true
 
 ready-to-merge / merge:
   require merge-approved=true
