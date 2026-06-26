@@ -18,6 +18,7 @@ The important boundary is the workflow IaC file, not the implementation language
 
 ```bash
 ./scripts/check_deps.sh
+./bin/tesseraft --version
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn --format json
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn --emit mermaid

@@ -5,6 +5,14 @@
     [cheshire.core :as json]
     [clojure.string :as str]))
 
+(defn missing-value? [v]
+  (or (nil? v) (str/starts-with? v "--")))
+
+(defn require-value [flag v]
+  (when (missing-value? v)
+    (throw (ex-info (str "Missing value for " flag) {:flag flag})))
+  v)
+
 (defn parse-args [args]
   (loop [xs args acc {:workflows [] :format "human"}]
     (if (empty? xs)
@@ -12,12 +20,12 @@
       (let [[a b & more] xs
             rest-xs (rest xs)]
         (case a
-          "--format" (recur more (assoc acc :format b))
+          "--format" (recur more (assoc acc :format (require-value a b)))
           "--strict" (recur rest-xs (assoc acc :strict true))
-          "--emit" (recur more (assoc acc :emit b))
-          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword b)))
-          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword b)))
-          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword b)))
+          "--emit" (recur more (assoc acc :emit (require-value a b)))
+          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword (require-value a b))))
+          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword (require-value a b))))
+          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword (require-value a b))))
           (recur rest-xs (update acc :workflows conj a)))))))
 
 (defn print-human-result [result]
@@ -47,13 +55,13 @@
     (throw (ex-info "Unknown emit target" {:emit (:emit opts)}))))
 
 (defn -main [& args]
-  (let [opts (parse-args args)
-        workflows (:workflows opts)]
-    (when (empty? workflows)
-      (binding [*out* *err*]
-        (println "Usage: agent-workflow-lint <workflow.edn>... [--format human|json|edn] [--strict] [--emit graph|mermaid|normalized]"))
-      (System/exit 2))
-    (try
+  (try
+    (let [opts (parse-args args)
+          workflows (:workflows opts)]
+      (when (empty? workflows)
+        (binding [*out* *err*]
+          (println "Usage: agent-workflow-lint <workflow.edn>... [--format human|json|edn] [--strict] [--emit graph|mermaid|normalized]"))
+        (System/exit 2))
       (if (:emit opts)
         (doseq [wf-file workflows]
           (emit! opts (spec/read-workflow wf-file)))
@@ -66,8 +74,8 @@
                       (doseq [r (:files result)] (print-human-result r))
                       (print-human-result result))
             (print-human-result result))
-          (when-not (:ok result) (System/exit 1))))
-      (catch Throwable t
-        (binding [*out* *err*]
-          (println (.getMessage t)))
-        (System/exit 2)))))
+          (when-not (:ok result) (System/exit 1)))))
+    (catch Throwable t
+      (binding [*out* *err*]
+        (println (.getMessage t)))
+      (System/exit 2))))
