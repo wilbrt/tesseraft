@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="0.1.0"
 cmd="${1:-}"
 case "$cmd" in
+  --version|version)
+    echo "tesseraft $VERSION"
+    ;;
   lint)
     shift
     exec "$SCRIPT_DIR/agent-workflow-lint" "$@"
@@ -15,12 +19,13 @@ case "$cmd" in
     echo "Usage: tesseraft <command> [args]"
     echo
     echo "Commands:"
-    echo "  lint   Validate workflow definitions"
-    echo "  run    Run or inspect workflow executions"
+    echo "  lint      Validate workflow definitions"
+    echo "  run       Run or inspect workflow executions"
+    echo "  version   Print version information"
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Usage: tesseraft <lint|run> [args]" >&2
+    echo "Usage: tesseraft <lint|run|version> [args]" >&2
     exit 2
     ;;
 esac
