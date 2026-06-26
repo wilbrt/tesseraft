@@ -13,6 +13,7 @@
           :target-pr {:type :integer :required false}
           :push-conflict-fixes {:type :boolean :default false}
           :push-comment-fixes {:type :boolean :default false}
+          :post-comment-responses {:type :boolean :default false}
           :test-command {:type :string :default "bb test"}}
  :defaults {:max-rounds 1
             :state-timeout "5m"}
@@ -277,6 +278,18 @@
    :output-mode :json-stdout
    :runtime {:timeout "3m"}
    :outputs {:summary {:path "comment-repair/push-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :post-comment-response}
+                 {:when {:status "skipped"} :next :post-comment-response}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :post-comment-response
+  {:type :process
+   :title "Post comment response"
+   :command ["./scripts/post_comment_response.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "comment-repair/post-summary.md" :required true}}
    :transitions [{:when {:status "pass"} :next :done}
                  {:when {:status "skipped"} :next :done}
                  {:when {:status "fail"} :next :failed}]}

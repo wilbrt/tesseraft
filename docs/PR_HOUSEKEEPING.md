@@ -2,7 +2,7 @@
 
 `examples/pr-housekeeping/workflow.edn` is the safe first slice of a maintainer workflow for open pull requests.
 
-By default it performs discovery and planning only. Conflict repair and comment handling are opt-in for one target PR at a time; they use isolated worktrees and only push code changes after fixes, tests, review, and explicit push gates. It does not post comments or merge pull requests.
+By default it performs discovery and planning only. Conflict repair and comment handling are opt-in for one target PR at a time; they use isolated worktrees and only push code changes after fixes, tests, review, and explicit push gates. Comment responses are drafted by default and posted only with an explicit post gate. It does not merge pull requests.
 
 The workflow's process helpers are small Python scripts because process nodes communicate through the language-neutral JSON stdin/stdout protocol and these helpers primarily orchestrate `gh`, Git, and artifact files. The platform/runtime implementation remains Babashka/Clojure; the workflow contract, not helper implementation language, is the portability boundary.
 
@@ -66,7 +66,7 @@ To handle comments and possible code changes for one PR without pushing:
   --format json
 ```
 
-This writes feedback summaries and response drafts. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push is skipped.
+This writes feedback summaries and response drafts. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push and response posting are skipped.
 
 To allow the final conflict-repair push after the rebase/fix, tests, and review pass, set both gates:
 
@@ -78,6 +78,12 @@ To allow comment-handling code changes to push after tests and review pass, set 
 
 ```bash
 --input dry-run=false --input push-comment-fixes=true
+```
+
+To post the reviewed response draft as a consolidated PR comment, also set:
+
+```bash
+--input post-comment-responses=true
 ```
 
 Both push paths first commit validated worktree changes, then use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
@@ -131,7 +137,8 @@ fix-comments / respond-only:
   review fixes or no-change rationale
   commit changes when code changed
   push branch with --force-with-lease only when code changed, dry-run=false, and push-comment-fixes=true
-  draft responses for every addressed comment without posting them yet
+  draft responses for every addressed comment
+  post the reviewed response draft as a consolidated PR comment only when dry-run=false and post-comment-responses=true
 
 ready-to-merge / merge:
   require merge-approved=true
