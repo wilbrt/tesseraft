@@ -1,0 +1,120 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "review-loop"
+            :title "Review Loop"
+            :description "Turn a user prompt into a design, implementation, explicit code-review pass/fail artifact, retry loop, and pull request."}
+ :inputs {:prompt {:type :string :required true}
+          :repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :branch {:type :string :required false}}
+ :defaults {:max-rounds 4
+            :state-timeout "45m"
+            :base-branch "main"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :collect-prompt
+ :states
+ {:collect-prompt
+  {:type :process
+   :title "Collect prompt"
+   :command ["./scripts/collect_prompt.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:prompt-json {:path "prompt/prompt.json" :required true}
+             :prompt-md {:path "prompt/prompt.md" :required true}}
+   :next :design}
+
+  :design
+  {:type :agent
+   :title "Design"
+   :executor :pi-cli
+   :prompt-template "prompts/design.md.tmpl"
+   :prompt-output "prompts/generated/design-{{run.attempt}}.md"
+   :session-name "review-loop-design-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
+             :design-doc {:path "design/design.md" :required true}
+             :branch-name {:path "design/branch-name.txt" :required true}}
+   :transitions [{:when {:status "pass"} :next :ensure-branch}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :ensure-branch
+  {:type :deterministic
+   :title "Create or check out branch"
+   :handler :git/ensure-branch
+   :runtime {:timeout "5m"}
+   :inputs {:branch-file "design/branch-name.txt"}
+   :next :execute}
+
+  :execute
+  {:type :agent
+   :title "Execute"
+   :executor :pi-cli
+   :prompt-template "prompts/execute.md.tmpl"
+   :prompt-output "prompts/generated/execute-{{run.round}}.md"
+   :session-name "review-loop-execute-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "90m"}
+   :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary-{{run.round}}.md" :required true}
+             :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :review}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :review
+  {:type :agent
+   :title "Review with pass/fail status"
+   :executor :pi-cli
+   :prompt-template "prompts/review.md.tmpl"
+   :prompt-output "prompts/generated/review-{{run.round}}.md"
+   :session-name "review-loop-review-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "review/report-{{run.round}}.md" :required true}
+             :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :pr-draft
+  {:type :agent
+   :title "Draft PR metadata"
+   :executor :pi-cli
+   :prompt-template "prompts/pr-draft.md.tmpl"
+   :prompt-output "prompts/generated/pr-draft.md"
+   :session-name "review-loop-draft"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "20m"}
+   :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
+             :title {:path "pr/pr-title.txt" :required true}
+             :body {:path "pr/pr-body.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :create-pr}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :create-pr
+  {:type :deterministic
+   :title "Create pull request"
+   :handler :github/create-pr
+   :runtime {:timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:title-file "pr/pr-title.txt"
+            :body-file "pr/pr-body.md"
+            :branch-file "design/branch-name.txt"}
+   :outputs {:pr-json {:path "pr/pr.json" :required true}}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}
+
+  :failed
+  {:type :terminal
+   :title "Failed"
+   :status :failure}}}

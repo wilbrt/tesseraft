@@ -1,0 +1,30 @@
+Fresh Pi session: PR DRAFTING ONLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Execution summaries and review reports under: {{run.dir}}
+- Repository root: {{inputs.repo-root}}
+
+Goal:
+Draft clear pull request metadata for the implemented change.
+
+Rules:
+- Do not call GitHub.
+- Do not push.
+- Do not edit source code.
+- Summarize the user-facing change, validation performed, and any notable risks.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status: {{run.dir}}/pr/draft-status.json
+
+Status JSON:
+{"status":"pass","summary":"PR metadata drafted","issues_file":null}
+
+The PR body should include:
+- Summary
+- Implementation notes
+- Validation/tests
+- Risks or follow-up
