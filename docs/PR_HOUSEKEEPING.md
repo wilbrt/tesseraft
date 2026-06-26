@@ -48,8 +48,10 @@ cat .agent-runs/pr-housekeeping/pr-housekeeping-check/housekeeping/action-plan.m
 The planner currently emits conservative actions:
 
 - `fix-conflicts` — PR appears to have merge conflicts.
-- `fix-comments` — reviews request changes.
-- `respond-only` — comments exist but no changes are detected as required.
+- `fix-comments` — reviews request changes; these also require a response.
+- `respond-only` — primary action for top-level PR comments or COMMENTED reviews when no code/conflict work is currently required.
+
+Separately, `housekeeping/planned/response-prs.json` includes every PR with detected comments or requested changes, even when the primary action is `fix-conflicts` or `fix-comments`.
 - `ready-to-merge` — PR appears approved and mergeable, but merge is disabled.
 - `merge` — future gated action when `merge-approved=true` is implemented.
 - `skip` — no safe action should be taken now.
@@ -68,13 +70,13 @@ fix-conflicts:
   review conflict resolution
   push branch
 
-fix-comments:
-  ensure worktree for PR branch
+fix-comments / respond-only:
+  ensure worktree for PR branch when code changes may be needed
   design comment response/fix plan
-  execute fixes
-  review fixes
-  push branch
-  draft or post responses
+  execute fixes when appropriate
+  review fixes or no-change rationale
+  push branch when code changed
+  draft or post responses for every addressed comment
 
 ready-to-merge / merge:
   require merge-approved=true

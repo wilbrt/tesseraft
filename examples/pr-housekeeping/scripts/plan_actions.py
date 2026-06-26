@@ -24,6 +24,7 @@ def main():
     groups = {action: [] for action in ACTION_FILES}
     for item in actions:
         groups.setdefault(item.get("action", "blocked"), []).append(item)
+    groups["respond-only"] = [item for item in actions if item.get("needs_response")]
 
     out_dir = run_dir / "housekeeping" / "planned"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -36,7 +37,8 @@ def main():
     lines = ["# PR Housekeeping Action Plan", "", f"Dry run: {dry_run}", ""]
     for action in ACTION_FILES:
         items = groups.get(action, [])
-        lines.append(f"## {action} ({len(items)})")
+        title = "response-needed" if action == "respond-only" else action
+        lines.append(f"## {title} ({len(items)})")
         lines.append("")
         if not items:
             lines.append("None.")

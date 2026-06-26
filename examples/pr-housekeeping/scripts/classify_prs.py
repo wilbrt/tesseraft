@@ -21,13 +21,29 @@ def checks_status(pr):
     return "success"
 
 
+def all_reviews(pr):
+    reviews = []
+    seen = set()
+    for review in (pr.get("latestReviews") or []) + (pr.get("reviews") or []):
+        if not isinstance(review, dict):
+            continue
+        review_id = review.get("id") or (review.get("author", {}).get("login"), review.get("submittedAt"), review.get("state"))
+        if review_id in seen:
+            continue
+        seen.add(review_id)
+        reviews.append(review)
+    return reviews
+
+
 def comment_count(pr):
-    return len(pr.get("comments") or [])
+    top_level_comments = len(pr.get("comments") or [])
+    review_comments = sum(1 for review in all_reviews(pr) if review.get("state") == "COMMENTED")
+    return top_level_comments + review_comments
 
 
 def latest_review_state(pr):
-    reviews = (pr.get("latestReviews") or []) + (pr.get("reviews") or [])
-    states = [r.get("state") for r in reviews if isinstance(r, dict)]
+    reviews = all_reviews(pr)
+    states = [r.get("state") for r in reviews]
     if "CHANGES_REQUESTED" in states:
         return "CHANGES_REQUESTED"
     if "APPROVED" in states:
@@ -51,15 +67,15 @@ def classify(pr, merge_approved=False):
     elif review == "CHANGES_REQUESTED":
         action = "fix-comments"
         reason = "changes requested by review"
+    elif comments:
+        action = "respond-only"
+        reason = f"{comments} comment/review comment signal(s) need a response"
     elif merge_state == "UNKNOWN":
         action = "blocked"
         reason = "merge state is UNKNOWN"
     elif review == "APPROVED" and checks in {"success", "none"}:
         action = "merge" if merge_approved else "ready-to-merge"
         reason = "approved and mergeable" if merge_approved else "approved and mergeable; merge disabled"
-    elif comments:
-        action = "respond-only"
-        reason = f"{comments} comment(s) with no unresolved review thread detected"
     elif checks == "failing":
         action = "blocked"
         reason = "checks failing"
@@ -81,6 +97,7 @@ def classify(pr, merge_approved=False):
         "checks_status": checks,
         "is_draft": draft,
         "comment_count": comments,
+        "needs_response": review == "CHANGES_REQUESTED" or comments > 0,
         "action": action,
         "reason": reason,
     }
