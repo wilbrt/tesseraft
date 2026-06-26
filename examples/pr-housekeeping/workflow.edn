@@ -1,0 +1,41 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "pr-housekeeping"
+            :title "PR Housekeeping"
+            :description "Safe PR housekeeping workflow that discovers open pull requests and writes a conservative action report."}
+ :inputs {:repo-root {:type :path :required true}
+          :max-prs {:type :integer :default 20}
+          :merge-approved {:type :boolean :default false}
+          :dry-run {:type :boolean :default true}}
+ :defaults {:max-rounds 1
+            :state-timeout "5m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true
+            :forbid-inline-secrets true}
+ :initial :list-open-prs
+ :states
+ {:list-open-prs
+  {:type :process
+   :title "List open pull requests"
+   :command ["./scripts/list_prs.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:open-prs {:path "housekeeping/open-prs.json" :required true}}
+   :next :classify-prs}
+
+  :classify-prs
+  {:type :process
+   :title "Classify pull requests"
+   :command ["./scripts/classify_prs.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:actions {:path "housekeeping/actions.json" :required true}
+             :report {:path "housekeeping/report.md" :required true}}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}
