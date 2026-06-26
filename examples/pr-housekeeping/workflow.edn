@@ -22,6 +22,16 @@
    :output-mode :json-stdout
    :runtime {:timeout "1m"}
    :outputs {:open-prs {:path "housekeeping/open-prs.json" :required true}}
+   :next :fetch-pr-states}
+
+  :fetch-pr-states
+  {:type :process
+   :title "Fetch pull request state"
+   :command ["./scripts/fetch_pr_states.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:pr-states {:path "housekeeping/pr-states.json" :required true}}
    :next :classify-prs}
 
   :classify-prs
