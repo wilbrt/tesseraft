@@ -25,9 +25,17 @@
   (or (not-empty (get-in ctx [:inputs :branch]))
       (not-empty (artifact-text ctx (get-in node [:inputs :branch-file])))
       (str "agent/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow")))))
+(defn git-ref-candidates [ref]
+  (cond
+    (str/starts-with? ref "refs/") [ref]
+    (str/starts-with? ref "origin/") [(str "refs/remotes/" ref)]
+    :else [(str "refs/heads/" ref)]))
+
 (defn git-ref-exists? [repo ref]
-  (zero? (:exit (p/shell {:dir repo :continue true :out :string :err :string}
-                         "git" "rev-parse" "--verify" "--quiet" ref))))
+  (boolean
+    (some #(zero? (:exit (p/shell {:dir repo :continue true :out :string :err :string}
+                                  "git" "show-ref" "--verify" "--quiet" %)))
+          (git-ref-candidates ref))))
 (defn base-ref [ctx base]
   (let [repo (repo-dir ctx)
         remote-ref (str "origin/" base)]
