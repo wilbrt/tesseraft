@@ -13,6 +13,7 @@ The important boundary is the workflow IaC file, not the implementation language
 - `bin/agent-workflow-lint` and `bin/agent-workflow-run` remain compatibility entry points.
 - `examples/jira-to-pr/workflow.edn` is a real workflow declaration.
 - `docs/CODE_STYLE.md` defines project code style and design principles.
+- `docs/PR_HOUSEKEEPING.md` describes the safe PR housekeeping workflow.
 
 ## Quick start
 
