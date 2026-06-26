@@ -49,6 +49,7 @@ This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr 
 - `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/review-loop/workflow.edn` — prompt-to-PR variant with an explicit pass/fail code-review artifact and review-fix loop before PR drafting and creation.
+- See `docs/WORKFLOW_RUNS.md` for safe prompt-to-PR and review-loop run instructions.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
 
 ```bash
