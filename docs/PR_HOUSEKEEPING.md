@@ -2,7 +2,7 @@
 
 `examples/pr-housekeeping/workflow.edn` is the safe first slice of a maintainer workflow for open pull requests.
 
-By default it performs discovery and planning only. Conflict repair and comment handling are opt-in for one target PR at a time; they use isolated worktrees and only push code changes after fixes, tests, review, and explicit push gates. Comment responses are drafted by default and posted only with an explicit post gate. It does not merge pull requests.
+This is an opinionated housekeeping flow: it discovers open PRs, chooses the next actionable PR, and performs the appropriate repair/response path. With `dry-run=true`, it writes the plan and would-run artifacts without mutating GitHub. With `dry-run=false`, it performs the workflow's actions: repair conflicts or comments in isolated worktrees, test/review, push changes, and post reviewed responses. It does not merge pull requests yet.
 
 The workflow's process helpers are small Python scripts because process nodes communicate through the language-neutral JSON stdin/stdout protocol and these helpers primarily orchestrate `gh`, Git, and artifact files. The platform/runtime implementation remains Babashka/Clojure; the workflow contract, not helper implementation language, is the portability boundary.
 
@@ -42,51 +42,31 @@ housekeeping/planned/*.json
   --format json
 ```
 
-To attempt conflict repair for one PR without pushing:
+To run the full housekeeping flow without mutating anything:
 
 ```bash
 ./bin/tesseraft run examples/pr-housekeeping/workflow.edn \
-  --run-id pr-housekeeping-repair-PR_NUMBER \
+  --run-id pr-housekeeping-check \
   --input repo-root=. \
-  --input repair-conflicts=true \
-  --input target-pr=PR_NUMBER \
   --input dry-run=true \
   --format json
 ```
 
-To handle comments and possible code changes for one PR without pushing:
+To run it for real:
 
 ```bash
 ./bin/tesseraft run examples/pr-housekeeping/workflow.edn \
-  --run-id pr-housekeeping-comments-PR_NUMBER \
+  --run-id pr-housekeeping-live \
   --input repo-root=. \
-  --input repair-comments=true \
-  --input target-pr=PR_NUMBER \
-  --input dry-run=true \
+  --input dry-run=false \
   --format json
 ```
 
-This writes feedback summaries, internal response drafts, and a separate post-ready response body. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push and response posting are skipped.
+The workflow automatically chooses the first conflicted PR. If there are no conflicted PRs, it chooses the first PR needing a response. `target-pr` can narrow a run to one PR, but the flow still decides what action is appropriate for that PR.
 
-To allow the final conflict-repair push after the rebase/fix, tests, and review pass, set both gates:
+Comment handling writes feedback summaries, internal response drafts, and a separate post-ready response body. If Pi makes code changes, tests and review run before push. With `dry-run=false`, validated code changes are pushed and reviewed response bodies are posted as consolidated PR comments.
 
-```bash
---input dry-run=false --input push-conflict-fixes=true
-```
-
-To allow comment-handling code changes to push after tests and review pass, set both gates:
-
-```bash
---input dry-run=false --input push-comment-fixes=true
-```
-
-To post the reviewed response draft as a consolidated PR comment, also set:
-
-```bash
---input post-comment-responses=true
-```
-
-Both push paths first commit validated worktree changes, then use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
+Push paths first commit or verify validated worktree changes, then use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
 
 When invoking the workflow from outside the repository root, pass an absolute `repo-root`. The helper scripts also try to resolve relative `repo-root` values against the run directory and current working directory to avoid creating repair worktrees under the workflow example directory.
 
@@ -125,7 +105,7 @@ fix-conflicts:
   run configured tests
   review conflict resolution
   verify the rebased HEAD differs from the original PR head, committing only if unexpected uncommitted changes remain
-  push rebased history with --force-with-lease only when dry-run=false and push-conflict-fixes=true
+  push rebased history with --force-with-lease when dry-run=false
 
 fix-comments / respond-only:
   prepare an isolated worktree from the actual PR head
@@ -136,10 +116,10 @@ fix-comments / respond-only:
   run configured tests when code changed
   review fixes or no-change rationale
   commit changes when code changed
-  push branch with --force-with-lease only when code changed, dry-run=false, and push-comment-fixes=true
+  push branch with --force-with-lease when code changed and dry-run=false
   draft responses for every addressed comment
   write a concise post-ready response body without internal draft headings
-  post the reviewed post-ready response as a consolidated PR comment only when dry-run=false and post-comment-responses=true
+  post the reviewed post-ready response as a consolidated PR comment when dry-run=false
 
 ready-to-merge / merge:
   require merge-approved=true

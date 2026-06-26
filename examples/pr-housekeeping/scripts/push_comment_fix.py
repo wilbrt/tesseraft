@@ -17,14 +17,12 @@ def main():
     worktree = pathlib.Path(meta["worktree"])
     push_refspec = meta["push_refspec"]
     dry_run = truthy(inputs.get("dry-run", "true"))
-    push_enabled = truthy(inputs.get("push-comment-fixes", "false"))
     out_dir = run_dir / "comment-repair"
     summary = out_dir / "push-summary.md"
 
-    if dry_run or not push_enabled:
-        reason = "dry-run is true" if dry_run else "push-comment-fixes is false"
-        summary.write_text(f"# Comment repair push\n\nSkipped: {reason}\n\nWould run if code changed and gates allowed:\n\n```bash\ngit push --force-with-lease origin {push_refspec}\n```\n")
-        json.dump({"ok": True, "status": "skipped", "reason": reason, "outputs": {"summary": "comment-repair/push-summary.md"}}, sys.stdout)
+    if dry_run:
+        summary.write_text(f"# Comment repair push\n\nSkipped: dry-run is true\n\nWould run if code changed:\n\n```bash\ngit push --force-with-lease origin {push_refspec}\n```\n")
+        json.dump({"ok": True, "status": "skipped", "reason": "dry-run is true", "outputs": {"summary": "comment-repair/push-summary.md"}}, sys.stdout)
         print(); return
 
     result = subprocess.run(["git", "push", "--force-with-lease", "origin", push_refspec], cwd=worktree, text=True, capture_output=True)

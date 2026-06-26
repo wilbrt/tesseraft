@@ -56,10 +56,9 @@ def main():
     body_path.write_text(body + "\n")
 
     dry_run = truthy(inputs.get("dry-run", "true"))
-    post_enabled = truthy(inputs.get("post-comment-responses", "false"))
 
-    if dry_run or not post_enabled:
-        reason = "dry-run is true" if dry_run else "post-comment-responses is false"
+    if dry_run:
+        reason = "dry-run is true"
         summary.write_text(
             "# Post comment response\n\n"
             f"Skipped: {reason}\n\n"
