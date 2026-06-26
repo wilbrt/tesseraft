@@ -1,0 +1,30 @@
+Fresh Pi session: DESIGN ONLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+- Note: this workflow creates an isolated Git worktree after design; choose the branch name before implementation starts.
+
+Goal:
+Turn the user prompt into a concise implementation design.
+
+Rules:
+- Inspect the repository as needed.
+- Do not edit source code.
+- Do not push, create pull requests, or call external product APIs.
+- Identify relevant files, risks, and validation commands.
+- Keep the design focused enough for a bounded execution session.
+- Choose a short, safe branch name for the work.
+- Branch names should use lowercase letters, numbers, slashes, and hyphens only.
+- Prefer the form `agent/<brief-feature-name>`.
+
+Write:
+- Design doc: {{run.dir}}/design/design.md
+- Branch name: {{run.dir}}/design/branch-name.txt
+- Status JSON: {{run.dir}}/design/status.json
+
+Status JSON:
+{"status":"pass","summary":"short summary","issues_file":null}
+
+If the prompt is too ambiguous or unsafe to execute, write a failing status with a clear summary.

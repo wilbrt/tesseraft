@@ -1,0 +1,31 @@
+Fresh Pi session: EXECUTION.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Issues file: {{run.issues-file}}
+- Original repository root: {{inputs.repo-root}}
+- Worktree checkout: {{run.worktree-dir}}
+
+The current working directory is the worktree checkout. Make source and test changes there, not in the original repository checkout.
+
+Goal:
+Implement the design, or fix all outstanding issues from prior review/execution attempts.
+
+Rules:
+- You may edit source code and tests.
+- Keep changes focused on the prompt and design.
+- Run relevant checks/tests when practical.
+- Commit locally if the repository uses git and the changes are coherent.
+- Do not push.
+- Do not create a pull request.
+- Do not edit Tesseraft workflow definition files.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- If failing: {{run.dir}}/execution/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"implemented and validated","issues_file":null}
+{"status":"fail","summary":"blocked by test failures","issues_file":"execution/issues-{{run.round}}.json"}

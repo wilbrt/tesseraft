@@ -41,18 +41,52 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, and jira-to-pr example workflows, runs only the local smoke workflow, and verifies an invalid fixture fails lint. It does not run Pi, Jira, GitHub, or browser-dependent workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr example workflows, runs only the local smoke workflow, and verifies an invalid fixture fails lint. It does not run Pi, Jira, GitHub, or browser-dependent workflows.
 
 ## Example workflows
 
 - `examples/smoke/workflow.edn` — local-only runner smoke test.
 - `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
+- `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/review-loop/workflow.edn` — prompt-to-PR variant with an explicit pass/fail code-review artifact and review-fix loop before PR drafting and creation.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/review-loop/workflow.edn
+```
+
+## Git branch and worktree modes
+
+Tesseraft keeps the existing branch mode via `:git/ensure-branch`, which checks out the selected branch in `{{inputs.repo-root}}`. For isolated agent edits, use `:git/ensure-worktree` instead. It creates or reuses a deterministic worktree under `.agent-worktrees/<workflow>-<run-id>-<branch>`, writes the path artifact (default `worktree/path.txt`), and stores the path in `{{run.worktree-dir}}` for later nodes.
+
+Minimal workflow fragment:
+
+```edn
+:ensure-worktree
+{:type :deterministic
+ :handler :git/ensure-worktree
+ :runtime {:timeout "5m"}
+ :inputs {:branch-file "design/branch-name.txt"}
+ :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
+ :next :execute}
+
+:execute
+{:type :agent
+ :executor :pi-cli
+ :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+ ;; ...
+ }
+```
+
+`github/create-pr` and other git helpers default to `{{run.worktree-dir}}` when present. You can also set deterministic node `:runtime {:cwd "{{run.worktree-dir}}"}` or `:inputs {:repo-dir-file "worktree/path.txt"}` explicitly.
+
+Worktrees are not removed automatically. Cleanup is manual:
+
+```bash
+git worktree list
+git worktree remove .agent-worktrees/<name>
+git branch -D <branch>   # optional, after the PR/branch is no longer needed
 ```
 
 ## Package split

@@ -1,0 +1,30 @@
+Fresh Pi session: CODE REVIEW.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Original repository root: {{inputs.repo-root}}
+- Worktree checkout: {{run.worktree-dir}}
+- Base branch: {{inputs.base-branch}}
+
+The current working directory is the worktree checkout. Review changes there, not in the original repository checkout.
+
+Goal:
+Review the implementation against the prompt and design.
+
+Rules:
+- Do not edit source code.
+- Review the diff against the base branch when available.
+- Check for correctness, regressions, missing tests, security issues, and overbroad changes.
+- Produce actionable issues only.
+- If the implementation is acceptable, pass.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- If failing: {{run.dir}}/review/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"review passed","issues_file":null}
+{"status":"fail","summary":"review found issues","issues_file":"review/issues-{{run.round}}.json"}
