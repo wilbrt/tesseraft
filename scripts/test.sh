@@ -65,6 +65,20 @@ if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   exit 1
 fi
 
+echo "Checking GitHub PR URL normalization..."
+bb -e '(require (quote agent-workflow.adapters.builtin))
+       (let [u agent-workflow.adapters.builtin/github-pr-url]
+         (assert (= "https://github.com/owner/repo/pull/123"
+                    (u "owner/repo" {:url "https://api.github.com/repos/owner/repo/pulls/123" :number 123})))
+         (assert (= "https://github.com/owner/repo/pull/123"
+                    (u "owner/repo" {:url "https://api.github.com/repos/owner/repo/pulls/123"
+                                     :html_url "https://github.com/owner/repo/pull/123"
+                                     :number 123})))
+         (assert (= "https://github.com/owner/repo/pull/124"
+                    (u "owner/repo" {:url "https://github.com/owner/repo/pull/124" :number 124})))
+         (assert (= "https://github.com/owner/repo/pull/125"
+                    (u "owner/repo" {:number 125}))))'
+
 echo "Checking invalid fixture fails lint..."
 set +e
 ./bin/tesseraft lint test/fixtures/invalid/missing-prompt.workflow.edn >/tmp/tesseraft-invalid-lint.out 2>&1

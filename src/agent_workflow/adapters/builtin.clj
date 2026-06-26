@@ -160,6 +160,27 @@
 
 (defn github-repo! [ctx node]
   (str/trim (shell! {:dir (repo-dir ctx node)} "gh" "repo" "view" "--json" "nameWithOwner" "--jq" ".nameWithOwner")))
+
+(def github-api-pr-url-re #"https://api\.github\.com/repos/([^/]+/[^/]+)/pulls/([0-9]+)")
+(def github-browser-pr-url-re #"https://github\.com/[^/]+/[^/]+/pull/[0-9]+")
+
+(defn non-empty-string [v]
+  (when (string? v)
+    (not-empty (str/trim v))))
+
+(defn github-pr-url [repo pr]
+  (let [html-url (non-empty-string (:html_url pr))
+        url (non-empty-string (:url pr))
+        number (:number pr)]
+    (cond
+      html-url html-url
+      (and url (re-matches github-browser-pr-url-re url)) url
+      (and url (re-matches github-api-pr-url-re url))
+      (let [[_ pr-repo pr-number] (re-matches github-api-pr-url-re url)]
+        (str "https://github.com/" pr-repo "/pull/" pr-number))
+      (and (not-empty repo) number) (str "https://github.com/" repo "/pull/" number)
+      :else url)))
+
 (defn github-existing-pr [ctx node branch]
   (let [r (p/shell {:dir (repo-dir ctx node) :out :string :err :string :continue true}
                    "gh" "pr" "view" branch "--json" "number,url,state,headRefName,baseRefName")]
@@ -180,8 +201,11 @@
                                                   :head branch :base base :draft false})
                  (json/parse-string (shell! {:dir (repo-dir ctx node)} "gh" "api" "--method" "POST"
                                             (str "repos/" repo "/pulls") "--input" payload-file) true)))
-        normalized {:number (:number pr) :url (or (:url pr) (:html_url pr)) :state (:state pr)
-                    :headRefName (or (:headRefName pr) branch) :baseRefName (or (:baseRefName pr) base)}]
+        normalized (cond-> {:number (:number pr) :url (github-pr-url repo pr) :state (:state pr)
+                            :headRefName (or (:headRefName pr) branch) :baseRefName (or (:baseRefName pr) base)}
+                     (and (non-empty-string (:url pr))
+                          (re-matches github-api-pr-url-re (non-empty-string (:url pr))))
+                     (assoc :api_url (non-empty-string (:url pr))))]
     (store/write-json! pr-file normalized)
     {:status "ok" :pr normalized :pr-file pr-file}))
 
