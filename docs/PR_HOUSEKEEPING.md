@@ -2,7 +2,7 @@
 
 `examples/pr-housekeeping/workflow.edn` is the safe first slice of a maintainer workflow for open pull requests.
 
-It currently performs discovery and planning only. It does not rebase branches, post comments, push changes, or merge pull requests.
+By default it performs discovery and planning only. Conflict repair is opt-in for one target PR at a time; it uses an isolated worktree and only pushes after rebase/fix, tests, review, and explicit push gates. It does not post comments or merge pull requests.
 
 ## What it does
 
@@ -11,6 +11,13 @@ list-open-prs
   -> fetch-pr-states
   -> classify-prs
   -> plan-actions
+  -> select-conflict-target
+  -> prepare-conflict-worktree
+  -> rebase-conflict-worktree
+  -> fix-conflicts when needed
+  -> test-conflict-worktree
+  -> review-conflict-fix
+  -> push-conflict-fix when explicitly gated
   -> done
 ```
 
@@ -35,6 +42,26 @@ housekeeping/planned/*.json
   --input max-prs=20 \
   --format json
 ```
+
+To attempt conflict repair for one PR without pushing:
+
+```bash
+./bin/tesseraft run examples/pr-housekeeping/workflow.edn \
+  --run-id pr-housekeeping-repair-PR_NUMBER \
+  --input repo-root=. \
+  --input repair-conflicts=true \
+  --input target-pr=PR_NUMBER \
+  --input dry-run=true \
+  --format json
+```
+
+To allow the final push after the rebase/fix, tests, and review pass, set both gates:
+
+```bash
+--input dry-run=false --input push-conflict-fixes=true
+```
+
+The push uses `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
 
 Inspect the report:
 
@@ -65,10 +92,12 @@ The full housekeeping workflow should remain gated and explicit.
 
 ```text
 fix-conflicts:
-  ensure worktree for PR branch
-  rebase/fix conflicts with Pi
+  prepare an isolated worktree from the actual PR head
+  rebase onto the PR base branch
+  resolve conflicts with Pi when rebase cannot complete automatically
+  run configured tests
   review conflict resolution
-  push branch
+  push branch with --force-with-lease only when dry-run=false and push-conflict-fixes=true
 
 fix-comments / respond-only:
   ensure worktree for PR branch when code changes may be needed

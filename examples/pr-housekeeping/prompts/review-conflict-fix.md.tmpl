@@ -1,0 +1,35 @@
+You are reviewing a conflict-repair worktree before it may be pushed to a pull request branch.
+
+Run directory: {{run.dir}}
+Worktree: {{run.worktree-dir}}
+Target PR: {{inputs.target-pr}}
+Base branch: {{inputs.base-branch}}
+
+Inspect:
+- `git status`
+- `git log --oneline --decorate -n 20`
+- the diff against `origin/{{inputs.base-branch}}`
+- {{run.dir}}/conflict-repair/rebase-summary.md
+- {{run.dir}}/conflict-repair/test-summary.md
+- {{run.dir}}/conflict-repair/fix-summary-{{run.round}}.md if it exists
+
+Review criteria:
+1. The rebase/conflict resolution is complete; no unresolved conflict markers remain.
+2. The final diff preserves the PR's intended changes and does not introduce unrelated edits.
+3. Tests passed or any limitations are clearly justified.
+4. It is safe for the subsequent deterministic node to push with `git push --force-with-lease` if the run is explicitly configured with `dry-run=false` and `push-conflict-fixes=true`.
+
+Do not push.
+
+Required outputs, relative to the workflow run directory:
+- `conflict-repair/review-status-{{run.round}}.json`
+- `conflict-repair/review-report-{{run.round}}.md`
+- optionally `conflict-repair/review-issues-{{run.round}}.json`
+
+Write `review-status-{{run.round}}.json` as JSON like:
+
+```json
+{"status":"pass"}
+```
+
+Use `{"status":"fail"}` if the worktree should not be pushed.
