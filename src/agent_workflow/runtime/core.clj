@@ -152,8 +152,14 @@
 (defn apply-effects [ctx effects result]
   (reduce #(apply-effect %1 %2 result) ctx effects))
 
+(defn carry-result-context [ctx result]
+  (cond-> ctx
+    (:worktree-dir result) (assoc-in [:run :worktree-dir] (:worktree-dir result))
+    (:branch result) (assoc-in [:run :branch] (:branch result))))
+
 (defn advance [ctx transition result]
   (-> ctx
+      (carry-result-context result)
       (apply-effects (:effects transition []) result)
       (assoc-in [:run :state] (:next transition))
       (update-in [:run :attempt] inc)

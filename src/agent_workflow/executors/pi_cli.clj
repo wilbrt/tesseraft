@@ -30,10 +30,18 @@
   (let [template (or (:session-name node) (str "{{inputs.ticket}}-" (name state-id) "-{{run.attempt}}"))]
     (spec/render-template-string template (execution-context ctx state-id node))))
 
+(defn runtime-cwd [ctx state-id node]
+  (let [ectx (execution-context ctx state-id node)]
+    (or (some-> (get-in node [:runtime :cwd]) (spec/render-template-string ectx) not-empty)
+        (get-in ctx [:run :worktree-dir])
+        (get-in ctx [:inputs :repo-root])
+        (get-in ctx [:inputs :repo])
+        ".")))
+
 (defn run-agent-node! [wf ctx state-id node]
   (let [pi-bin (env "PI_BIN" "pi")
         run-dir (get-in ctx [:run :dir])
-        repo-root (or (get-in ctx [:inputs :repo-root]) (get-in ctx [:inputs :repo]) ".")
+        repo-root (runtime-cwd ctx state-id node)
         prompt-file (render-prompt! wf ctx state-id node)
         session-dir (str (fs/path run-dir "pi-sessions"))
         session-name (session-name ctx state-id node)
@@ -51,6 +59,7 @@
     (fs/create-dirs (fs/parent log-file))
     (spit log-file
           (str "COMMAND: " (str/join " " args) "\n\n"
+               "CWD: " repo-root "\n\n"
                "PROMPT_FILE: " prompt-file "\n\n"
                "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
     {:executor "pi-cli"

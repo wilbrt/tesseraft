@@ -99,6 +99,8 @@ Agent nodes must declare a status artifact. Runtime agent sessions must not modi
 
 Handlers must be registered by the runner. The linter validates known handlers when a handler registry is provided.
 
+Built-in git handlers include `:git/ensure-branch` and `:git/ensure-worktree`. Worktree mode creates or reuses a deterministic Git worktree for the run, writes a worktree path artifact (default `worktree/path.txt`), and exposes the selected checkout as `{{run.worktree-dir}}` for downstream agent and deterministic nodes. Worktree cleanup is explicit/manual; runners must not remove worktrees automatically.
+
 ## 9. Process node
 
 ```edn
@@ -160,7 +162,7 @@ Supported severities are `blocker`, `major`, `minor`, and `nit`.
 
 ## 15. Template variables
 
-Templates may use `{{...}}` variables. Required namespaces are `inputs.*`, `defaults.*`, `run.*`, `node.*`, `artifacts.*`, `workflow.*`, and `env.*`.
+Templates may use `{{...}}` variables. Required namespaces are `inputs.*`, `defaults.*`, `run.*`, `node.*`, `artifacts.*`, `workflow.*`, and `env.*`. Common run variables include `{{run.id}}`, `{{run.dir}}`, `{{run.state}}`, `{{run.round}}`, and, after `:git/ensure-worktree`, `{{run.worktree-dir}}`.
 
 ## 16. Runtime state
 

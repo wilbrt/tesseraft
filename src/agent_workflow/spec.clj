@@ -12,9 +12,9 @@
 (def base-pi-tools #{:read :bash :edit :write :grep :find :ls})
 (def default-known-executors #{:pi-cli :pi-sdk})
 (def default-known-handlers
-  #{:jira/fetch-ticket :git/ensure-branch :git/push :github/create-pr :github/fetch-pr-feedback :notify/pinga :noop/succeed})
+  #{:jira/fetch-ticket :git/ensure-branch :git/ensure-worktree :git/push :github/create-pr :github/fetch-pr-feedback :notify/pinga :noop/succeed})
 (def allowed-template-roots #{"inputs" "defaults" "run" "node" "artifacts" "workflow" "env"})
-(def known-run-vars #{"id" "dir" "state" "round" "attempt" "feedback-cycle" "issues-file" "branch"})
+(def known-run-vars #{"id" "dir" "state" "round" "attempt" "feedback-cycle" "issues-file" "branch" "worktree-dir"})
 
 (defn keywordize-node-id [x]
   (cond

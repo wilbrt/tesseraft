@@ -15,6 +15,7 @@ cleanup
 echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/smoke/workflow.edn
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
+./bin/tesseraft lint examples/review-loop/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 
 echo "Checking CLI ergonomics..."
