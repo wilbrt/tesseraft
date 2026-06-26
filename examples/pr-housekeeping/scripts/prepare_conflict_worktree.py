@@ -5,6 +5,8 @@ import re
 import subprocess
 import sys
 
+from path_utils import resolve_repo_root
+
 
 def run(cmd, cwd=None, check=True):
     return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=check)
@@ -18,7 +20,7 @@ def safe_component(value):
 def main():
     request = json.load(sys.stdin)
     inputs = request.get("inputs", {})
-    repo_root = pathlib.Path(request["paths"]["repo_root"]).resolve()
+    repo_root = resolve_repo_root(request)
     run_dir = pathlib.Path(request["paths"]["run_dir"])
     target = int(inputs.get("target-pr") or (run_dir / "conflict-repair" / "target-pr.txt").read_text().strip())
     base_branch = inputs.get("base-branch") or "main"

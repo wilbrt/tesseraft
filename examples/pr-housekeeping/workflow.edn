@@ -154,7 +154,19 @@
    :outputs {:status {:path "conflict-repair/review-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "conflict-repair/review-report-{{run.round}}.md" :required true}
              :issues {:path "conflict-repair/review-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :commit-conflict-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :commit-conflict-fix
+  {:type :process
+   :title "Commit conflict repair"
+   :command ["./scripts/commit_conflict_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "conflict-repair/commit-summary.md" :required true}}
    :transitions [{:when {:status "pass"} :next :push-conflict-fix}
+                 {:when {:status "skipped"} :next :push-conflict-fix}
                  {:when {:status "fail"} :next :failed}]}
 
   :push-conflict-fix
@@ -242,7 +254,19 @@
    :outputs {:status {:path "comment-repair/review-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "comment-repair/review-report-{{run.round}}.md" :required true}
              :issues {:path "comment-repair/review-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :commit-comment-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :commit-comment-fix
+  {:type :process
+   :title "Commit comment repair"
+   :command ["./scripts/commit_comment_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "comment-repair/commit-summary.md" :required true}}
    :transitions [{:when {:status "pass"} :next :push-comment-fix}
+                 {:when {:status "skipped"} :next :push-comment-fix}
                  {:when {:status "fail"} :next :failed}]}
 
   :push-comment-fix

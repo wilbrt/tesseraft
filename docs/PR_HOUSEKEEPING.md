@@ -4,6 +4,8 @@
 
 By default it performs discovery and planning only. Conflict repair and comment handling are opt-in for one target PR at a time; they use isolated worktrees and only push code changes after fixes, tests, review, and explicit push gates. It does not post comments or merge pull requests.
 
+The workflow's process helpers are small Python scripts because process nodes communicate through the language-neutral JSON stdin/stdout protocol and these helpers primarily orchestrate `gh`, Git, and artifact files. The platform/runtime implementation remains Babashka/Clojure; the workflow contract, not helper implementation language, is the portability boundary.
+
 ## What it does
 
 ```text
@@ -78,7 +80,9 @@ To allow comment-handling code changes to push after tests and review pass, set 
 --input dry-run=false --input push-comment-fixes=true
 ```
 
-Both push paths use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
+Both push paths first commit validated worktree changes, then use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
+
+When invoking the workflow from outside the repository root, pass an absolute `repo-root`. The helper scripts also try to resolve relative `repo-root` values against the run directory and current working directory to avoid creating repair worktrees under the workflow example directory.
 
 Inspect the report:
 
@@ -114,6 +118,7 @@ fix-conflicts:
   resolve conflicts with Pi when rebase cannot complete automatically
   run configured tests
   review conflict resolution
+  commit repaired changes
   push branch with --force-with-lease only when dry-run=false and push-conflict-fixes=true
 
 fix-comments / respond-only:
@@ -124,6 +129,7 @@ fix-comments / respond-only:
   detect whether code changed
   run configured tests when code changed
   review fixes or no-change rationale
+  commit changes when code changed
   push branch with --force-with-lease only when code changed, dry-run=false, and push-comment-fixes=true
   draft responses for every addressed comment without posting them yet
 

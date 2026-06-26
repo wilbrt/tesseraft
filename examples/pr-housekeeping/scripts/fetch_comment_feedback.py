@@ -4,6 +4,8 @@ import pathlib
 import subprocess
 import sys
 
+from path_utils import resolve_repo_root
+
 
 def run(cmd, cwd, check=True):
     return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=check).stdout
@@ -23,7 +25,7 @@ def gh_api_all(repo_root, endpoint):
 
 def main():
     request = json.load(sys.stdin)
-    repo_root = pathlib.Path(request["paths"]["repo_root"]).resolve()
+    repo_root = resolve_repo_root(request)
     run_dir = pathlib.Path(request["paths"]["run_dir"])
     meta = json.loads((run_dir / "comment-repair" / "worktree.json").read_text())
     target = meta["target_pr"]
