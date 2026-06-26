@@ -1,0 +1,35 @@
+You are handling pull request comments in an isolated Git worktree.
+
+Run directory: {{run.dir}}
+Worktree: {{run.worktree-dir}}
+Target PR: {{inputs.target-pr}}
+Base branch: {{inputs.base-branch}}
+
+Inspect these artifacts:
+- {{run.dir}}/comment-repair/worktree.json
+- {{run.dir}}/comment-repair/feedback.json
+- {{run.dir}}/comment-repair/feedback-summary.md
+- {{run.dir}}/housekeeping/actions.json
+- {{run.dir}}/housekeeping/planned/response-prs.json
+
+Task:
+1. Read the comments/reviews carefully.
+2. Decide whether code changes are needed.
+3. If changes are needed, edit the worktree to address the comments while preserving PR intent.
+4. If no changes are needed, leave the worktree unchanged and document the rationale.
+5. Draft responses for every addressed comment or review concern.
+6. Do not push and do not post GitHub comments.
+
+Required outputs, relative to the workflow run directory:
+- `comment-repair/handle-status-{{run.round}}.json`
+- `comment-repair/handle-summary-{{run.round}}.md`
+- `comment-repair/response-draft-{{run.round}}.md`
+- optionally `comment-repair/handle-issues-{{run.round}}.json`
+
+Write `handle-status-{{run.round}}.json` as JSON like:
+
+```json
+{"status":"pass"}
+```
+
+Use `{"status":"fail"}` if the comments cannot be handled safely.

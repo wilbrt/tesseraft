@@ -1,0 +1,37 @@
+You are reviewing PR comment handling before any code changes may be pushed.
+
+Run directory: {{run.dir}}
+Worktree: {{run.worktree-dir}}
+Target PR: {{inputs.target-pr}}
+Base branch: {{inputs.base-branch}}
+
+Inspect:
+- `git status`
+- diff against the PR branch start point / relevant base as appropriate
+- {{run.dir}}/comment-repair/feedback-summary.md
+- {{run.dir}}/comment-repair/handle-summary-{{run.round}}.md
+- {{run.dir}}/comment-repair/response-draft-{{run.round}}.md
+- {{run.dir}}/comment-repair/change-summary.md
+- {{run.dir}}/comment-repair/test-summary.md if it exists
+
+Review criteria:
+1. Every detected comment or requested-change concern has a response draft.
+2. If code changed, the changes are focused and address the comments.
+3. If no code changed, the no-change rationale is reasonable.
+4. Tests passed when code changed, or any limitation is clearly documented.
+5. It is safe for the subsequent deterministic node to push code changes with `git push --force-with-lease` only if gates are enabled.
+
+Do not push and do not post GitHub comments.
+
+Required outputs, relative to the workflow run directory:
+- `comment-repair/review-status-{{run.round}}.json`
+- `comment-repair/review-report-{{run.round}}.md`
+- optionally `comment-repair/review-issues-{{run.round}}.json`
+
+Write `review-status-{{run.round}}.json` as JSON like:
+
+```json
+{"status":"pass"}
+```
+
+Use `{"status":"fail"}` if the comment handling should not proceed.

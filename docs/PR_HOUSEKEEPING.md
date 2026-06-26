@@ -2,7 +2,7 @@
 
 `examples/pr-housekeeping/workflow.edn` is the safe first slice of a maintainer workflow for open pull requests.
 
-By default it performs discovery and planning only. Conflict repair is opt-in for one target PR at a time; it uses an isolated worktree and only pushes after rebase/fix, tests, review, and explicit push gates. It does not post comments or merge pull requests.
+By default it performs discovery and planning only. Conflict repair and comment handling are opt-in for one target PR at a time; they use isolated worktrees and only push code changes after fixes, tests, review, and explicit push gates. It does not post comments or merge pull requests.
 
 ## What it does
 
@@ -12,12 +12,9 @@ list-open-prs
   -> classify-prs
   -> plan-actions
   -> select-conflict-target
-  -> prepare-conflict-worktree
-  -> rebase-conflict-worktree
-  -> fix-conflicts when needed
-  -> test-conflict-worktree
-  -> review-conflict-fix
-  -> push-conflict-fix when explicitly gated
+  -> conflict repair path when enabled and selected
+  -> otherwise select-comment-target
+  -> comment handling path when enabled and selected
   -> done
 ```
 
@@ -55,13 +52,33 @@ To attempt conflict repair for one PR without pushing:
   --format json
 ```
 
-To allow the final push after the rebase/fix, tests, and review pass, set both gates:
+To handle comments and possible code changes for one PR without pushing:
+
+```bash
+./bin/tesseraft run examples/pr-housekeeping/workflow.edn \
+  --run-id pr-housekeeping-comments-PR_NUMBER \
+  --input repo-root=. \
+  --input repair-comments=true \
+  --input target-pr=PR_NUMBER \
+  --input dry-run=true \
+  --format json
+```
+
+This writes feedback summaries and response drafts. If Pi makes code changes, tests and review run before the push step; with `dry-run=true`, the push is skipped.
+
+To allow the final conflict-repair push after the rebase/fix, tests, and review pass, set both gates:
 
 ```bash
 --input dry-run=false --input push-conflict-fixes=true
 ```
 
-The push uses `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
+To allow comment-handling code changes to push after tests and review pass, set both gates:
+
+```bash
+--input dry-run=false --input push-comment-fixes=true
+```
+
+Both push paths use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
 
 Inspect the report:
 
@@ -100,12 +117,15 @@ fix-conflicts:
   push branch with --force-with-lease only when dry-run=false and push-conflict-fixes=true
 
 fix-comments / respond-only:
-  ensure worktree for PR branch when code changes may be needed
+  prepare an isolated worktree from the actual PR head
+  fetch issue comments, reviews, and review comments
   design comment response/fix plan
   execute fixes when appropriate
+  detect whether code changed
+  run configured tests when code changed
   review fixes or no-change rationale
-  push branch when code changed
-  draft or post responses for every addressed comment
+  push branch with --force-with-lease only when code changed, dry-run=false, and push-comment-fixes=true
+  draft responses for every addressed comment without posting them yet
 
 ready-to-merge / merge:
   require merge-approved=true
