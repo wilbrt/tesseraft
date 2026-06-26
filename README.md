@@ -49,7 +49,28 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr example workflows, runs only the local smoke workflow, and verifies an invalid fixture fails lint. It does not run Pi, Jira, GitHub, or browser-dependent workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr example workflows, runs only the local smoke workflow plus a mock executor dry run, and verifies an invalid fixture fails lint. It does not run Pi, Jira, GitHub, or browser-dependent workflows.
+
+## Mock executor dry run
+
+Use runner-level mock mode to validate workflow transitions without invoking Pi, GitHub, Jira, or notification services:
+
+```bash
+./bin/tesseraft run examples/review-loop/workflow.edn \
+  --executor mock \
+  --run-id dry-run-demo \
+  --input prompt='Test dry run' \
+  --input repo-root=. \
+  --format json
+```
+
+The compatibility entry point supports the same option:
+
+```bash
+./bin/agent-workflow-run examples/review-loop/workflow.edn --executor mock --input prompt='Test dry run'
+```
+
+Mock mode is opt-in; default execution still uses each workflow's real executor and deterministic handlers. In mock mode, agent nodes render their prompts and write required artifacts with passing placeholder content. Known side-effect handlers for Jira, Git, GitHub, and Pinga return deterministic mock results instead of calling external services.
 
 ## Example workflows
 

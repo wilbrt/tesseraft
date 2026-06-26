@@ -24,6 +24,8 @@
           "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
+          "--executor" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))
+          "--mode" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))
           "--max-steps" (recur more (assoc acc :max-steps (parse-long (cli-args/require-value a b))))
           "--git-user-name" (recur more (assoc-in acc [:git-user :name] (cli-args/require-value a b)))
           "--git-user-email" (recur more (assoc-in acc [:git-user :email] (cli-args/require-value a b)))
@@ -31,6 +33,16 @@
           (if (:workflow acc)
             (recur rest-xs acc)
             (recur rest-xs (assoc acc :workflow a))))))))
+
+(defn validate-executor! [opts]
+  (when (and (:executor opts) (not= :mock (:executor opts)))
+    (throw (ex-info "Unknown runner executor" {:executor (:executor opts)})))
+  opts)
+
+(defn apply-run-options [ctx opts]
+  (validate-executor! opts)
+  (cond-> ctx
+    (contains? opts :executor) (assoc-in [:run :executor-mode] (when-let [executor (:executor opts)] (name executor)))))
 
 (defn print-result [opts data]
   (if (= "json" (:format opts))
@@ -45,6 +57,7 @@
   (binding [*out* *err*]
     (println "Usage:")
     (println "  tesseraft-run <workflow.edn> --input ticket=PROJ-123")
+    (println "  tesseraft-run <workflow.edn> --executor mock --run-id dry-run-demo")
     (println "  tesseraft-run start <workflow.edn> --input ticket=PROJ-123")
     (println "  tesseraft-run step --run-dir .agent-runs/name/run-id")
     (println "  tesseraft-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
@@ -63,9 +76,12 @@
       (throw (ex-info "--git-user-email requires --git-user-name" {:flag "--git-user-name"})))
     opts))
 
+(defn validate-options! [opts]
+  (-> opts validate-git-user! validate-executor!))
+
 (defn -main [& args]
   (try
-    (let [opts (validate-git-user! (parse-args args))]
+    (let [opts (validate-options! (parse-args args))]
       (case (:command opts)
         "start"
         (do (when (str/blank? (:workflow opts)) (usage!))
@@ -73,13 +89,13 @@
 
         "step"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [ctx (store/load-context (:run-dir opts))
+            (let [ctx (apply-run-options (store/load-context (:run-dir opts)) opts)
                   wf (spec/read-workflow (get-in ctx [:workflow :file]))]
               (print-result opts (store/save-context! (runtime/step! wf ctx)))))
 
         "resume"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [ctx (store/load-context (:run-dir opts))
+            (let [ctx (apply-run-options (store/load-context (:run-dir opts)) opts)
                   wf (spec/read-workflow (get-in ctx [:workflow :file]))]
               (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))))
 
