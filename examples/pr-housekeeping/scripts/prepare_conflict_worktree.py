@@ -42,6 +42,7 @@ def main():
     if not worktree.exists():
         worktree.parent.mkdir(parents=True, exist_ok=True)
         run(["git", "worktree", "add", str(worktree), repair_branch], cwd=repo_root)
+    original_head_oid = run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
 
     out_dir = run_dir / "conflict-repair"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -53,6 +54,7 @@ def main():
         "repair_branch": repair_branch,
         "worktree": str(worktree),
         "push_refspec": f"HEAD:refs/heads/{head}",
+        "original_head_oid": original_head_oid,
     }
     (out_dir / "worktree.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (out_dir / "worktree-path.txt").write_text(str(worktree) + "\n")

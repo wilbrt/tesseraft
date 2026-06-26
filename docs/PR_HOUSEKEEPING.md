@@ -124,8 +124,8 @@ fix-conflicts:
   resolve conflicts with Pi when rebase cannot complete automatically
   run configured tests
   review conflict resolution
-  commit repaired changes
-  push branch with --force-with-lease only when dry-run=false and push-conflict-fixes=true
+  verify the rebased HEAD differs from the original PR head, committing only if unexpected uncommitted changes remain
+  push rebased history with --force-with-lease only when dry-run=false and push-conflict-fixes=true
 
 fix-comments / respond-only:
   prepare an isolated worktree from the actual PR head

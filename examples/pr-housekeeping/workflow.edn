@@ -160,7 +160,7 @@
 
   :commit-conflict-fix
   {:type :process
-   :title "Commit conflict repair"
+   :title "Verify rebased conflict repair"
    :command ["./scripts/commit_conflict_fix.py"]
    :input-mode :json-stdin
    :output-mode :json-stdout
