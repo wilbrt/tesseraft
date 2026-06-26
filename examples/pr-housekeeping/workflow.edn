@@ -43,6 +43,23 @@
    :runtime {:timeout "1m"}
    :outputs {:actions {:path "housekeeping/actions.json" :required true}
              :report {:path "housekeeping/report.md" :required true}}
+   :next :plan-actions}
+
+  :plan-actions
+  {:type :process
+   :title "Plan housekeeping actions"
+   :command ["./scripts/plan_actions.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:plan {:path "housekeeping/action-plan.md" :required true}
+             :conflict-prs {:path "housekeeping/planned/conflict-prs.json" :required true}
+             :comment-prs {:path "housekeeping/planned/comment-prs.json" :required true}
+             :response-prs {:path "housekeeping/planned/response-prs.json" :required true}
+             :merge-ready-prs {:path "housekeeping/planned/merge-ready-prs.json" :required true}
+             :merge-prs {:path "housekeeping/planned/merge-prs.json" :required true}
+             :skipped-prs {:path "housekeeping/planned/skipped-prs.json" :required true}
+             :blocked-prs {:path "housekeeping/planned/blocked-prs.json" :required true}}
    :next :done}
 
   :done
