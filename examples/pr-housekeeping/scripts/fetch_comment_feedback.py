@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from path_utils import resolve_repo_root
+from response_tracking import pending_sources
 
 
 def run(cmd, cwd, check=True):
@@ -40,13 +41,17 @@ def main():
     }
 
     out_dir = run_dir / "comment-repair"
+    pending = pending_sources(feedback)
+    feedback["pending_sources"] = pending
     feedback_path = out_dir / "feedback.json"
     feedback_path.write_text(json.dumps(feedback, indent=2) + "\n")
+    (out_dir / "pending-sources.json").write_text(json.dumps(pending, indent=2) + "\n")
 
     summary = ["# PR Comment Feedback", "", f"PR: #{target} {pr.get('title')}", ""]
     summary.append(f"Issue comments: {len(feedback['issue_comments'])}")
     summary.append(f"Reviews: {len(feedback['reviews'])}")
     summary.append(f"Review comments: {len(feedback['review_comments'])}")
+    summary.append(f"Pending response sources: {len(pending)}")
     summary.append("")
     for label, items in [("Issue comments", feedback["issue_comments"]), ("Reviews", feedback["reviews"]), ("Review comments", feedback["review_comments"])]:
         summary.append(f"## {label}")

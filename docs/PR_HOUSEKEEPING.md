@@ -67,7 +67,7 @@ To run it for real:
 
 The workflow automatically processes conflicted PRs first. After conflicts are exhausted, it processes every PR needing a response. `target-pr` can narrow a run to one PR, but the flow still decides what action is appropriate for that PR.
 
-Comment handling writes feedback summaries, internal response drafts, and a separate post-ready response body. If Pi makes code changes, tests and review run before push. With `dry-run=false`, validated code changes are pushed and reviewed response bodies are posted as consolidated PR comments.
+Comment handling writes feedback summaries, internal response drafts, and a separate post-ready response body. It tracks source comment IDs and embeds hidden response markers in posted comments so later runs do not reply to the same review comment again. If Pi makes code changes, tests and review run before push. With `dry-run=false`, validated code changes are pushed and reviewed response bodies are posted as consolidated PR comments.
 
 Push paths first commit or verify validated worktree changes, then use `git push --force-with-lease origin HEAD:refs/heads/<pr-head-branch>`. Cross-repository PRs are refused by this first implementation.
 
@@ -112,7 +112,7 @@ fix-conflicts:
 
 fix-comments / respond-only:
   prepare an isolated worktree from the actual PR head
-  fetch issue comments, reviews, and review comments
+  fetch issue comments, reviews, review comments, and existing housekeeping response markers
   design comment response/fix plan
   execute fixes when appropriate
   detect whether code changed
@@ -122,7 +122,7 @@ fix-comments / respond-only:
   push branch with --force-with-lease when code changed and dry-run=false
   draft responses for every addressed comment
   write a concise post-ready response body without internal draft headings
-  post the reviewed post-ready response as a consolidated PR comment when dry-run=false
+  post the reviewed post-ready response as a consolidated PR comment with hidden source markers when dry-run=false
 
 ready-to-merge / merge:
   require merge-approved=true

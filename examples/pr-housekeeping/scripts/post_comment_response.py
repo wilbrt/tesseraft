@@ -53,7 +53,13 @@ def main():
         print(); return
 
     body = source_path.read_text().strip() if source_path == post_path else clean_draft(source_path.read_text())
-    body_path.write_text(body + "\n")
+    pending_path = run_dir / "comment-repair" / "pending-sources.json"
+    markers = []
+    if pending_path.exists():
+        pending = json.loads(pending_path.read_text())
+        markers = [f"<!-- pr-housekeeping-response: {item['key']} -->" for item in pending if item.get("key")]
+    final_body = ("\n".join(markers) + "\n" if markers else "") + body
+    body_path.write_text(final_body.strip() + "\n")
 
     dry_run = truthy(inputs.get("dry-run", "true"))
 
