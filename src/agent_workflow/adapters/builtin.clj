@@ -161,12 +161,45 @@
 (defn github-repo! [ctx node]
   (str/trim (shell! {:dir (repo-dir ctx node)} "gh" "repo" "view" "--json" "nameWithOwner" "--jq" ".nameWithOwner")))
 
-(def github-api-pr-url-re #"https://api\.github\.com/repos/([^/]+/[^/]+)/pulls/([0-9]+)")
-(def github-browser-pr-url-re #"https://github\.com/[^/]+/[^/]+/pull/[0-9]+")
-
 (defn non-empty-string [v]
   (when (string? v)
     (not-empty (str/trim v))))
+
+(defn parse-uri [s]
+  (try
+    (java.net.URI. s)
+    (catch Exception _ nil)))
+
+(defn uri-path-segments [uri]
+  (->> (str/split (or (.getPath uri) "") #"/")
+       (remove str/blank?)
+       vec))
+
+(defn integer-string? [s]
+  (try
+    (Long/parseLong s)
+    true
+    (catch Exception _ false)))
+
+(defn github-api-pr-url->browser-url [url]
+  (when-let [uri (parse-uri url)]
+    (let [segments (uri-path-segments uri)]
+      (when (and (= "https" (.getScheme uri))
+                 (= "api.github.com" (.getHost uri))
+                 (= 5 (count segments))
+                 (= "repos" (segments 0))
+                 (= "pulls" (segments 3))
+                 (integer-string? (segments 4)))
+        (str "https://github.com/" (segments 1) "/" (segments 2) "/pull/" (segments 4))))))
+
+(defn github-browser-pr-url? [url]
+  (when-let [uri (parse-uri url)]
+    (let [segments (uri-path-segments uri)]
+      (and (= "https" (.getScheme uri))
+           (= "github.com" (.getHost uri))
+           (= 4 (count segments))
+           (= "pull" (segments 2))
+           (integer-string? (segments 3))))))
 
 (defn github-pr-url [repo pr]
   (let [html-url (non-empty-string (:html_url pr))
@@ -174,12 +207,9 @@
         number (:number pr)]
     (cond
       html-url html-url
-      (and url (re-matches github-browser-pr-url-re url)) url
-      (and url (re-matches github-api-pr-url-re url))
-      (let [[_ pr-repo pr-number] (re-matches github-api-pr-url-re url)]
-        (str "https://github.com/" pr-repo "/pull/" pr-number))
-      (and (not-empty repo) number) (str "https://github.com/" repo "/pull/" number)
-      :else url)))
+      (and url (github-browser-pr-url? url)) url
+      url (or (github-api-pr-url->browser-url url) url)
+      (and (not-empty repo) number) (str "https://github.com/" repo "/pull/" number))))
 
 (defn github-existing-pr [ctx node branch]
   (let [r (p/shell {:dir (repo-dir ctx node) :out :string :err :string :continue true}
@@ -203,8 +233,7 @@
                                             (str "repos/" repo "/pulls") "--input" payload-file) true)))
         normalized (cond-> {:number (:number pr) :url (github-pr-url repo pr) :state (:state pr)
                             :headRefName (or (:headRefName pr) branch) :baseRefName (or (:baseRefName pr) base)}
-                     (and (non-empty-string (:url pr))
-                          (re-matches github-api-pr-url-re (non-empty-string (:url pr))))
+                     (some-> (:url pr) non-empty-string github-api-pr-url->browser-url)
                      (assoc :api_url (non-empty-string (:url pr))))]
     (store/write-json! pr-file normalized)
     {:status "ok" :pr normalized :pr-file pr-file}))
