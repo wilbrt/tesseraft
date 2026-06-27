@@ -17,6 +17,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/worktree-to-pr/workflow.edn
 ./bin/tesseraft lint examples/review-loop/workflow.edn
+./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 
 echo "Checking CLI ergonomics..."

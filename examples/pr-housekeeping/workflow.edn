@@ -1,0 +1,323 @@
+{:api-version "agent.workflow/v1"
+ :kind :workflow
+ :metadata {:name "pr-housekeeping"
+            :title "PR Housekeeping"
+            :description "Safe PR housekeeping workflow that discovers open pull requests and writes a conservative action report."}
+ :inputs {:repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :max-prs {:type :integer :default 20}
+          :merge-approved {:type :boolean :default false}
+          :dry-run {:type :boolean :default true}
+          :target-pr {:type :integer :required false}
+          :test-command {:type :string :default "bb test"}}
+ :defaults {:max-rounds 1
+            :state-timeout "5m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true
+            :forbid-inline-secrets true}
+ :initial :list-open-prs
+ :states
+ {:list-open-prs
+  {:type :process
+   :title "List open pull requests"
+   :command ["./scripts/list_prs.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:open-prs {:path "housekeeping/open-prs.json" :required true}}
+   :next :fetch-pr-states}
+
+  :fetch-pr-states
+  {:type :process
+   :title "Fetch pull request state"
+   :command ["./scripts/fetch_pr_states.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:pr-states {:path "housekeeping/pr-states.json" :required true}}
+   :next :classify-prs}
+
+  :classify-prs
+  {:type :process
+   :title "Classify pull requests"
+   :command ["./scripts/classify_prs.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:actions {:path "housekeeping/actions.json" :required true}
+             :report {:path "housekeeping/report.md" :required true}}
+   :next :plan-actions}
+
+  :plan-actions
+  {:type :process
+   :title "Plan housekeeping actions"
+   :command ["./scripts/plan_actions.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "1m"}
+   :outputs {:plan {:path "housekeeping/action-plan.md" :required true}
+             :conflict-prs {:path "housekeeping/planned/conflict-prs.json" :required true}
+             :comment-prs {:path "housekeeping/planned/comment-prs.json" :required true}
+             :response-prs {:path "housekeeping/planned/response-prs.json" :required true}
+             :merge-ready-prs {:path "housekeeping/planned/merge-ready-prs.json" :required true}
+             :merge-prs {:path "housekeeping/planned/merge-prs.json" :required true}
+             :skipped-prs {:path "housekeeping/planned/skipped-prs.json" :required true}
+             :blocked-prs {:path "housekeeping/planned/blocked-prs.json" :required true}}
+   :next :select-conflict-target}
+
+  :select-conflict-target
+  {:type :process
+   :title "Select conflict repair target"
+   :command ["./scripts/select_conflict_target.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:selection {:path "conflict-repair/selection.json" :required true}
+             :target-pr {:path "conflict-repair/target-pr.txt" :required false}}
+   :transitions [{:when {:status "pass"} :next :prepare-conflict-worktree}
+                 {:when {:status "skip"} :next :select-comment-target}]}
+
+  :select-comment-target
+  {:type :process
+   :title "Select comment repair target"
+   :command ["./scripts/select_comment_target.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:selection {:path "comment-repair/selection.json" :required true}
+             :target-pr {:path "comment-repair/target-pr.txt" :required false}}
+   :transitions [{:when {:status "pass"} :next :prepare-comment-worktree}
+                 {:when {:status "skip"} :next :done}]}
+
+  :prepare-conflict-worktree
+  {:type :process
+   :title "Prepare PR conflict worktree"
+   :command ["./scripts/prepare_conflict_worktree.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "3m"}
+   :outputs {:worktree {:path "conflict-repair/worktree.json" :required true}
+             :worktree-path {:path "conflict-repair/worktree-path.txt" :required true}
+             :repair-branch {:path "conflict-repair/repair-branch.txt" :required true}}
+   :next :rebase-conflict-worktree}
+
+  :rebase-conflict-worktree
+  {:type :process
+   :title "Rebase PR worktree onto base"
+   :command ["./scripts/rebase_conflict_worktree.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "5m"}
+   :outputs {:summary {:path "conflict-repair/rebase-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :test-conflict-worktree}
+                 {:when {:status "needs-fix"} :next :fix-conflicts}]}
+
+  :fix-conflicts
+  {:type :agent
+   :title "Fix rebase conflicts"
+   :executor :pi-cli
+   :prompt-template "prompts/fix-conflicts.md.tmpl"
+   :prompt-output "prompts/generated/fix-conflicts-{{run.round}}.md"
+   :session-name "pr-housekeeping-fix-conflicts-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "conflict-repair/fix-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "conflict-repair/fix-summary-{{run.round}}.md" :required true}
+             :issues {:path "conflict-repair/fix-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :test-conflict-worktree}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :test-conflict-worktree
+  {:type :process
+   :title "Test conflict repair"
+   :command ["./scripts/test_conflict_worktree.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "15m"}
+   :outputs {:summary {:path "conflict-repair/test-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :review-conflict-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :review-conflict-fix
+  {:type :agent
+   :title "Review conflict repair"
+   :executor :pi-cli
+   :prompt-template "prompts/review-conflict-fix.md.tmpl"
+   :prompt-output "prompts/generated/review-conflict-fix-{{run.round}}.md"
+   :session-name "pr-housekeeping-review-conflict-fix-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "conflict-repair/review-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "conflict-repair/review-report-{{run.round}}.md" :required true}
+             :issues {:path "conflict-repair/review-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :commit-conflict-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :commit-conflict-fix
+  {:type :process
+   :title "Verify rebased conflict repair"
+   :command ["./scripts/commit_conflict_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "conflict-repair/commit-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :push-conflict-fix}
+                 {:when {:status "skipped"} :next :push-conflict-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :push-conflict-fix
+  {:type :process
+   :title "Push repaired PR branch"
+   :command ["./scripts/push_conflict_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "3m"}
+   :outputs {:summary {:path "conflict-repair/push-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :mark-conflict-processed}
+                 {:when {:status "skipped"} :next :mark-conflict-processed}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :mark-conflict-processed
+  {:type :process
+   :title "Mark conflict PR processed"
+   :command ["./scripts/mark_processed.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:kind "conflict"}
+   :runtime {:timeout "30s"}
+   :outputs {:processed-marker {:path "conflict-repair/processed-summary.md" :required true}}
+   :next :select-conflict-target}
+
+  :prepare-comment-worktree
+  {:type :process
+   :title "Prepare PR comment worktree"
+   :command ["./scripts/prepare_comment_worktree.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "3m"}
+   :outputs {:worktree {:path "comment-repair/worktree.json" :required true}
+             :worktree-path {:path "comment-repair/worktree-path.txt" :required true}
+             :repair-branch {:path "comment-repair/repair-branch.txt" :required true}}
+   :next :fetch-comment-feedback}
+
+  :fetch-comment-feedback
+  {:type :process
+   :title "Fetch PR comment feedback"
+   :command ["./scripts/fetch_comment_feedback.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:feedback {:path "comment-repair/feedback.json" :required true}
+             :summary {:path "comment-repair/feedback-summary.md" :required true}}
+   :next :handle-comments}
+
+  :handle-comments
+  {:type :agent
+   :title "Handle PR comments"
+   :executor :pi-cli
+   :prompt-template "prompts/handle-comments.md.tmpl"
+   :prompt-output "prompts/generated/handle-comments-{{run.round}}.md"
+   :session-name "pr-housekeeping-handle-comments-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "comment-repair/handle-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "comment-repair/handle-summary-{{run.round}}.md" :required true}
+             :response-draft {:path "comment-repair/response-draft-{{run.round}}.md" :required true}
+             :response-post {:path "comment-repair/response-post-{{run.round}}.md" :required true}
+             :issues {:path "comment-repair/handle-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :detect-comment-changes}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :detect-comment-changes
+  {:type :process
+   :title "Detect comment repair changes"
+   :command ["./scripts/detect_comment_changes.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:summary {:path "comment-repair/change-summary.md" :required true}}
+   :transitions [{:when {:status "changed"} :next :test-comment-worktree}
+                 {:when {:status "unchanged"} :next :review-comment-fix}]}
+
+  :test-comment-worktree
+  {:type :process
+   :title "Test comment repair"
+   :command ["./scripts/test_comment_worktree.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "15m"}
+   :outputs {:summary {:path "comment-repair/test-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :review-comment-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :review-comment-fix
+  {:type :agent
+   :title "Review comment handling"
+   :executor :pi-cli
+   :prompt-template "prompts/review-comment-fix.md.tmpl"
+   :prompt-output "prompts/generated/review-comment-fix-{{run.round}}.md"
+   :session-name "pr-housekeeping-review-comment-fix-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "comment-repair/review-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "comment-repair/review-report-{{run.round}}.md" :required true}
+             :issues {:path "comment-repair/review-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :commit-comment-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :commit-comment-fix
+  {:type :process
+   :title "Commit comment repair"
+   :command ["./scripts/commit_comment_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "comment-repair/commit-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :push-comment-fix}
+                 {:when {:status "skipped"} :next :push-comment-fix}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :push-comment-fix
+  {:type :process
+   :title "Push comment repair branch"
+   :command ["./scripts/push_comment_fix.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "3m"}
+   :outputs {:summary {:path "comment-repair/push-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :post-comment-response}
+                 {:when {:status "skipped"} :next :post-comment-response}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :post-comment-response
+  {:type :process
+   :title "Post comment response"
+   :command ["./scripts/post_comment_response.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:summary {:path "comment-repair/post-summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :mark-comment-processed}
+                 {:when {:status "skipped"} :next :mark-comment-processed}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :mark-comment-processed
+  {:type :process
+   :title "Mark comment PR processed"
+   :command ["./scripts/mark_processed.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:kind "comment"}
+   :runtime {:timeout "30s"}
+   :outputs {:processed-marker {:path "comment-repair/processed-summary.md" :required true}}
+   :next :select-comment-target}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}
+
+  :failed
+  {:type :terminal
+   :title "Failed"
+   :status :failure}}}

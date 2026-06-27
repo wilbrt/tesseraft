@@ -13,6 +13,7 @@ The important boundary is the workflow IaC file, not the implementation language
 - `bin/agent-workflow-lint` and `bin/agent-workflow-run` remain compatibility entry points.
 - `examples/jira-to-pr/workflow.edn` is a real workflow declaration.
 - `docs/CODE_STYLE.md` defines project code style and design principles.
+- `docs/PR_HOUSEKEEPING.md` describes the safe PR housekeeping workflow.
 
 ## Quick start
 
@@ -50,11 +51,13 @@ This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr 
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/review-loop/workflow.edn` — prompt-to-PR variant with an explicit pass/fail code-review artifact and review-fix loop before PR drafting and creation.
 - See `docs/WORKFLOW_RUNS.md` for safe prompt-to-PR and review-loop run instructions.
+- `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/review-loop/workflow.edn
+./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ```
 
 ## Git branch and worktree modes

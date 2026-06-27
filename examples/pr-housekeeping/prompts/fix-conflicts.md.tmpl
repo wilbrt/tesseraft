@@ -1,0 +1,32 @@
+You are repairing merge conflicts for a pull request in an isolated Git worktree.
+
+Run directory: {{run.dir}}
+Worktree: {{run.worktree-dir}}
+Target PR: {{inputs.target-pr}}
+Base branch: {{inputs.base-branch}}
+
+Context artifacts to inspect:
+- {{run.dir}}/conflict-repair/worktree.json
+- {{run.dir}}/conflict-repair/rebase-summary.md
+- {{run.dir}}/housekeeping/actions.json
+- {{run.dir}}/housekeeping/planned/response-prs.json
+
+Task:
+1. Inspect the conflicted rebase state with `git status` and relevant files.
+2. Resolve the conflicts while preserving the PR's intent and the current base branch behavior.
+3. Continue or complete the rebase as appropriate.
+4. Run the configured tests when practical. The workflow will run tests again after you finish.
+5. Do not push.
+
+Required outputs, relative to the workflow run directory:
+- `conflict-repair/fix-status-{{run.round}}.json`
+- `conflict-repair/fix-summary-{{run.round}}.md`
+- optionally `conflict-repair/fix-issues-{{run.round}}.json`
+
+Write `fix-status-{{run.round}}.json` as JSON like:
+
+```json
+{"status":"pass"}
+```
+
+Use `{"status":"fail"}` if the conflicts cannot be resolved safely.
