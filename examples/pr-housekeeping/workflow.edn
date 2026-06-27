@@ -173,9 +173,20 @@
    :output-mode :json-stdout
    :runtime {:timeout "3m"}
    :outputs {:summary {:path "conflict-repair/push-summary.md" :required true}}
-   :transitions [{:when {:status "pass"} :next :done}
-                 {:when {:status "skipped"} :next :done}
+   :transitions [{:when {:status "pass"} :next :mark-conflict-processed}
+                 {:when {:status "skipped"} :next :mark-conflict-processed}
                  {:when {:status "fail"} :next :failed}]}
+
+  :mark-conflict-processed
+  {:type :process
+   :title "Mark conflict PR processed"
+   :command ["./scripts/mark_processed.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:kind "conflict"}
+   :runtime {:timeout "30s"}
+   :outputs {:processed-marker {:path "conflict-repair/processed-summary.md" :required true}}
+   :next :select-conflict-target}
 
   :prepare-comment-worktree
   {:type :process
@@ -286,9 +297,20 @@
    :output-mode :json-stdout
    :runtime {:timeout "2m"}
    :outputs {:summary {:path "comment-repair/post-summary.md" :required true}}
-   :transitions [{:when {:status "pass"} :next :done}
-                 {:when {:status "skipped"} :next :done}
+   :transitions [{:when {:status "pass"} :next :mark-comment-processed}
+                 {:when {:status "skipped"} :next :mark-comment-processed}
                  {:when {:status "fail"} :next :failed}]}
+
+  :mark-comment-processed
+  {:type :process
+   :title "Mark comment PR processed"
+   :command ["./scripts/mark_processed.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:kind "comment"}
+   :runtime {:timeout "30s"}
+   :outputs {:processed-marker {:path "comment-repair/processed-summary.md" :required true}}
+   :next :select-comment-target}
 
   :done
   {:type :terminal

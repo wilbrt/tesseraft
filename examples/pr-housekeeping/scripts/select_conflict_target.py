@@ -12,8 +12,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     actions = json.loads((run_dir / "housekeeping" / "actions.json").read_text())
+    processed_path = run_dir / "housekeeping" / "processed-prs.json"
+    processed = json.loads(processed_path.read_text()) if processed_path.exists() else {"conflict": [], "comment": []}
+    processed_conflicts = {int(v) for v in processed.get("conflict", [])}
     target = inputs.get("target-pr")
-    candidates = [item for item in actions if item.get("action") == "fix-conflicts"]
+    candidates = [item for item in actions if item.get("action") == "fix-conflicts" and int(item.get("number")) not in processed_conflicts]
     if target:
         target_num = int(target)
         candidates = [item for item in candidates if int(item.get("number")) == target_num]

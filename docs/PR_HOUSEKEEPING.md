@@ -2,7 +2,7 @@
 
 `examples/pr-housekeeping/workflow.edn` is the safe first slice of a maintainer workflow for open pull requests.
 
-This is an opinionated housekeeping flow: it discovers open PRs, chooses the next actionable PR, and performs the appropriate repair/response path. With `dry-run=true`, it writes the plan and would-run artifacts without mutating GitHub. With `dry-run=false`, it performs the workflow's actions: repair conflicts or comments in isolated worktrees, test/review, push changes, and post reviewed responses. It does not merge pull requests yet.
+This is an opinionated housekeeping flow: it discovers open PRs, loops through all currently actionable PRs, and performs the appropriate repair/response path for each one. With `dry-run=true`, it writes plans and would-run artifacts without mutating GitHub. With `dry-run=false`, it performs the workflow's actions: repair conflicts or comments in isolated worktrees, test/review, push changes, and post reviewed responses. It does not merge pull requests yet.
 
 The workflow's process helpers are small Python scripts because process nodes communicate through the language-neutral JSON stdin/stdout protocol and these helpers primarily orchestrate `gh`, Git, and artifact files. The platform/runtime implementation remains Babashka/Clojure; the workflow contract, not helper implementation language, is the portability boundary.
 
@@ -14,9 +14,11 @@ list-open-prs
   -> classify-prs
   -> plan-actions
   -> select-conflict-target
-  -> conflict repair path when enabled and selected
-  -> otherwise select-comment-target
-  -> comment handling path when enabled and selected
+  -> conflict repair path for each conflicted PR
+  -> mark conflict PR processed and loop
+  -> select-comment-target after conflicts are exhausted
+  -> comment handling path for each response-needed PR
+  -> mark comment PR processed and loop
   -> done
 ```
 
@@ -29,6 +31,7 @@ housekeeping/actions.json
 housekeeping/report.md
 housekeeping/action-plan.md
 housekeeping/planned/*.json
+housekeeping/processed-prs.json
 ```
 
 ## Running it
@@ -62,7 +65,7 @@ To run it for real:
   --format json
 ```
 
-The workflow automatically chooses the first conflicted PR. If there are no conflicted PRs, it chooses the first PR needing a response. `target-pr` can narrow a run to one PR, but the flow still decides what action is appropriate for that PR.
+The workflow automatically processes conflicted PRs first. After conflicts are exhausted, it processes every PR needing a response. `target-pr` can narrow a run to one PR, but the flow still decides what action is appropriate for that PR.
 
 Comment handling writes feedback summaries, internal response drafts, and a separate post-ready response body. If Pi makes code changes, tests and review run before push. With `dry-run=false`, validated code changes are pushed and reviewed response bodies are posted as consolidated PR comments.
 
