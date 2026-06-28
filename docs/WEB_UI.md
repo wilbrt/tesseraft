@@ -23,7 +23,7 @@ This document defines the initial vocabulary and boundaries so future UI work ca
 
 - **Workflow Studio**: The authoring surface for workflow packages. It edits workflow files and related package assets, presents graph and contract views, and validates changes with the linter before they become workflow behavior.
 - **Run Console**: The runtime surface for runs. It starts runs from selected workflow versions, observes run progress, displays node attempts, events, and artifacts, and records runtime controls such as approvals.
-- **Control plane**: The API boundary used by the Run Console to create, observe, and control runs. It exposes runner operations without making the UI the owner of runtime state.
+- **Control plane**: The API boundary used by the Run Console to create, observe, and control runs. It exposes runner operations without making the UI the owner of runtime state. The initial local read-first contract is sketched in [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md).
 - **Workflow package**: A set of workflow definition files and assets such as `workflow.edn`, prompt templates, scripts, schemas, and policies. The package defines workflow behavior.
 - **Run**: One execution of a workflow pinned to an immutable workflow version such as a content hash or Git commit. Existing runs must not silently switch versions.
 - **Artifact**: A declared output file or structured value produced by a node attempt and recorded according to the workflow's artifact contracts.
@@ -116,7 +116,7 @@ Allow Workflow Studio edits to workflow packages through explicit file diffs. Sa
 
 ### Phase 3: runtime console
 
-Build Run Console over the control plane, event log, artifacts, run state, and approval records. Runs must be created from selected immutable workflow versions and must expose the version they use. The architecture matrix recommends a local file-backed HTTP control plane as the first runtime slice.
+Build Run Console over the control plane, event log, artifacts, run state, and approval records. Runs must be created from selected immutable workflow versions and must expose the version they use. The architecture matrix recommends a local file-backed HTTP control plane as the first runtime slice; see [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md) for the initial read-first route contract.
 
 ### Phase 4: node package UX
 
@@ -132,7 +132,7 @@ Add discovery, import, and export flows for node packages. Keep node package con
 
 ## Open questions
 
-- What is the control-plane API shape for starting, observing, retrying, canceling, resuming, and approving runs?
+- What mutation semantics should extend the read-first control-plane API shape in [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md) for starting, retrying, canceling, resuming, and approving runs?
 - What authentication and authorization model should protect authoring and runtime operations?
 - What durable DB-backed runner model should own run state, node attempts, and event logs?
 - What approval UX gives enough context while recording decisions as durable runtime events?

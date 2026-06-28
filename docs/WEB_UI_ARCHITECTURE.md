@@ -34,7 +34,7 @@ The recommended first runtime slice is a **local HTTP control-plane API over exi
 
 This option gives Run Console a real boundary for starting, observing, and controlling runs without making browser state authoritative. It can expose the current runner's run directories, state files, event logs, node attempts, artifacts, and future approval records while preserving pinned workflow versions. It also lets Workflow Studio reuse the same local service for package inspection, graph data, and linter-backed diagnostics without duplicating spec or lint logic in UI code.
 
-This is not a final architecture commitment. It is an incremental slice that keeps the workflow file as the source of truth, fits the current Babashka prototype, and remains testable with local files and `bb test`. The important design commitment is the control-plane contract: if that contract is kept explicit, a later durable DB-backed control plane can replace file-backed persistence without forcing the UI to become the runtime owner.
+This is not a final architecture commitment. It is an incremental slice that keeps the workflow file as the source of truth, fits the current Babashka prototype, and remains testable with local files and `bb test`. The important design commitment is the control-plane contract: if that contract is kept explicit, a later durable DB-backed control plane can replace file-backed persistence without forcing the UI to become the runtime owner. The initial read-first route shape is sketched in [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md).
 
 ## Suggested first-slice boundaries
 
@@ -47,7 +47,7 @@ This is not a final architecture commitment. It is an incremental slice that kee
 
 ## Deferred decisions
 
-- Final HTTP route shape and streaming protocol.
+- Final mutation route semantics and streaming protocol beyond the initial read-first contract in [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md).
 - Frontend framework or component model.
 - Authentication and authorization.
 - Database schema, migrations, and hosted deployment.
