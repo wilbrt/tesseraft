@@ -1,0 +1,21 @@
+{:api-version "tesseraft.node/v1"
+ :kind :node
+ :metadata {:name "simple-design"
+            :version "0.1.0"
+            :description "Small valid self-contained node fixture."}
+ :interface {:inputs {:prompt {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json"}}}
+ :requirements {:executors [:pi-cli]
+                :tools [:read]
+                :template-vars ["inputs.prompt" "run.dir"]}
+ :assets {:prompts ["prompts/design.md.tmpl"]
+          :schemas ["schemas/status.schema.json"]}
+ :node {:type :agent
+        :title "Design"
+        :executor :pi-cli
+        :prompt-template "prompts/design.md.tmpl"
+        :tools [:read]
+        :runtime {:timeout "5m"}
+        :outputs {:status {:path "design/status.json"
+                           :schema "schemas/status.schema.json"
+                           :required true}}}}

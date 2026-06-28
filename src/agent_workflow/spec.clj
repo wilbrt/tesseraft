@@ -5,8 +5,10 @@
     [clojure.edn :as edn]
     [clojure.string :as str]))
 
-(def supported-api-versions #{"agent.workflow/v1"})
+(def supported-api-versions #{"tesseraft.workflow/v1"})
+(def supported-node-api-versions #{"tesseraft.node/v1"})
 (def supported-kind :workflow)
+(def supported-node-kind :node)
 (def valid-node-types #{:agent :deterministic :process :timer :approval :router :terminal})
 (def known-effects #{:merge-issues :clear-issues :inc-round :inc-feedback-cycle :set-context :record-pr :fail-run})
 (def base-pi-tools #{:read :bash :edit :write :grep :find :ls})
@@ -22,18 +24,27 @@
     (string? x) (keyword x)
     :else x))
 
-(defn read-workflow [workflow-file]
-  (let [p (fs/absolutize workflow-file)
+(defn read-data-file [data-file]
+  (let [p (fs/absolutize data-file)
         ext (str/lower-case (str (fs/extension p)))
         text (slurp (str p))
-        wf (if (#{"json"} ext)
-             (json/parse-string text true)
-             (edn/read-string text))]
-    (assoc wf :__file (str p) :__dir (str (fs/parent p)))))
+        data (if (#{"json"} ext)
+               (json/parse-string text true)
+               (edn/read-string text))]
+    (assoc data :__file (str p) :__dir (str (fs/parent p)))))
+
+(defn read-workflow [workflow-file]
+  (read-data-file workflow-file))
+
+(defn read-node-package [node-file]
+  (read-data-file node-file))
 
 (defn workflow-dir [wf] (:__dir wf "."))
 (defn workflow-file [wf] (:__file wf))
 (defn workflow-name [wf] (or (get-in wf [:metadata :name]) (:name wf)))
+(defn node-package-dir [pkg] (:__dir pkg "."))
+(defn node-package-file [pkg] (:__file pkg))
+(defn node-package-name [pkg] (get-in pkg [:metadata :name]))
 (defn node-ids [wf] (set (keys (:states wf))))
 (defn node [wf id] (get-in wf [:states id]))
 (defn terminal-node? [[_ n]] (= :terminal (:type n)))
@@ -84,6 +95,8 @@
 
 (defn resolve-workflow-path [wf p]
   (when p (str (fs/path (workflow-dir wf) p))))
+(defn resolve-node-package-path [pkg p]
+  (when p (str (fs/path (node-package-dir pkg) p))))
 (defn absolute-path? [s] (and (string? s) (str/starts-with? s "/")))
 (defn contains-parent-segment? [s]
   (some #{".."} (str/split (str s) #"/")))

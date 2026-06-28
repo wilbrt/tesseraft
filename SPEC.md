@@ -1,7 +1,7 @@
 # Tesseraft Workflow Specification
 
 Status: Draft  
-Version: `agent.workflow/v1`
+Version: `tesseraft.workflow/v1`
 
 ## 1. Goals
 
@@ -30,7 +30,7 @@ policies.edn
 ## 4. Top-level workflow shape
 
 ```edn
-{:api-version "agent.workflow/v1"
+{:api-version "tesseraft.workflow/v1"
  :kind :workflow
  :metadata {:name "jira-to-pr"}
  :inputs {:ticket {:type :string :required true}}

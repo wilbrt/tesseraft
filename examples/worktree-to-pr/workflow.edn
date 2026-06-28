@@ -1,4 +1,4 @@
-{:api-version "agent.workflow/v1"
+{:api-version "tesseraft.workflow/v1"
  :kind :workflow
  :metadata {:name "worktree-to-pr"
             :title "Worktree to PR"

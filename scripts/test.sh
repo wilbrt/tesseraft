@@ -6,11 +6,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 RUN_DIR=".agent-runs/smoke-demo/smoke-test"
+TMP_DIR="$(mktemp -d)"
 cleanup() {
-  rm -rf "$RUN_DIR"
+  rm -rf "$RUN_DIR" "$TMP_DIR"
 }
 trap cleanup EXIT
 cleanup
+mkdir -p "$TMP_DIR"
 
 echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/smoke/workflow.edn
@@ -19,6 +21,25 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/review-loop/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
+
+printf '\nLinting self-contained node fixtures...\n'
+./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn
+
+printf '\nChecking node export/import...\n'
+./bin/tesseraft node export examples/smoke/workflow.edn start --out "$TMP_DIR/exported-start"
+./bin/tesseraft node lint "$TMP_DIR/exported-start/node.edn"
+cat >"$TMP_DIR/import-target.workflow.edn" <<'EOF'
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "import-target"}
+ :inputs {:prompt {:type :string :required true}}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :imported-design
+ :states {:done {:type :terminal :status :success}}}
+EOF
+./bin/tesseraft node import test/fixtures/valid/simple-node/node.edn "$TMP_DIR/import-target.workflow.edn" --as imported-design --next done
+./bin/tesseraft lint "$TMP_DIR/import-target.workflow.edn"
 
 echo "Checking CLI ergonomics..."
 VERSION_OUTPUT="$(./bin/tesseraft --version)"
@@ -91,5 +112,21 @@ if [[ "$invalid_status" -eq 0 ]]; then
   exit 1
 fi
 rm -f /tmp/tesseraft-invalid-lint.out
+
+set +e
+./bin/tesseraft node lint test/fixtures/invalid/missing-node-asset/node.edn >/tmp/tesseraft-invalid-node-lint.out 2>&1
+invalid_node_status=$?
+set -e
+if [[ "$invalid_node_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-invalid-node-lint.out >&2
+  echo "Expected invalid node fixture lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "asset-missing\|prompt-template-missing" /tmp/tesseraft-invalid-node-lint.out; then
+  cat /tmp/tesseraft-invalid-node-lint.out >&2
+  echo "Expected invalid node fixture to report missing asset or prompt" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-invalid-node-lint.out
 
 echo "Smoke checks passed."
