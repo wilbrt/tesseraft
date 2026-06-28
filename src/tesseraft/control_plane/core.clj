@@ -1,8 +1,8 @@
-(ns agent-workflow.control-plane.core
+(ns tesseraft.control-plane.core
   (:require
-    [agent-workflow.lint.core :as lint]
-    [agent-workflow.runtime.store :as store]
-    [agent-workflow.spec :as spec]
+    [tesseraft.lint.core :as lint]
+    [tesseraft.runtime.store :as store]
+    [tesseraft.spec :as spec]
     [babashka.fs :as fs]
     [cheshire.core :as json]
     [clojure.string :as str]))

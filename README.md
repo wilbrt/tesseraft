@@ -10,7 +10,7 @@ The important boundary is the workflow IaC file, not the implementation language
 - `schemas/*.schema.json` define portable runtime/linter artifact formats.
 - `bin/tesseraft lint` is a standalone linter CLI.
 - `bin/tesseraft run` is a lightweight reference runner CLI.
-- `bin/agent-workflow-lint` and `bin/agent-workflow-run` remain compatibility entry points.
+- `bin/tesseraft-lint` and `bin/tesseraft-run` remain compatibility entry points.
 - `bin/tesseraft control-plane` exposes a local read-only JSON inspection surface for workflows and runs.
 - `examples/jira-to-pr/workflow.edn` is a real workflow declaration.
 - `docs/CODE_STYLE.md` defines project code style and design principles.
@@ -103,12 +103,12 @@ git branch -D <branch>   # optional, after the PR/branch is no longer needed
 ## Package split
 
 ```text
-src/agent_workflow/spec.clj        shared parser/normalizer/template helpers
-src/agent_workflow/lint/core.clj   pure static linter library
-src/agent_workflow/lint/cli.clj    standalone linter CLI
-src/agent_workflow/runtime/*.clj   reference runner primitives
-src/agent_workflow/executors/*     executor implementations, including Pi CLI
-src/agent_workflow/adapters/*      deterministic handler adapters
+src/tesseraft/spec.clj        shared parser/normalizer/template helpers
+src/tesseraft/lint/core.clj   pure static linter library
+src/tesseraft/lint/cli.clj    standalone linter CLI
+src/tesseraft/runtime/*.clj   reference runner primitives
+src/tesseraft/executors/*     executor implementations, including Pi CLI
+src/tesseraft/adapters/*      deterministic handler adapters
 ```
 
 ## Current status

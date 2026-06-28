@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/agent-workflow/status.schema.json",
+  "$id": "https://example.invalid/tesseraft/status.schema.json",
   "title": "Tesseraft Status Artifact",
   "type": "object",
   "required": [

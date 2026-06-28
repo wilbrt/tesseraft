@@ -1,7 +1,7 @@
-(ns agent-workflow.executors.pi-cli
+(ns tesseraft.executors.pi-cli
   (:require
-    [agent-workflow.spec :as spec]
-    [agent-workflow.runtime.store :as store]
+    [tesseraft.spec :as spec]
+    [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [clojure.string :as str]))

@@ -83,6 +83,13 @@ Do not let adapters or executors mutate global workflow behavior.
 - Keep process-node protocols language-neutral.
 - Avoid absolute paths in workflow definitions unless explicitly required by runtime inputs.
 
+### Naming
+
+- Use Tesseraft-owned names for product, package, API, schema, and workflow concepts. Do not introduce new public names with an `agent` prefix.
+- Use `tesseraft.*` for internal Clojure namespaces and `src/tesseraft/` for implementation paths.
+- Branch names should start with semantic work-type prefixes such as `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`.
+- Do not use `agent/` as the default branch prefix for new work.
+
 ## Clojure/Babashka style
 
 - Use small functions with descriptive names.

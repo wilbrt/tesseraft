@@ -1,9 +1,9 @@
-(ns agent-workflow.runtime.cli
+(ns tesseraft.runtime.cli
   (:require
-    [agent-workflow.cli-args :as cli-args]
-    [agent-workflow.runtime.core :as runtime]
-    [agent-workflow.runtime.store :as store]
-    [agent-workflow.spec :as spec]
+    [tesseraft.cli-args :as cli-args]
+    [tesseraft.runtime.core :as runtime]
+    [tesseraft.runtime.store :as store]
+    [tesseraft.spec :as spec]
     [cheshire.core :as json]
     [clojure.string :as str]))
 
@@ -42,11 +42,11 @@
 (defn usage! []
   (binding [*out* *err*]
     (println "Usage:")
-    (println "  agent-workflow-run <workflow.edn> --input ticket=PROJ-123")
-    (println "  agent-workflow-run start <workflow.edn> --input ticket=PROJ-123")
-    (println "  agent-workflow-run step --run-dir .agent-runs/name/run-id")
-    (println "  agent-workflow-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
-    (println "  agent-workflow-run inspect --run-dir .agent-runs/name/run-id --format json"))
+    (println "  tesseraft-run <workflow.edn> --input ticket=PROJ-123")
+    (println "  tesseraft-run start <workflow.edn> --input ticket=PROJ-123")
+    (println "  tesseraft-run step --run-dir .agent-runs/name/run-id")
+    (println "  tesseraft-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
+    (println "  tesseraft-run inspect --run-dir .agent-runs/name/run-id --format json"))
   (System/exit 2))
 
 (defn -main [& args]
