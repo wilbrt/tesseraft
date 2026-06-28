@@ -11,5 +11,8 @@
   node {:doc "Self-contained node package commands"
         :requires ([agent-workflow.node.cli :as cli])
         :task (apply cli/-main *command-line-args*)}
+  control-plane {:doc "Read-only local control-plane inspection commands"
+                 :requires ([agent-workflow.control-plane.cli :as cli])
+                 :task (apply cli/-main *command-line-args*)}
   test {:doc "Run safe Tesseraft smoke checks"
         :task (shell "./scripts/test.sh")}}}

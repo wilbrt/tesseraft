@@ -1,19 +1,12 @@
 (ns agent-workflow.node.cli
   (:require
+    [agent-workflow.cli-args :as cli-args]
     [agent-workflow.lint.core :as lint]
     [agent-workflow.spec :as spec]
     [babashka.fs :as fs]
     [cheshire.core :as json]
     [clojure.pprint :as pprint]
     [clojure.string :as str]))
-
-(defn missing-value? [v]
-  (or (nil? v) (str/starts-with? v "--")))
-
-(defn require-value [flag v]
-  (when (missing-value? v)
-    (throw (ex-info (str "Missing value for " flag) {:flag flag})))
-  v)
 
 (defn parse-id [s]
   (cond
@@ -91,11 +84,11 @@
       (let [[a b & more] xs
             rest-xs (rest xs)]
         (case a
-          "--format" (recur more (assoc acc :format (require-value a b)))
+          "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
           "--strict" (recur rest-xs (assoc acc :strict true))
-          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword (require-value a b))))
-          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword (require-value a b))))
-          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword (require-value a b))))
+          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword (cli-args/require-value a b))))
+          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword (cli-args/require-value a b))))
+          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword (cli-args/require-value a b))))
           (recur rest-xs (update acc :node-packages conj a)))))))
 
 (defn parse-export-args [args]
@@ -105,7 +98,7 @@
       (let [[a b & more] xs
             rest-xs (rest xs)]
         (case a
-          "--out" (recur more (assoc acc :out (require-value a b)))
+          "--out" (recur more (assoc acc :out (cli-args/require-value a b)))
           (cond
             (nil? (:workflow acc)) (recur rest-xs (assoc acc :workflow a))
             (nil? (:state-id acc)) (recur rest-xs (assoc acc :state-id (parse-id a)))
@@ -118,8 +111,8 @@
       (let [[a b & more] xs
             rest-xs (rest xs)]
         (case a
-          "--as" (recur more (assoc acc :as (parse-id (require-value a b))))
-          "--next" (recur more (assoc acc :next (parse-id (require-value a b))))
+          "--as" (recur more (assoc acc :as (parse-id (cli-args/require-value a b))))
+          "--next" (recur more (assoc acc :next (parse-id (cli-args/require-value a b))))
           (cond
             (nil? (:node-package acc)) (recur rest-xs (assoc acc :node-package a))
             (nil? (:workflow acc)) (recur rest-xs (assoc acc :workflow a))

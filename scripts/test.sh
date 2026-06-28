@@ -87,6 +87,53 @@ if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   exit 1
 fi
 
+printf '\nChecking read-only control-plane commands...\n'
+./bin/tesseraft control-plane workflows >/tmp/tesseraft-cp-workflows.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-cp-workflows.json'))
+assert any(w['name'] == 'smoke-demo' for w in x['workflows'])
+PY
+./bin/tesseraft control-plane graph smoke-demo >/tmp/tesseraft-cp-graph.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-cp-graph.json'))
+assert x['workflow_name'] == 'smoke-demo'
+assert any(n['id'] == 'start' for n in x['nodes'])
+assert any(e['from'] == 'start' and e['to'] == 'done' for e in x['edges'])
+PY
+./bin/tesseraft control-plane run smoke-test >/tmp/tesseraft-cp-run.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-cp-run.json'))
+assert x['run']['run_id'] == 'smoke-test'
+assert x['run']['status'] == 'done'
+assert x['run']['links']['events'] == '/runs/smoke-test/events'
+PY
+./bin/tesseraft control-plane events smoke-test >/tmp/tesseraft-cp-events.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-cp-events.json'))
+assert x['run_id'] == 'smoke-test'
+assert any(e['event'] == 'run.finished' for e in x['events'])
+PY
+rm -f /tmp/tesseraft-cp-workflows.json /tmp/tesseraft-cp-graph.json /tmp/tesseraft-cp-run.json /tmp/tesseraft-cp-events.json
+
+printf '\nChecking control-plane edge cases...\n'
+bb -e '(require (quote [agent-workflow.control-plane.core :as cp]))
+       (let [dir (java.nio.file.Files/createTempDirectory "tesseraft-cp-test" (make-array java.nio.file.attribute.FileAttribute 0))
+             base (str dir)
+             dup-a (str base "/conflict/wf-a/dup")
+             dup-b (str base "/conflict/wf-b/dup")
+             malformed (str base "/malformed/wf-a/bad-events")]
+         (doseq [d [dup-a dup-b malformed]] (.mkdirs (java.io.File. d)))
+         (spit (str dup-a "/state.edn") (pr-str {:workflow {:name "wf-a" :version "v1"} :run {:id "dup" :dir dup-a :status "done" :state :done}}))
+         (spit (str dup-b "/state.edn") (pr-str {:workflow {:name "wf-b" :version "v1"} :run {:id "dup" :dir dup-b :status "done" :state :done}}))
+         (assert (= "conflict" (get-in (cp/get-run {:workspace-root base :runs-root "conflict"} "dup") [:error :code])))
+         (spit (str malformed "/state.edn") (pr-str {:workflow {:name "wf-a" :version "v1"} :run {:id "bad-events" :dir malformed :status "done" :state :done}}))
+         (spit (str malformed "/events.jsonl") "{bad json}\n")
+         (assert (= "parse_error" (get-in (cp/get-run-events {:workspace-root base :runs-root "malformed"} "bad-events") [:error :code]))))'
+
 echo "Checking GitHub PR URL normalization..."
 bb -e '(require (quote agent-workflow.adapters.builtin))
        (let [u agent-workflow.adapters.builtin/github-pr-url]

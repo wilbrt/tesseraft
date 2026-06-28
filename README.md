@@ -11,6 +11,7 @@ The important boundary is the workflow IaC file, not the implementation language
 - `bin/tesseraft lint` is a standalone linter CLI.
 - `bin/tesseraft run` is a lightweight reference runner CLI.
 - `bin/agent-workflow-lint` and `bin/agent-workflow-run` remain compatibility entry points.
+- `bin/tesseraft control-plane` exposes a local read-only JSON inspection surface for workflows and runs.
 - `examples/jira-to-pr/workflow.edn` is a real workflow declaration.
 - `docs/CODE_STYLE.md` defines project code style and design principles.
 - `docs/WEB_UI.md` defines initial Workflow Studio and Run Console product boundaries.
@@ -27,6 +28,8 @@ The important boundary is the workflow IaC file, not the implementation language
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn --format json
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn --emit mermaid
+./bin/tesseraft control-plane workflows
+./bin/tesseraft control-plane graph smoke-demo
 ```
 
 The linter has no Pi, Jira, GitHub, or browser dependency. It only needs Babashka and the files being linted.
@@ -123,7 +126,7 @@ Implemented:
 Not yet implemented:
 
 - Full Pi SDK executor
-- HTTP control-plane API
+- HTTP control-plane server (the first read-only library/CLI skeleton is available via `tesseraft control-plane`)
 - UI Workflow Studio / Run Console (see `docs/WEB_UI.md`)
 - Approval node UX
 - Durable DB-backed runner
