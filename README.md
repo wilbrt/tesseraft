@@ -15,6 +15,7 @@ The important boundary is the workflow IaC file, not the implementation language
 - `docs/CODE_STYLE.md` defines project code style and design principles.
 - `docs/WEB_UI.md` defines initial Workflow Studio and Run Console product boundaries.
 - `docs/WEB_UI_USE_CASES.md` documents Web UI user objectives before implementation details.
+- `docs/WEB_UI_ARCHITECTURE.md` compares Web UI serving and control-plane architecture options.
 - `docs/PR_HOUSEKEEPING.md` describes the safe PR housekeeping workflow.
 
 ## Quick start
