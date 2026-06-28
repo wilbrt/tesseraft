@@ -1,0 +1,12 @@
+{:api-version "agent.node/v1"
+ :kind :node
+ :metadata {:name "missing-node-asset"}
+ :assets {:prompts ["prompts/missing.md.tmpl"]
+          :schemas ["schemas/status.schema.json"]}
+ :node {:type :agent
+        :executor :pi-cli
+        :prompt-template "prompts/missing.md.tmpl"
+        :tools [:read]
+        :outputs {:status {:path "status.json"
+                           :schema "schemas/status.schema.json"
+                           :required true}}}}
