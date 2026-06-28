@@ -1,6 +1,6 @@
-(ns agent-workflow.lint.core
+(ns tesseraft.lint.core
   (:require
-    [agent-workflow.spec :as spec]
+    [tesseraft.spec :as spec]
     [babashka.fs :as fs]
     [clojure.string :as str]))
 

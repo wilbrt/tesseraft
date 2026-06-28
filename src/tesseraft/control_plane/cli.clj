@@ -1,7 +1,7 @@
-(ns agent-workflow.control-plane.cli
+(ns tesseraft.control-plane.cli
   (:require
-    [agent-workflow.cli-args :as cli-args]
-    [agent-workflow.control-plane.core :as control-plane]
+    [tesseraft.cli-args :as cli-args]
+    [tesseraft.control-plane.core :as control-plane]
     [cheshire.core :as json]))
 
 (defn parse-args [args]

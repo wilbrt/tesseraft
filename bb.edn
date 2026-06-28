@@ -2,17 +2,17 @@
  :deps {cheshire/cheshire {:mvn/version "5.13.0"}}
  :tasks
  {lint {:doc "Standalone workflow linter"
-        :requires ([agent-workflow.lint.cli :as cli])
+        :requires ([tesseraft.lint.cli :as cli])
         :task (apply cli/-main *command-line-args*)}
   run {:doc "Reference workflow runner"
        :override-builtin true
-       :requires ([agent-workflow.runtime.cli :as cli])
+       :requires ([tesseraft.runtime.cli :as cli])
        :task (apply cli/-main *command-line-args*)}
   node {:doc "Self-contained node package commands"
-        :requires ([agent-workflow.node.cli :as cli])
+        :requires ([tesseraft.node.cli :as cli])
         :task (apply cli/-main *command-line-args*)}
   control-plane {:doc "Read-only local control-plane inspection commands"
-                 :requires ([agent-workflow.control-plane.cli :as cli])
+                 :requires ([tesseraft.control-plane.cli :as cli])
                  :task (apply cli/-main *command-line-args*)}
   test {:doc "Run safe Tesseraft smoke checks"
         :task (shell "./scripts/test.sh")}}}

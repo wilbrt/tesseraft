@@ -1,8 +1,8 @@
-(ns agent-workflow.node.cli
+(ns tesseraft.node.cli
   (:require
-    [agent-workflow.cli-args :as cli-args]
-    [agent-workflow.lint.core :as lint]
-    [agent-workflow.spec :as spec]
+    [tesseraft.cli-args :as cli-args]
+    [tesseraft.lint.core :as lint]
+    [tesseraft.spec :as spec]
     [babashka.fs :as fs]
     [cheshire.core :as json]
     [clojure.pprint :as pprint]

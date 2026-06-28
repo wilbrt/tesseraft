@@ -1,10 +1,10 @@
-(ns agent-workflow.runtime.core
+(ns tesseraft.runtime.core
   (:require
-    [agent-workflow.adapters.builtin :as adapters]
-    [agent-workflow.executors.pi-cli :as pi-cli]
-    [agent-workflow.lint.core :as lint]
-    [agent-workflow.spec :as spec]
-    [agent-workflow.runtime.store :as store]
+    [tesseraft.adapters.builtin :as adapters]
+    [tesseraft.executors.pi-cli :as pi-cli]
+    [tesseraft.lint.core :as lint]
+    [tesseraft.spec :as spec]
+    [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]

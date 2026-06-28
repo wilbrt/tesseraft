@@ -1,4 +1,4 @@
-(ns agent-workflow.spec
+(ns tesseraft.spec
   (:require
     [babashka.fs :as fs]
     [cheshire.core :as json]

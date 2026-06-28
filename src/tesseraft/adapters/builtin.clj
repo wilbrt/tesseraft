@@ -1,7 +1,7 @@
-(ns agent-workflow.adapters.builtin
+(ns tesseraft.adapters.builtin
   (:require
-    [agent-workflow.spec :as spec]
-    [agent-workflow.runtime.store :as store]
+    [tesseraft.spec :as spec]
+    [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]

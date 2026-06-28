@@ -1,8 +1,8 @@
-(ns agent-workflow.lint.cli
+(ns tesseraft.lint.cli
   (:require
-    [agent-workflow.cli-args :as cli-args]
-    [agent-workflow.lint.core :as lint]
-    [agent-workflow.spec :as spec]
+    [tesseraft.cli-args :as cli-args]
+    [tesseraft.lint.core :as lint]
+    [tesseraft.spec :as spec]
     [cheshire.core :as json]
     [clojure.string :as str]))
 
@@ -53,7 +53,7 @@
           workflows (:workflows opts)]
       (when (empty? workflows)
         (binding [*out* *err*]
-          (println "Usage: agent-workflow-lint <workflow.edn>... [--format human|json|edn] [--strict] [--emit graph|mermaid|normalized]"))
+          (println "Usage: tesseraft-lint <workflow.edn>... [--format human|json|edn] [--strict] [--emit graph|mermaid|normalized]"))
         (System/exit 2))
       (if (:emit opts)
         (doseq [wf-file workflows]

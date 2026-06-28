@@ -9,11 +9,11 @@ case "$cmd" in
     ;;
   lint)
     shift
-    exec "$SCRIPT_DIR/agent-workflow-lint" "$@"
+    exec "$SCRIPT_DIR/tesseraft-lint" "$@"
     ;;
   run)
     shift
-    exec "$SCRIPT_DIR/agent-workflow-run" "$@"
+    exec "$SCRIPT_DIR/tesseraft-run" "$@"
     ;;
   node)
     shift

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/agent-workflow/lint-result.schema.json",
+  "$id": "https://example.invalid/tesseraft/lint-result.schema.json",
   "title": "Tesseraft Lint Result",
   "type": "object",
   "required": [

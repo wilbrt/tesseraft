@@ -75,9 +75,9 @@ expect_missing_value() {
 }
 
 expect_missing_value "Missing value for --format" ./bin/tesseraft lint examples/smoke/workflow.edn --format
-expect_missing_value "Missing value for --emit" ./bin/agent-workflow-lint examples/smoke/workflow.edn --emit
+expect_missing_value "Missing value for --emit" ./bin/tesseraft-lint examples/smoke/workflow.edn --emit
 expect_missing_value "Missing value for --run-id" ./bin/tesseraft run examples/smoke/workflow.edn --run-id
-expect_missing_value "Missing value for --format" ./bin/agent-workflow-run examples/smoke/workflow.edn --format
+expect_missing_value "Missing value for --format" ./bin/tesseraft-run examples/smoke/workflow.edn --format
 
 echo "Running local smoke workflow..."
 SMOKE_OUTPUT="$(./bin/tesseraft run examples/smoke/workflow.edn --run-id smoke-test --format json)"
@@ -120,7 +120,7 @@ PY
 rm -f /tmp/tesseraft-cp-workflows.json /tmp/tesseraft-cp-graph.json /tmp/tesseraft-cp-run.json /tmp/tesseraft-cp-events.json
 
 printf '\nChecking control-plane edge cases...\n'
-bb -e '(require (quote [agent-workflow.control-plane.core :as cp]))
+bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
        (let [dir (java.nio.file.Files/createTempDirectory "tesseraft-cp-test" (make-array java.nio.file.attribute.FileAttribute 0))
              base (str dir)
              dup-a (str base "/conflict/wf-a/dup")
@@ -135,8 +135,8 @@ bb -e '(require (quote [agent-workflow.control-plane.core :as cp]))
          (assert (= "parse_error" (get-in (cp/get-run-events {:workspace-root base :runs-root "malformed"} "bad-events") [:error :code]))))'
 
 echo "Checking GitHub PR URL normalization..."
-bb -e '(require (quote agent-workflow.adapters.builtin))
-       (let [u agent-workflow.adapters.builtin/github-pr-url]
+bb -e '(require (quote tesseraft.adapters.builtin))
+       (let [u tesseraft.adapters.builtin/github-pr-url]
          (assert (= "https://github.com/owner/repo/pull/123"
                     (u "owner/repo" {:url "https://api.github.com/repos/owner/repo/pulls/123" :number 123})))
          (assert (= "https://github.com/owner/repo/pull/123"
