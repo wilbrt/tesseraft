@@ -22,4 +22,4 @@ Deterministic handlers such as Jira, GitHub, git, notifications, and deployment 
 
 ## `tesseraft-ui`
 
-Future Workflow Studio and Run Console. It must use spec/linter/runner APIs and never become the source of truth for workflow definitions.
+Future Workflow Studio and Run Console. It must use spec/linter/runner APIs and never become the source of truth for workflow definitions. See [WEB_UI.md](WEB_UI.md) for the initial product boundaries and vocabulary.
