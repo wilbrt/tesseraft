@@ -1,18 +1,11 @@
 (ns agent-workflow.runtime.cli
   (:require
+    [agent-workflow.cli-args :as cli-args]
     [agent-workflow.runtime.core :as runtime]
     [agent-workflow.runtime.store :as store]
     [agent-workflow.spec :as spec]
     [cheshire.core :as json]
     [clojure.string :as str]))
-
-(defn missing-value? [v]
-  (or (nil? v) (str/starts-with? v "--")))
-
-(defn require-value [flag v]
-  (when (missing-value? v)
-    (throw (ex-info (str "Missing value for " flag) {:flag flag})))
-  v)
 
 (defn parse-input [s]
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
@@ -28,11 +21,11 @@
           "step" (recur rest-xs (assoc acc :command "step"))
           "resume" (recur rest-xs (assoc acc :command "resume"))
           "inspect" (recur rest-xs (assoc acc :command "inspect"))
-          "--input" (let [[k v] (parse-input (require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
-          "--run-id" (recur more (assoc acc :run-id (require-value a b)))
-          "--run-dir" (recur more (assoc acc :run-dir (require-value a b)))
-          "--max-steps" (recur more (assoc acc :max-steps (parse-long (require-value a b))))
-          "--format" (recur more (assoc acc :format (require-value a b)))
+          "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
+          "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
+          "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
+          "--max-steps" (recur more (assoc acc :max-steps (parse-long (cli-args/require-value a b))))
+          "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
           (if (:workflow acc)
             (recur rest-xs acc)
             (recur rest-xs (assoc acc :workflow a))))))))
