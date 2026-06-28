@@ -92,7 +92,7 @@ Run Console must not:
 
 ## Initial user objectives
 
-See [WEB_UI_USE_CASES.md](WEB_UI_USE_CASES.md) for a use-case matrix that expands these objectives before implementation details.
+See [WEB_UI_USE_CASES.md](WEB_UI_USE_CASES.md) for a use-case matrix that expands these objectives before implementation details. See [WEB_UI_ARCHITECTURE.md](WEB_UI_ARCHITECTURE.md) for the serving and control-plane architecture decision matrix.
 
 Users should be able to:
 
@@ -116,7 +116,7 @@ Allow Workflow Studio edits to workflow packages through explicit file diffs. Sa
 
 ### Phase 3: runtime console
 
-Build Run Console over the control plane, event log, artifacts, run state, and approval records. Runs must be created from selected immutable workflow versions and must expose the version they use.
+Build Run Console over the control plane, event log, artifacts, run state, and approval records. Runs must be created from selected immutable workflow versions and must expose the version they use. The architecture matrix recommends a local file-backed HTTP control plane as the first runtime slice.
 
 ### Phase 4: node package UX
 
