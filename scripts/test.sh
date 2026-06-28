@@ -28,7 +28,7 @@ printf '\nChecking node export/import...\n'
 ./bin/tesseraft node export examples/smoke/workflow.edn start --out "$TMP_DIR/exported-start"
 ./bin/tesseraft node lint "$TMP_DIR/exported-start/node.edn"
 cat >"$TMP_DIR/import-target.workflow.edn" <<'EOF'
-{:api-version "agent.workflow/v1"
+{:api-version "tesseraft.workflow/v1"
  :kind :workflow
  :metadata {:name "import-target"}
  :inputs {:prompt {:type :string :required true}}

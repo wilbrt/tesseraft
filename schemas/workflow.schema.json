@@ -11,7 +11,7 @@
   ],
   "properties": {
     "api-version": {
-      "const": "agent.workflow/v1"
+      "const": "tesseraft.workflow/v1"
     },
     "kind": {
       "const": "workflow"

@@ -5,8 +5,8 @@
     [clojure.edn :as edn]
     [clojure.string :as str]))
 
-(def supported-api-versions #{"agent.workflow/v1"})
-(def supported-node-api-versions #{"agent.node/v1"})
+(def supported-api-versions #{"tesseraft.workflow/v1"})
+(def supported-node-api-versions #{"tesseraft.node/v1"})
 (def supported-kind :workflow)
 (def supported-node-kind :node)
 (def valid-node-types #{:agent :deterministic :process :timer :approval :router :terminal})

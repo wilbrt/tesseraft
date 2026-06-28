@@ -1,7 +1,7 @@
 # Tesseraft Self-contained Nodes
 
 Status: Draft  
-Version: `agent.node/v1`
+Version: `tesseraft.node/v1`
 
 Self-contained nodes are portable node packages that can be linted, shared, imported into workflows, and later published through a node repository. The package contract is the durable boundary; repositories are distribution mechanisms over that contract.
 
@@ -22,12 +22,12 @@ A compliant implementation should be able to:
 
 The node package format does not define the public repository protocol. A repository may be a local directory, Git repository, HTTP service, or future registry as long as it serves the same package contract.
 
-The first version models a single reusable node. Multi-node reusable subgraphs can be added later as `agent.node-package/v1` or an extension field without weakening the single-node contract.
+The first version models a single reusable node. Multi-node reusable subgraphs can be added later as `tesseraft.node-package/v1` or an extension field without weakening the single-node contract.
 
 ## Package shape
 
 ```edn
-{:api-version "agent.node/v1"
+{:api-version "tesseraft.node/v1"
  :kind :node
  :metadata {:name "design-with-pi"
             :title "Design with Pi"
@@ -111,7 +111,7 @@ node-repo/
 ```
 
 ```edn
-{:api-version "agent.node-repository/v1"
+{:api-version "tesseraft.node-repository/v1"
  :kind :node-repository
  :nodes [{:name "design-with-pi"
           :version "0.1.0"

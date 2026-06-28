@@ -1,4 +1,4 @@
-{:api-version "agent.node/v1"
+{:api-version "tesseraft.node/v1"
  :kind :node
  :metadata {:name "simple-design"
             :version "0.1.0"

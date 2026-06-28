@@ -75,7 +75,7 @@
 (defn exported-node-package [wf state-id node]
   (let [node-name (str (spec/workflow-name wf) "-" (name state-id))
         node* (dissoc node :next :transitions)]
-    {:api-version "agent.node/v1"
+    {:api-version "tesseraft.node/v1"
      :kind :node
      :metadata (cond-> {:name node-name}
                  (:title node) (assoc :title (:title node))

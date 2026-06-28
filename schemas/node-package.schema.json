@@ -10,7 +10,7 @@
   ],
   "properties": {
     "api-version": {
-      "const": "agent.node/v1"
+      "const": "tesseraft.node/v1"
     },
     "kind": {
       "const": "node"

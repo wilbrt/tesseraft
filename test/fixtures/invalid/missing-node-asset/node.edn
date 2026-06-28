@@ -1,4 +1,4 @@
-{:api-version "agent.node/v1"
+{:api-version "tesseraft.node/v1"
  :kind :node
  :metadata {:name "missing-node-asset"}
  :assets {:prompts ["prompts/missing.md.tmpl"]
