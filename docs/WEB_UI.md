@@ -92,6 +92,8 @@ Run Console must not:
 
 ## Initial user objectives
 
+See [WEB_UI_USE_CASES.md](WEB_UI_USE_CASES.md) for a use-case matrix that expands these objectives before implementation details.
+
 Users should be able to:
 
 1. Author and validate workflow packages with visible file changes.
