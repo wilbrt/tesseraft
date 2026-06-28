@@ -15,7 +15,7 @@
 
 (defn default-branch [inputs]
   (when-let [ticket (:ticket inputs)]
-    (str "agent/" (str/lower-case ticket))))
+    (str "feature/" (str/lower-case ticket))))
 
 (defn init-context [wf opts]
   (let [content (slurp (spec/workflow-file wf))
