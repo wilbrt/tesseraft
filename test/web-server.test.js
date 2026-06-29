@@ -1,31 +1,25 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
-const { createServer, parseArgs, routeApi } = require('../web/server');
-
-function listen(server) {
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve(server.address().port);
-    });
+const listen = (server) => new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', () => {
+    server.off('error', reject);
+    resolve(server.address().port);
   });
-}
+});
 
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
-  });
-}
+const close = (server) => new Promise((resolve, reject) => {
+  server.close((error) => error ? reject(error) : resolve());
+});
 
-function removeRun(runId) {
+const removeRun = (runId) => {
   fs.rmSync(path.join(process.cwd(), '.agent-runs', 'smoke-demo', runId), { recursive: true, force: true });
-}
+};
 
 test('parseArgs accepts port zero for tests', () => {
   assert.deepEqual(parseArgs(['--port', '0']), { host: '127.0.0.1', port: 0 });
@@ -38,7 +32,7 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
-test('web server serves static index and JSON API routes', async (t) => {
+test('web server serves React index/assets and JSON API routes', async (t) => {
   removeRun('web-server-test');
   t.after(() => removeRun('web-server-test'));
 
@@ -54,7 +48,15 @@ test('web server serves static index and JSON API routes', async (t) => {
 
   const index = await fetch(`${base}/`);
   assert.equal(index.status, 200);
-  assert.match(await index.text(), /Tesseraft Local Web UI/);
+  const indexText = await index.text();
+  assert.match(indexText, /Tesseraft Local Web UI/);
+  assert.match(indexText, /type="module"/);
+
+  const assetMatch = indexText.match(/src="([^\"]+\.js)"/);
+  assert.ok(assetMatch, 'expected built React JavaScript asset');
+  const asset = await fetch(`${base}${assetMatch[1]}`);
+  assert.equal(asset.status, 200);
+  assert.match(asset.headers.get('content-type') || '', /javascript/);
 
   const workflowsResponse = await fetch(`${base}/api/workflows`);
   assert.equal(workflowsResponse.status, 200);

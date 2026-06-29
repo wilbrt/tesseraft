@@ -28,7 +28,12 @@ case "$cmd" in
   web)
     shift
     ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    exec node "$ROOT_DIR/web/server.js" "$@"
+    SERVER="$ROOT_DIR/web/dist-server/server.js"
+    if [[ ! -f "$SERVER" ]]; then
+      echo "Web UI server is not built. Run: npm run web:build" >&2
+      exit 1
+    fi
+    exec node "$SERVER" "$@"
     ;;
   ""|-h|--help|help)
     echo "Usage: tesseraft <command> [args]"
