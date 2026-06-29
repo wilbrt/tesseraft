@@ -12,6 +12,7 @@ type ArtifactRead = { artifact: Artifact; previewable?: boolean; content?: strin
 type RunSummary = { run_id: string; workflow_name?: string; status?: string };
 type RunDetail = RunSummary & { state?: string; round?: number; attempt?: number; path?: string; attempts?: Attempt[]; failures?: Failure[] };
 type EventRecord = { event?: string; type?: string; state?: string; from?: string; attempt?: number; [key: string]: unknown };
+type MutationResult = { operation?: string; status?: string; code?: string; run_id?: string; cli?: unknown; latest_runtime?: unknown; run_detail?: unknown };
 
 type LoadState<T> = {
   data: T;
@@ -23,6 +24,20 @@ const getJson = async <T,>(url: string): Promise<T> => {
   const data = await response.json();
   if (!response.ok || data.error) {
     const message = data.error?.message || `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+};
+
+const postJson = async <T,>(url: string, body: unknown): Promise<T> => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json();
+  if ((!response.ok && data.status !== 'guarded') || data.error) {
+    const message = data.error?.message || data.cli?.stderr || `Request failed: ${response.status}`;
     throw new Error(message);
   }
   return data;
@@ -83,6 +98,78 @@ const AttemptTimeline = ({ attempts, selectedNodeId }: { attempts: Attempt[]; se
     </ol>
   </section>
 );
+
+const RunControls = ({ selectedWorkflow, selectedRun, runDetail, onRefresh }: { selectedWorkflow: string | null; selectedRun: string | null; runDetail: RunDetail | null; onRefresh: (runId?: string) => Promise<void> }) => {
+  const [runId, setRunId] = useState(`run-${Date.now()}`);
+  const [inputsText, setInputsText] = useState('');
+  const [maxSteps, setMaxSteps] = useState(10);
+  const [confirmStart, setConfirmStart] = useState(false);
+  const [confirmStep, setConfirmStep] = useState(false);
+  const [confirmResume, setConfirmResume] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<MutationResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const smokeSafe = selectedWorkflow === 'smoke-demo' || runDetail?.workflow_name === 'smoke-demo';
+
+  const parseInputs = (): Record<string, string> => {
+    const inputs: Record<string, string> = {};
+    for (const line of inputsText.split('\n').map((item) => item.trim()).filter(Boolean)) {
+      const [key, ...rest] = line.split('=');
+      if (!key || rest.length === 0) throw new Error(`Invalid input "${line}"; use key=value`);
+      inputs[key] = rest.join('=');
+    }
+    return inputs;
+  };
+
+  const mutate = async (label: string, action: () => Promise<MutationResult>, refreshRunId?: string): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const data = await action();
+      setResult(data);
+      await onRefresh(refreshRunId || data.run_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+      if (label === 'start') setConfirmStart(false);
+      if (label === 'step') setConfirmStep(false);
+      if (label === 'resume') setConfirmResume(false);
+    }
+  };
+
+  return (
+    <section className="panel run-controls" aria-label="Run controls">
+      <h2>Run controls</h2>
+      <p className="warning"><strong>Local mutation warning:</strong> start, step, and resume execute workflow nodes on this machine. Non-smoke workflows may run agents, processes, or other side effects.</p>
+      {!smokeSafe && <p className="warning strong">Selected workflow/run is not the smoke-demo local-safe workflow. Confirm before mutating.</p>}
+      <div className="control-grid">
+        <div className="control-card">
+          <h3>Start selected workflow</h3>
+          <label>Run ID <input value={runId} onChange={(event) => setRunId(event.target.value)} /></label>
+          <label>Inputs (key=value, one per line) <textarea value={inputsText} onChange={(event) => setInputsText(event.target.value)} /></label>
+          <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects.</label>
+          <button type="button" disabled={!selectedWorkflow || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: parseInputs() }), runId)}>Start run</button>
+        </div>
+        <div className="control-card">
+          <h3>Step selected run</h3>
+          <p className="muted">Executes exactly one node when possible; exit code 0 can still leave the run running.</p>
+          <label className="check"><input type="checkbox" checked={confirmStep} onChange={(event) => setConfirmStep(event.target.checked)} /> Confirm one local node execution.</label>
+          <button type="button" disabled={!selectedRun || !confirmStep || busy} onClick={() => mutate('step', () => postJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}/step`, {}), selectedRun || undefined)}>Step one node</button>
+        </div>
+        <div className="control-card">
+          <h3>Resume selected run</h3>
+          <label>Max steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
+          <label className="check"><input type="checkbox" checked={confirmResume} onChange={(event) => setConfirmResume(event.target.checked)} /> Confirm bounded local execution.</label>
+          <button type="button" disabled={!selectedRun || !confirmResume || busy} onClick={() => mutate('resume', () => postJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}/resume`, { max_steps: maxSteps }), selectedRun || undefined)}>Resume run</button>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      {result && <div className={result.status === 'guarded' ? 'warning' : 'success'}>Mutation {result.operation} {result.status}{result.code ? ` (${result.code})` : ''}<pre>{snippet(result)}</pre></div>}
+    </section>
+  );
+};
 
 const ArtifactBrowser = ({ runId, artifacts, selectedNodeId }: { runId: string | null; artifacts: Artifact[]; selectedNodeId: string | null }) => {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -146,13 +233,20 @@ export const App = () => {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
 
+  const loadRuns = async (): Promise<void> => {
+    try {
+      const data = await getJson<{ runs: RunSummary[] }>('/api/runs');
+      setRuns({ data: data.runs || [], error: null });
+    } catch (error) {
+      setRuns({ data: [], error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   useEffect(() => {
     getJson<{ workflows: WorkflowSummary[] }>('/api/workflows')
       .then((data) => setWorkflows({ data: data.workflows || [], error: null }))
       .catch((error: Error) => setWorkflows({ data: [], error: error.message }));
-    getJson<{ runs: RunSummary[] }>('/api/runs')
-      .then((data) => setRuns({ data: data.runs || [], error: null }))
-      .catch((error: Error) => setRuns({ data: [], error: error.message }));
+    loadRuns();
   }, []);
 
   const selectWorkflow = async (name: string): Promise<void> => {
@@ -193,6 +287,12 @@ export const App = () => {
     }
   };
 
+  const refreshAfterMutation = async (runId?: string): Promise<void> => {
+    await loadRuns();
+    if (runId) await selectRun(runId);
+    else if (selectedRun) await selectRun(selectedRun);
+  };
+
   const visibleEvents = selectedNodeId ? events.filter((event) => nodeForEvent(event) === selectedNodeId || !nodeForEvent(event)) : events;
 
   return (
@@ -231,6 +331,8 @@ export const App = () => {
           )}
           <WorkflowGraph nodes={graph.nodes} edges={graph.edges} selectedNodeId={selectedNodeId} onSelectNode={(node) => setSelectedNodeId(node.id)} />
         </section>
+
+        <RunControls selectedWorkflow={selectedWorkflow} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />
 
         <section className="panel">
           <h2>Runs</h2>

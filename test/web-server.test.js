@@ -103,6 +103,87 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.match(artifact.content, /run.finished/);
 });
 
+test('web server supports local smoke start, step, and resume mutations', async (t) => {
+  const runId = `web-mutation-${Date.now()}`;
+  removeRun(runId);
+  t.after(() => removeRun(runId));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const startResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: 'smoke-demo', run_id: runId, inputs: { ticket: 'SMOKE-1' } })
+  });
+  assert.equal(startResponse.status, 200);
+  const started = await startResponse.json();
+  assert.equal(started.operation, 'start');
+  assert.equal(started.status, 'ok');
+  assert.equal(started.run_id, runId);
+  assert.equal(started.latest_runtime.run.status, 'running');
+
+  const duplicateResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: 'smoke-demo', run_id: runId, inputs: {} })
+  });
+  assert.equal(duplicateResponse.status, 409);
+
+  const stepResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/step`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.equal(stepResponse.status, 200);
+  const stepped = await stepResponse.json();
+  assert.equal(stepped.operation, 'step');
+  assert.equal(stepped.status, 'ok');
+  assert.equal(stepped.latest_runtime.run.status, 'running');
+  assert.equal(stepped.latest_runtime.run.state, 'done');
+
+  const resumeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/resume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ max_steps: 1 })
+  });
+  assert.ok([200, 422].includes(resumeResponse.status));
+  const resumed = await resumeResponse.json();
+  assert.equal(resumed.operation, 'resume');
+  assert.ok(['ok', 'guarded'].includes(resumed.status));
+  if (resumeResponse.status === 422) assert.equal(resumed.code, 'max_steps_exceeded');
+
+  const runResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
+  assert.equal(runResponse.status, 200);
+  const run = await runResponse.json();
+  assert.equal(run.run.run_id, runId);
+});
+
+test('web server reports mutation validation errors as JSON', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const badJson = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{not-json'
+  });
+  assert.equal(badJson.status, 400);
+  const badJsonBody = await badJson.json();
+  assert.equal(badJsonBody.error.code, 'bad_request');
+
+  const badResume = await fetch(`${base}/api/runs/no-such-run/resume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ max_steps: 0 })
+  });
+  assert.ok([400, 404].includes(badResume.status));
+});
+
 test('web server reports not found and malformed API routes as JSON errors', async (t) => {
   const server = createServer();
   const port = await listen(server);

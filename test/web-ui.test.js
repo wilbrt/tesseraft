@@ -67,3 +67,15 @@ test('App source exposes Run Console attempt, artifact, and failure surfaces', (
   assert.match(source, /Failure \/ issues/);
   assert.match(source, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });
+
+test('App source exposes local mutation controls with warnings and POST routes', () => {
+  const source = fs.readFileSync('web/src/App.tsx', 'utf8');
+  assert.match(source, /Run controls/);
+  assert.match(source, /Local mutation warning/);
+  assert.match(source, /Non-smoke workflows may run agents, processes, or other side effects/);
+  assert.match(source, /I understand this may execute local side effects/);
+  assert.match(source, /Confirm one local node execution/);
+  assert.match(source, /postJson<MutationResult>\('\/api\/runs'/);
+  assert.match(source, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
+  assert.match(source, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
+});
