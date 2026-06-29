@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import fs from 'node:fs';
 import { WorkflowGraph, formatCondition } from '../web/src/components/WorkflowGraph.tsx';
 import { layoutGraph } from '../web/src/lib/graphLayout.ts';
 
@@ -44,4 +45,25 @@ test('WorkflowGraph renders an SVG graph with clickable node details affordances
   assert.match(markup, /<line/);
   assert.match(markup, /Graph edges/);
   assert.match(markup, /\{&quot;else&quot;:true\}/);
+});
+
+test('WorkflowGraph marks selected nodes for run correlation', () => {
+  const markup = renderToStaticMarkup(React.createElement(WorkflowGraph, {
+    selectedNodeId: 'start',
+    nodes: [
+      { id: 'start', type: 'prompt', title: 'Start' },
+      { id: 'done', type: 'terminal', title: 'Done' }
+    ],
+    edges: [{ from: 'start', to: 'done' }]
+  }));
+
+  assert.match(markup, /graph-node selected/);
+});
+
+test('App source exposes Run Console attempt, artifact, and failure surfaces', () => {
+  const source = fs.readFileSync('web/src/App.tsx', 'utf8');
+  assert.match(source, /Attempt timeline/);
+  assert.match(source, /Artifact browser/);
+  assert.match(source, /Failure \/ issues/);
+  assert.match(source, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });

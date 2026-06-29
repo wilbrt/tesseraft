@@ -29,6 +29,8 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/workflows'), ['workflows']);
   assert.deepEqual(routeApi('/api/workflows/smoke-demo/graph'), ['graph', 'smoke-demo']);
   assert.deepEqual(routeApi('/api/runs/smoke-test/events'), ['events', 'smoke-test']);
+  assert.deepEqual(routeApi('/api/runs/smoke-test/artifacts'), ['artifacts', 'smoke-test']);
+  assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
@@ -86,6 +88,19 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const events = await eventsResponse.json();
   assert.equal(events.run_id, 'web-server-test');
   assert.ok(events.events.some((event) => event.event === 'run.finished'));
+
+  const artifactsResponse = await fetch(`${base}/api/runs/web-server-test/artifacts`);
+  assert.equal(artifactsResponse.status, 200);
+  const artifacts = await artifactsResponse.json();
+  assert.ok(artifacts.artifacts.some((artifact) => artifact.path === 'state.edn'));
+  assert.ok(artifacts.artifacts.some((artifact) => artifact.path === 'events.jsonl'));
+
+  const artifactResponse = await fetch(`${base}/api/runs/web-server-test/artifact?path=${encodeURIComponent('events.jsonl')}`);
+  assert.equal(artifactResponse.status, 200);
+  const artifact = await artifactResponse.json();
+  assert.equal(artifact.artifact.path, 'events.jsonl');
+  assert.equal(artifact.previewable, true);
+  assert.match(artifact.content, /run.finished/);
 });
 
 test('web server reports not found and malformed API routes as JSON errors', async (t) => {
@@ -108,4 +123,48 @@ test('web server reports not found and malformed API routes as JSON errors', asy
   assert.equal(unknown.status, 404);
   const unknownBody = await unknown.json();
   assert.equal(unknownBody.error.code, 'not_found');
+});
+
+test('control-plane derived attempts do not treat exit code zero as a failure', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'exit-zero-'));
+  const runDir = path.join(root, 'wf', 'exit-zero-run');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "exit-zero-run" :status "running" :state :next}}');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
+    JSON.stringify({ event: 'node.started', state: 'start', attempt: 1, at: '2026-01-01T00:00:00Z' }),
+    JSON.stringify({ event: 'node.finished', state: 'start', at: '2026-01-01T00:00:01Z', result: { status: 'ok', 'exit-code': 0 } })
+  ].join('\n'));
+
+  try {
+    const run = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'run', 'exit-zero-run'], { encoding: 'utf8' }));
+    assert.equal(run.run.attempts[0].status, 'ok');
+    assert.equal(run.run.attempts[0].error, undefined);
+    assert.deepEqual(run.run.failures, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('control-plane artifact reads reject unsafe paths', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'artifact-safety-'));
+  const runDir = path.join(root, 'wf', 'safe-run');
+  const outside = path.join(root, 'outside.txt');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "safe-run" :status "done" :state :done}}');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '');
+  fs.writeFileSync(path.join(runDir, 'note.md'), '# hello\n');
+  fs.writeFileSync(outside, 'secret');
+  fs.symlinkSync(outside, path.join(runDir, 'escape.txt'));
+
+  try {
+    const ok = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', 'note.md'], { encoding: 'utf8' }));
+    assert.equal(ok.previewable, true);
+    assert.match(ok.content, /hello/);
+
+    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', '../outside.txt'], { encoding: 'utf8', stdio: 'pipe' }));
+    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', outside], { encoding: 'utf8', stdio: 'pipe' }));
+    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', 'escape.txt'], { encoding: 'utf8', stdio: 'pipe' }));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

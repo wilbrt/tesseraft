@@ -79,7 +79,7 @@ export const runControlPlane = (args, options = {}) => {
         });
     });
 };
-export const routeApi = (pathname) => {
+export const routeApi = (pathname, searchParams = new URLSearchParams()) => {
     const parts = pathname.split('/').filter(Boolean);
     if (parts[0] !== 'api')
         return null;
@@ -103,6 +103,28 @@ export const routeApi = (pathname) => {
         const runId = safeDecode(parts[2]);
         return runId === null ? { badRequest: 'Malformed run id' } : ['events', runId];
     }
+    if (parts.length === 4 && parts[1] === 'runs' && parts[3] === 'artifacts') {
+        const runId = safeDecode(parts[2]);
+        return runId === null ? { badRequest: 'Malformed run id' } : ['artifacts', runId];
+    }
+    if (parts.length === 5 && parts[1] === 'runs' && parts[3] === 'artifact') {
+        const runId = safeDecode(parts[2]);
+        const artifactPath = safeDecode(parts[4]);
+        if (runId === null)
+            return { badRequest: 'Malformed run id' };
+        if (artifactPath === null)
+            return { badRequest: 'Malformed artifact path' };
+        return ['artifact', runId, artifactPath];
+    }
+    if (parts.length === 4 && parts[1] === 'runs' && parts[3] === 'artifact') {
+        const runId = safeDecode(parts[2]);
+        const artifactPath = searchParams.get('path');
+        if (runId === null)
+            return { badRequest: 'Malformed run id' };
+        if (!artifactPath)
+            return { badRequest: 'Missing artifact path' };
+        return ['artifact', runId, artifactPath];
+    }
     return { notFound: true };
 };
 const handleApi = async (req, res, pathname) => {
@@ -110,7 +132,7 @@ const handleApi = async (req, res, pathname) => {
         jsonResponse(res, 405, errorBody(405, 'method_not_allowed', 'Only GET is supported'));
         return true;
     }
-    const routed = routeApi(pathname);
+    const routed = routeApi(pathname, new URL(req.url || '/', 'http://127.0.0.1').searchParams);
     if (routed === null)
         return false;
     if ('badRequest' in routed) {
