@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tesseraft Local Web UI</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Tesseraft Local Web UI</h1>
+    <p>Read-only local inspection of workflows, graphs, runs, and events.</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Workflows</h2>
+      <div id="workflow-error" class="error" hidden></div>
+      <ul id="workflow-list" class="item-list"></ul>
+    </section>
+
+    <section class="panel detail">
+      <h2>Workflow detail</h2>
+      <div id="workflow-detail" class="empty">Select a workflow.</div>
+      <h3>Graph nodes</h3>
+      <ul id="graph-nodes" class="item-list compact"></ul>
+      <h3>Graph edges</h3>
+      <ul id="graph-edges" class="item-list compact"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Runs</h2>
+      <div id="run-error" class="error" hidden></div>
+      <ul id="run-list" class="item-list"></ul>
+    </section>
+
+    <section class="panel detail">
+      <h2>Run detail</h2>
+      <div id="run-detail" class="empty">Select a run.</div>
+      <h3>Events</h3>
+      <ol id="run-events" class="event-list"></ol>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

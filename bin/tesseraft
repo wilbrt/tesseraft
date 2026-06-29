@@ -25,6 +25,11 @@ case "$cmd" in
     ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     exec bb --config "$ROOT_DIR/bb.edn" control-plane "$@"
     ;;
+  web)
+    shift
+    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    exec node "$ROOT_DIR/web/server.js" "$@"
+    ;;
   ""|-h|--help|help)
     echo "Usage: tesseraft <command> [args]"
     echo
@@ -33,11 +38,12 @@ case "$cmd" in
     echo "  run       Run or inspect workflow executions"
     echo "  node      Validate and manage self-contained node packages"
     echo "  control-plane  Inspect workflows and runs via the read-only local API"
+    echo "  web       Serve the local read-only Web UI"
     echo "  version   Print version information"
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Usage: tesseraft <lint|run|node|control-plane|version> [args]" >&2
+    echo "Usage: tesseraft <lint|run|node|control-plane|web|version> [args]" >&2
     exit 2
     ;;
 esac
