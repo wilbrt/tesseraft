@@ -9,7 +9,7 @@ export type GraphNode = {
 export type GraphEdge = {
   from: string;
   to: string;
-  condition?: string;
+  condition?: unknown;
   [key: string]: unknown;
 };
 

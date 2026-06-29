@@ -6,6 +6,13 @@ type Props = {
   edges: GraphEdge[];
 };
 
+export const formatCondition = (condition: unknown): string => {
+  if (condition === undefined || condition === null || condition === false) return '';
+  if (typeof condition === 'string') return condition;
+  if (typeof condition === 'number' || typeof condition === 'boolean') return String(condition);
+  return JSON.stringify(condition);
+};
+
 export const WorkflowGraph = ({ nodes, edges }: Props) => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const layout = useMemo(() => layoutGraph(nodes, edges), [nodes, edges]);
@@ -23,14 +30,17 @@ export const WorkflowGraph = ({ nodes, edges }: Props) => {
                 <path d="M0,0 L0,6 L9,3 z" />
               </marker>
             </defs>
-            {layout.edges.map((edge) => (
-              <g key={`${edge.from}-${edge.to}-${edge.condition || ''}`} className="graph-edge">
-                <line x1={edge.fromX} y1={edge.fromY} x2={edge.toX} y2={edge.toY} markerEnd="url(#arrow)" />
-                {edge.condition && (
-                  <text x={(edge.fromX + edge.toX) / 2} y={(edge.fromY + edge.toY) / 2 - 8}>{edge.condition}</text>
-                )}
-              </g>
-            ))}
+            {layout.edges.map((edge) => {
+              const condition = formatCondition(edge.condition);
+              return (
+                <g key={`${edge.from}-${edge.to}-${condition}`} className="graph-edge">
+                  <line x1={edge.fromX} y1={edge.fromY} x2={edge.toX} y2={edge.toY} markerEnd="url(#arrow)" />
+                  {condition && (
+                    <text x={(edge.fromX + edge.toX) / 2} y={(edge.fromY + edge.toY) / 2 - 8}>{condition}</text>
+                  )}
+                </g>
+              );
+            })}
             {layout.nodes.map((node) => (
               <g key={node.id} className="graph-node" transform={`translate(${node.x} ${node.y})`}>
                 <rect width="150" height="56" rx="10" />
@@ -47,11 +57,14 @@ export const WorkflowGraph = ({ nodes, edges }: Props) => {
       <h3>Graph edges</h3>
       <ul className="item-list compact">
         {edges.length === 0 && <li className="muted">No graph edges found.</li>}
-        {edges.map((edge) => (
-          <li key={`${edge.from}-${edge.to}-${edge.condition || ''}`}>
-            <strong>{edge.from}</strong> → <strong>{edge.to}</strong>{edge.condition ? <span> when {edge.condition}</span> : null}
-          </li>
-        ))}
+        {edges.map((edge) => {
+          const condition = formatCondition(edge.condition);
+          return (
+            <li key={`${edge.from}-${edge.to}-${condition}`}>
+              <strong>{edge.from}</strong> → <strong>{edge.to}</strong>{condition ? <span> when {condition}</span> : null}
+            </li>
+          );
+        })}
       </ul>
       {selectedNode && <NodeModal node={selectedNode} onClose={() => setSelectedNode(null)} />}
     </section>
