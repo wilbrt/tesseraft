@@ -119,6 +119,9 @@ assert any(e['event'] == 'run.finished' for e in x['events'])
 PY
 rm -f /tmp/tesseraft-cp-workflows.json /tmp/tesseraft-cp-graph.json /tmp/tesseraft-cp-run.json /tmp/tesseraft-cp-events.json
 
+printf '\nChecking local React/TypeScript web UI...\n'
+npm run web:test
+
 printf '\nChecking control-plane edge cases...\n'
 bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
        (let [dir (java.nio.file.Files/createTempDirectory "tesseraft-cp-test" (make-array java.nio.file.attribute.FileAttribute 0))
