@@ -90,6 +90,15 @@ Do not let adapters or executors mutate global workflow behavior.
 - Branch names should start with semantic work-type prefixes such as `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`.
 - Do not use `agent/` as the default branch prefix for new work.
 
+## Web UI TypeScript/React style
+
+- Use TypeScript for Web UI server and browser code.
+- Use React for interactive browser UI surfaces.
+- Prefer arrow-syntax functions and React components in TypeScript/React code.
+- Keep the local web server as the boundary for future Pi SDK integration; do not make Babashka own Pi SDK session lifecycle.
+- Render workflow graph data as an inspectable visual graph when presenting graph views. Node selection should expose node details through an explicit UI surface such as a modal or side panel.
+- Keep Web UI tests local-only and free of Pi, Jira, GitHub, browser automation, hosted services, or credentials unless a test is explicitly marked as integration-only.
+
 ## Clojure/Babashka style
 
 - Use small functions with descriptive names.
