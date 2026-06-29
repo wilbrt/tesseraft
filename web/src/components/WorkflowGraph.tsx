@@ -4,6 +4,8 @@ import { layoutGraph, type GraphEdge, type GraphNode } from '../lib/graphLayout'
 type Props = {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  selectedNodeId?: string | null;
+  onSelectNode?: (node: GraphNode) => void;
 };
 
 export const formatCondition = (condition: unknown): string => {
@@ -13,7 +15,7 @@ export const formatCondition = (condition: unknown): string => {
   return JSON.stringify(condition);
 };
 
-export const WorkflowGraph = ({ nodes, edges }: Props) => {
+export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, onSelectNode }: Props) => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const layout = useMemo(() => layoutGraph(nodes, edges), [nodes, edges]);
 
@@ -42,12 +44,12 @@ export const WorkflowGraph = ({ nodes, edges }: Props) => {
               );
             })}
             {layout.nodes.map((node) => (
-              <g key={node.id} className="graph-node" transform={`translate(${node.x} ${node.y})`}>
+              <g key={node.id} className={`graph-node${selectedNodeId === node.id ? ' selected' : ''}`} transform={`translate(${node.x} ${node.y})`}>
                 <rect width="150" height="56" rx="10" />
                 <text x="14" y="24" className="node-title">{node.title || node.id}</text>
                 <text x="14" y="43" className="node-type">{node.type || 'node'}</text>
                 <foreignObject x="0" y="0" width="150" height="56">
-                  <button className="node-hitbox" type="button" aria-label={`Open node ${node.id} details`} onClick={() => setSelectedNode(node)} />
+                  <button className="node-hitbox" type="button" aria-label={`Open node ${node.id} details`} onClick={() => { onSelectNode?.(node); setSelectedNode(node); }} />
                 </foreignObject>
               </g>
             ))}

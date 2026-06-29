@@ -5,7 +5,7 @@
     [cheshire.core :as json]))
 
 (defn parse-args [args]
-  (loop [xs args acc {:command nil :workspace-root "." :workflow-roots ["examples"] :runs-root ".agent-runs"}]
+  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :runs-root ".agent-runs"}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -27,6 +27,8 @@
     (println "  tesseraft control-plane runs")
     (println "  tesseraft control-plane run <run-id>")
     (println "  tesseraft control-plane events <run-id>")
+    (println "  tesseraft control-plane artifacts <run-id>")
+    (println "  tesseraft control-plane artifact <run-id> <path>")
     (println)
     (println "Options:")
     (println "  --workspace-root <dir>   Workspace root (default: .)")
@@ -36,6 +38,10 @@
 
 (defn require-arg [opts label]
   (or (first (:args opts))
+      (throw (ex-info (str "Missing " label) {:label label}))))
+
+(defn require-nth-arg [opts idx label]
+  (or (nth (:args opts) idx nil)
       (throw (ex-info (str "Missing " label) {:label label}))))
 
 (defn exit-status [result]
@@ -56,6 +62,8 @@
                    "runs" (control-plane/list-runs options)
                    "run" (control-plane/get-run options (require-arg opts "run id"))
                    "events" (control-plane/get-run-events options (require-arg opts "run id"))
+                   "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id"))
+                   "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path"))
                    (usage!))]
       (print-json! result)
       (when (not= 0 (exit-status result))

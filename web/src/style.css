@@ -59,7 +59,7 @@ dl { display: grid; gap: 0.35rem; }
 dt { font-weight: 700; }
 dd { margin: 0; overflow-wrap: anywhere; }
 
-.error {
+.error, .failure-summary {
   border: 1px solid #fecaca;
   background: #fef2f2;
   color: #991b1b;
@@ -67,6 +67,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   padding: 0.75rem;
   margin-bottom: 0.75rem;
 }
+.error.inline { margin: 0.5rem 0; padding: 0.5rem; }
+.failure-summary ul { margin: 0.5rem 0 0; padding-left: 1.2rem; }
 
 pre {
   white-space: pre-wrap;
@@ -90,6 +92,7 @@ pre {
 .graph-edge text { fill: #475569; font-size: 12px; paint-order: stroke; stroke: #f8fafc; stroke-width: 4px; }
 .graph-edge marker path { fill: #64748b; }
 .graph-node rect { fill: #ffffff; stroke: #2563eb; stroke-width: 2; filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.12)); }
+.graph-node.selected rect { stroke: #f59e0b; stroke-width: 4; }
 .graph-node text { pointer-events: none; }
 .node-title { fill: #172033; font-size: 13px; font-weight: 700; }
 .node-type { fill: #667085; font-size: 12px; }
@@ -118,12 +121,24 @@ pre {
 .modal-header h2 { margin: 0 0 1rem; }
 .modal-header button { cursor: pointer; border: 0; background: transparent; font-size: 1.6rem; line-height: 1; }
 
-@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.run-console-section { margin-top: 1rem; }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 3px solid #d9dee8; }
+.timeline li { margin-left: 0.75rem; padding: 0.75rem; border-top: 1px solid #edf0f5; }
+.timeline-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: center; }
+.status-pill { border-radius: 999px; padding: 0.15rem 0.55rem; background: #e5e7eb; color: #374151; font-size: 0.8rem; }
+.status-pill.ok { background: #dcfce7; color: #166534; }
+.status-pill.error, .status-pill.failed { background: #fee2e2; color: #991b1b; }
+.status-pill.running { background: #dbeafe; color: #1d4ed8; }
+.related, .selected-row { outline: 2px solid #f59e0b; outline-offset: 2px; border-radius: 0.4rem; }
+.artifact-grid { display: grid; grid-template-columns: minmax(14rem, 24rem) minmax(16rem, 1fr); gap: 1rem; }
+.artifact-list { max-height: 24rem; overflow: auto; }
+
+@media (max-width: 900px) { main, .artifact-grid { grid-template-columns: 1fr; } }
 
 @media (prefers-color-scheme: dark) {
   :root { background: #0f172a; color: #e5e7eb; }
   .panel, .modal { background: #111827; border-color: #374151; color: #e5e7eb; }
-  .item-list li, .event-list li { border-color: #273449; }
+  .item-list li, .event-list li, .timeline li { border-color: #273449; }
   pre, .graph-canvas { background: #0f172a; border-color: #374151; }
   .graph-node rect { fill: #1f2937; stroke: #60a5fa; }
   .node-title { fill: #f8fafc; }
