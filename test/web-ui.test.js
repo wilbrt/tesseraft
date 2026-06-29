@@ -72,6 +72,9 @@ test('App source exposes local mutation controls with warnings and POST routes',
   const source = fs.readFileSync('web/src/App.tsx', 'utf8');
   assert.match(source, /Run controls/);
   assert.match(source, /Local mutation warning/);
+  assert.match(source, /Active runs auto-refresh/);
+  assert.match(source, /window\.setInterval/);
+  assert.match(source, /Auto-refresh/);
   assert.match(source, /Non-smoke workflows may run agents, processes, or other side effects/);
   assert.match(source, /I understand this may execute local side effects/);
   assert.match(source, /Confirm one local node execution/);

@@ -45,6 +45,7 @@ const postJson = async <T,>(url: string, body: unknown): Promise<T> => {
 
 const eventName = (event: EventRecord): string => event.event || event.type || 'event';
 const nodeForEvent = (event: EventRecord): string | undefined => event.state || event.from;
+const isActiveRun = (run: RunDetail | null): boolean => Boolean(run && !['done', 'failed', 'error'].includes(run.status || ''));
 const snippet = (value: unknown): string => JSON.stringify(value, null, 2).slice(0, 700);
 
 const FieldList = ({ fields }: { fields: Array<[string, unknown]> }) => (
@@ -232,6 +233,7 @@ export const App = () => {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
+  const [lastRunRefresh, setLastRunRefresh] = useState<string | null>(null);
 
   const loadRuns = async (): Promise<void> => {
     try {
@@ -273,6 +275,7 @@ export const App = () => {
     setRunDetail(null);
     setEvents([]);
     setArtifacts([]);
+    setLastRunRefresh(null);
     try {
       const [detail, eventData, artifactData] = await Promise.all([
         getJson<{ run: RunDetail }>(`/api/runs/${encodeURIComponent(runId)}`),
@@ -282,10 +285,20 @@ export const App = () => {
       setRunDetail(detail.run);
       setEvents(eventData.events || []);
       setArtifacts(artifactData.artifacts || []);
+      setLastRunRefresh(new Date().toLocaleTimeString());
     } catch (error) {
       setRunError(error instanceof Error ? error.message : String(error));
     }
   };
+
+  useEffect(() => {
+    if (!selectedRun || !isActiveRun(runDetail)) return undefined;
+    const interval = window.setInterval(() => {
+      void loadRuns();
+      void selectRun(selectedRun);
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [selectedRun, runDetail?.status, runDetail?.state, runDetail?.attempt]);
 
   const refreshAfterMutation = async (runId?: string): Promise<void> => {
     await loadRuns();
@@ -299,7 +312,7 @@ export const App = () => {
     <>
       <header>
         <h1>Tesseraft Local Web UI</h1>
-        <p>Read-only local inspection of workflows, visual graphs, runs, attempts, artifacts, and events.</p>
+        <p>Local inspection and controlled execution for workflows, visual graphs, runs, attempts, artifacts, and events. Active runs auto-refresh.</p>
       </header>
       <main>
         <section className="panel">
@@ -360,7 +373,8 @@ export const App = () => {
               ['State', runDetail.state],
               ['Round / attempt', `${runDetail.round ?? ''} / ${runDetail.attempt ?? ''}`],
               ['Path', runDetail.path],
-              ['Selected node filter', selectedNodeId || 'none']
+              ['Selected node filter', selectedNodeId || 'none'],
+              ['Auto-refresh', isActiveRun(runDetail) ? `active, last refresh ${lastRunRefresh || 'pending'}` : 'inactive']
             ]} />
           )}
           <FailureSummary run={runDetail} />
