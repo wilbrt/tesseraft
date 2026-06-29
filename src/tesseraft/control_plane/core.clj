@@ -232,16 +232,27 @@
 (defn event-name [event]
   (or (:event event) (:type event)))
 
+(defn nonzero-exit-code? [result]
+  (let [exit-code (:exit-code result)]
+    (and (number? exit-code) (not (zero? exit-code)))))
+
+(defn result-error? [result]
+  (and result
+       (or (= "error" (:status result))
+           (= false (:ok result))
+           (nonzero-exit-code? result))))
+
 (defn result-error-summary [result]
-  (or (:message result)
-      (:error result)
-      (:stderr result)
-      (when (:exit-code result) (str "exit code " (:exit-code result)))
-      (when (= "error" (:status result)) "result status error")))
+  (when (result-error? result)
+    (or (:message result)
+        (:error result)
+        (:stderr result)
+        (when (nonzero-exit-code? result) (str "exit code " (:exit-code result)))
+        (when (= "error" (:status result)) "result status error"))))
 
 (defn attempt-status [finished? result]
   (cond
-    (and result (or (= "error" (:status result)) (= false (:ok result)) (:exit-code result))) "error"
+    (result-error? result) "error"
     finished? "ok"
     :else "running"))
 

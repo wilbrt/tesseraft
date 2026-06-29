@@ -125,6 +125,26 @@ test('web server reports not found and malformed API routes as JSON errors', asy
   assert.equal(unknownBody.error.code, 'not_found');
 });
 
+test('control-plane derived attempts do not treat exit code zero as a failure', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'exit-zero-'));
+  const runDir = path.join(root, 'wf', 'exit-zero-run');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "exit-zero-run" :status "running" :state :next}}');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
+    JSON.stringify({ event: 'node.started', state: 'start', attempt: 1, at: '2026-01-01T00:00:00Z' }),
+    JSON.stringify({ event: 'node.finished', state: 'start', at: '2026-01-01T00:00:01Z', result: { status: 'ok', 'exit-code': 0 } })
+  ].join('\n'));
+
+  try {
+    const run = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'run', 'exit-zero-run'], { encoding: 'utf8' }));
+    assert.equal(run.run.attempts[0].status, 'ok');
+    assert.equal(run.run.attempts[0].error, undefined);
+    assert.deepEqual(run.run.failures, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('control-plane artifact reads reject unsafe paths', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'artifact-safety-'));
   const runDir = path.join(root, 'wf', 'safe-run');
