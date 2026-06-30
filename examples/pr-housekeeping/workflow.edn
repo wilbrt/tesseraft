@@ -7,7 +7,7 @@
           :base-branch {:type :string :default "main"}
           :max-prs {:type :integer :default 20}
           :merge-approved {:type :boolean :default false}
-          :dry-run {:type :boolean :default true}
+          :dry-run {:type :boolean :default false}
           :target-pr {:type :integer :required false}
           :test-command {:type :string :default "bb test"}}
  :defaults {:max-rounds 1

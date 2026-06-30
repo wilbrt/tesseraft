@@ -17,7 +17,7 @@ Review criteria:
 1. The rebase/conflict resolution is complete; no unresolved conflict markers remain.
 2. The final diff preserves the PR's intended changes and does not introduce unrelated edits.
 3. Tests passed or any limitations are clearly justified.
-4. It is safe for the subsequent deterministic node to push with `git push --force-with-lease` if the run is explicitly configured with `dry-run=false` and `push-conflict-fixes=true`.
+4. It is safe for the subsequent deterministic node to push with `git push --force-with-lease` unless the operator explicitly set `dry-run=true`.
 
 Do not push.
 

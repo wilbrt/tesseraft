@@ -16,7 +16,7 @@ def main():
     meta = json.loads((run_dir / "comment-repair" / "worktree.json").read_text())
     worktree = pathlib.Path(meta["worktree"])
     push_refspec = meta["push_refspec"]
-    dry_run = truthy(inputs.get("dry-run", "true"))
+    dry_run = truthy(inputs.get("dry-run", "false"))
     out_dir = run_dir / "comment-repair"
     summary = out_dir / "push-summary.md"
 

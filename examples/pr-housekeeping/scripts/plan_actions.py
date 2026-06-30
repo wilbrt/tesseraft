@@ -17,7 +17,7 @@ ACTION_FILES = {
 def main():
     request = json.load(sys.stdin)
     run_dir = pathlib.Path(request["paths"]["run_dir"])
-    dry_run = str(request.get("inputs", {}).get("dry-run", "true")).lower() != "false"
+    dry_run = str(request.get("inputs", {}).get("dry-run", "false")).lower() == "true"
     actions_path = run_dir / "housekeeping" / "actions.json"
     actions = json.loads(actions_path.read_text())
 

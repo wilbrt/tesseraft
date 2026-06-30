@@ -61,7 +61,7 @@ def main():
     final_body = ("\n".join(markers) + "\n" if markers else "") + body
     body_path.write_text(final_body.strip() + "\n")
 
-    dry_run = truthy(inputs.get("dry-run", "true"))
+    dry_run = truthy(inputs.get("dry-run", "false"))
 
     if dry_run:
         reason = "dry-run is true"
