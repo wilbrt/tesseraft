@@ -167,8 +167,8 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
       const sdk = await loadSdk();
       const createAgentSession = sdk.createAgentSession;
       const sessionManagerFactory = sdk.SessionManager;
-      if (typeof createAgentSession !== 'function' || !sessionManagerFactory || typeof sessionManagerFactory !== 'object' || typeof (sessionManagerFactory as { inMemory?: unknown }).inMemory !== 'function') {
-        throw Object.assign(new Error('Installed Pi SDK does not expose createAgentSession and SessionManager.inMemory'), { status: 503, code: 'pi_adapter_unavailable' });
+      if (typeof createAgentSession !== 'function' || !sessionManagerFactory || typeof (sessionManagerFactory as { inMemory?: unknown }).inMemory !== 'function') {
+        throw Object.assign(new Error('Installed Pi SDK is incompatible: expected createAgentSession() and SessionManager.inMemory(). Update @earendil-works/pi-coding-agent or set TESSERAFT_PI_ADAPTER=fake for local fake responses.'), { status: 503, code: 'pi_adapter_unavailable' });
       }
       const result = await (createAgentSession as (options: unknown) => Promise<{ session: SdkSession }>)({ sessionManager: (sessionManagerFactory as { inMemory: () => unknown }).inMemory() });
       const sdkSession = result.session;
@@ -223,5 +223,5 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
 };
 
 export const createConfiguredPiSessionAdapter = (env: NodeJS.ProcessEnv = process.env): PiSessionAdapter => (
-  env.TESSERAFT_PI_ADAPTER === 'real' ? createRealPiSessionAdapter() : createFakePiSessionAdapter()
+  env.TESSERAFT_PI_ADAPTER === 'fake' ? createFakePiSessionAdapter() : createRealPiSessionAdapter()
 );

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
-import { createFakePiSessionAdapter } from '../web/dist-server/lib/piSessionAdapter.js';
+import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter } from '../web/dist-server/lib/piSessionAdapter.js';
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -102,6 +102,19 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.equal(artifact.artifact.path, 'events.jsonl');
   assert.equal(artifact.previewable, true);
   assert.match(artifact.content, /run.finished/);
+});
+
+test('configured Pi session adapter uses real SDK by default and fake only by explicit opt-in', async () => {
+  const adapterSource = fs.readFileSync('web/dist-server/lib/piSessionAdapter.js', 'utf8');
+  assert.match(adapterSource, /TESSERAFT_PI_ADAPTER === 'fake' \? createFakePiSessionAdapter\(\) : createRealPiSessionAdapter\(\)/);
+  assert.doesNotMatch(adapterSource, /typeof sessionManagerFactory !== "object"|typeof sessionManagerFactory !== 'object'/);
+  assert.match(adapterSource, /\.inMemory !== 'function'|\.inMemory !== "function"/);
+
+  const fakeAdapter = createConfiguredPiSessionAdapter({ TESSERAFT_PI_ADAPTER: 'fake' });
+  await fakeAdapter.createSession({ id: 'configured-fake' });
+  const sent = await fakeAdapter.sendPrompt('configured-fake', 'hello pi');
+  assert.ok(sent);
+  assert.match(sent.events[1].text, /Fake Pi adapter response/);
 });
 
 test('fake Pi session adapter creates sessions, prompts, and filtered events', async () => {
