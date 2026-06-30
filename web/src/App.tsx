@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
 import { RunsPanel } from './components/RunPanels';
 import { RunControls } from './components/RunControls';
+import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { getJson } from './lib/api';
 import { isActiveRun } from './lib/runConsole';
 import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowDetail, WorkflowGraphState, WorkflowSummary } from './types/runConsole';
 import './style.css';
 
-type ActiveTab = 'workflows' | 'runs';
+type ActiveTab = 'workflows' | 'runs' | 'pi-sessions';
 
 export const App = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('workflows');
@@ -108,6 +109,7 @@ export const App = () => {
         <nav className="tabs" aria-label="Run Console sections">
           <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} onClick={() => setActiveTab('workflows')}>Workflows</button>
           <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} onClick={() => setActiveTab('runs')}>Runs</button>
+          <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} onClick={() => setActiveTab('pi-sessions')}>Pi Sessions</button>
         </nav>
       </header>
       <main>
@@ -117,7 +119,8 @@ export const App = () => {
         {activeTab === 'runs' && (
           <RunsPanel runs={runs} selectedRun={selectedRun} runDetail={runDetail} events={events} artifacts={artifacts} runError={runError} selectedNodeId={selectedNodeId} lastRunRefresh={lastRunRefresh} onSelectRun={selectRun} />
         )}
-        <RunControls selectedWorkflow={selectedWorkflow} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />
+        {activeTab === 'pi-sessions' && <PiSessionsPanel />}
+        {activeTab !== 'pi-sessions' && <RunControls selectedWorkflow={selectedWorkflow} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
       </main>
     </>
   );

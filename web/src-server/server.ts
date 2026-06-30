@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApiRouter, routeApi } from './routes/api.js';
+import type { PiSessionAdapter } from './lib/piSessionAdapter.js';
 import { errorBody, jsonResponse } from './lib/http.js';
 import { STATIC_DIR } from './lib/paths.js';
 
@@ -22,16 +23,16 @@ const apiErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   jsonResponse(res, status, errorBody(status, code, err.message || 'Unhandled server error'));
 };
 
-export const createApp = (): express.Express => {
+export const createApp = (options: { piSessionAdapter?: PiSessionAdapter } = {}): express.Express => {
   const app = express();
-  app.use('/api', createApiRouter());
+  app.use('/api', createApiRouter(options.piSessionAdapter));
   app.use(express.static(STATIC_DIR, { index: 'index.html' }));
   app.use((_req, res) => jsonResponse(res, 404, errorBody(404, 'not_found', 'Resource not found')));
   app.use(apiErrorHandler);
   return app;
 };
 
-export const createServer = (): http.Server => http.createServer(createApp());
+export const createServer = (options: { piSessionAdapter?: PiSessionAdapter } = {}): http.Server => http.createServer(createApp(options));
 
 export const parseArgs = (argv: string[]): ParsedArgs => {
   const opts: ParsedArgs = { host: DEFAULT_HOST, port: DEFAULT_PORT };
