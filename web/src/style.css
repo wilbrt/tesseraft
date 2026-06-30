@@ -129,8 +129,12 @@ pre {
 .control-grid { display: grid; grid-template-columns: repeat(3, minmax(14rem, 1fr)); gap: 1rem; }
 .control-card { border: 1px solid #d9dee8; border-radius: 0.6rem; padding: 0.85rem; background: #f8fafc; display: grid; gap: 0.6rem; }
 .control-card label { display: grid; gap: 0.25rem; font-weight: 700; }
-.control-card input, .control-card textarea { font: inherit; border: 1px solid #cbd5e1; border-radius: 0.4rem; padding: 0.45rem; }
+.control-card input, .control-card textarea, .control-card select { font: inherit; border: 1px solid #cbd5e1; border-radius: 0.4rem; padding: 0.45rem; }
 .control-card textarea { min-height: 4.5rem; resize: vertical; }
+.workflow-inputs { display: grid; gap: 0.65rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.75rem; background: white; }
+.workflow-inputs h4 { margin: 0; }
+.workflow-input-field small { color: #667085; font-weight: 500; }
+.required { color: #b91c1c; font-size: 0.75rem; margin-left: 0.35rem; text-transform: uppercase; }
 .control-card button { cursor: pointer; border: 0; border-radius: 0.45rem; padding: 0.55rem 0.75rem; background: #1d4ed8; color: white; font-weight: 700; }
 .control-card button:disabled { cursor: not-allowed; background: #94a3b8; }
 .check { display: flex !important; grid-template-columns: auto 1fr; align-items: center; font-weight: 500 !important; }
@@ -155,7 +159,9 @@ pre {
   :root { background: #0f172a; color: #e5e7eb; }
   .panel, .modal { background: #111827; border-color: #374151; color: #e5e7eb; }
   .control-card { background: #0f172a; border-color: #374151; }
-  .control-card input, .control-card textarea { background: #111827; color: #e5e7eb; border-color: #475569; }
+  .control-card input, .control-card textarea, .control-card select { background: #111827; color: #e5e7eb; border-color: #475569; }
+  .workflow-inputs { background: #111827; border-color: #374151; }
+  .workflow-input-field small { color: #cbd5e1; }
   .item-list li, .event-list li, .timeline li { border-color: #273449; }
   pre, .graph-canvas { background: #0f172a; border-color: #374151; }
   .graph-node rect { fill: #1f2937; stroke: #60a5fa; }
