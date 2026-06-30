@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
-import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter } from '../web/dist-server/lib/piSessionAdapter.js';
+import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter, derivePiChatMessages } from '../web/dist-server/lib/piSessionAdapter.js';
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -31,6 +31,21 @@ const waitForRunStatus = async (base, runId, status, attempts = 50) => {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Run ${runId} did not reach status ${status}`);
+};
+
+const readStreamUntil = async (stream, pattern, attempts = 5) => {
+  const reader = stream.getReader();
+  let text = '';
+  try {
+    for (let i = 0; i < attempts && !pattern.test(text); i += 1) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      text += new TextDecoder().decode(chunk.value);
+    }
+  } finally {
+    await reader.cancel();
+  }
+  return text;
 };
 
 test('parseArgs accepts port zero for tests', () => {
@@ -132,6 +147,7 @@ test('configured Pi session adapter uses real SDK by default and fake only by ex
   const sent = await fakeAdapter.sendPrompt('configured-fake', 'hello pi');
   assert.ok(sent);
   assert.match(sent.events[1].text, /Fake Pi adapter response/);
+  assert.deepEqual(sent.messages.map((message) => message.role), ['system', 'user', 'assistant']);
 });
 
 test('fake Pi session adapter creates sessions, prompts, and filtered events', async () => {
@@ -150,11 +166,24 @@ test('fake Pi session adapter creates sessions, prompts, and filtered events', a
   assert.equal(sent.events[0].role, 'user');
   assert.equal(sent.events[1].role, 'assistant');
   assert.match(sent.events[1].text, /Fake Pi adapter response/);
+  assert.deepEqual(sent.messages.map((message) => message.role), ['system', 'user', 'assistant']);
+  assert.deepEqual((await adapter.listMessages('unit-pi', 1))?.map((message) => message.role), ['user', 'assistant']);
 
   const filtered = await adapter.listEvents('unit-pi', 1);
   assert.equal(filtered.length, 2);
   assert.deepEqual(filtered.map((event) => event.sequence), [2, 3]);
   assert.equal(await adapter.getSession('missing'), null);
+});
+
+test('Pi chat message derivation coalesces assistant deltas', () => {
+  const messages = derivePiChatMessages([
+    { id: 'e1', session_id: 's1', sequence: 1, created_at: '2026-01-01T00:00:00.000Z', event: 'prompt.sent', role: 'user', text: 'Hello' },
+    { id: 'e2', session_id: 's1', sequence: 2, created_at: '2026-01-01T00:00:01.000Z', event: 'sdk.event', role: 'assistant', text: 'Hel' },
+    { id: 'e3', session_id: 's1', sequence: 3, created_at: '2026-01-01T00:00:02.000Z', event: 'sdk.event', role: 'assistant', text: 'lo' }
+  ]);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].role, 'assistant');
+  assert.equal(messages[1].text, 'Hello');
 });
 
 test('web server exposes fake Pi session routes as local JSON APIs', async (t) => {
@@ -186,6 +215,7 @@ test('web server exposes fake Pi session routes as local JSON APIs', async (t) =
   assert.equal(detailResponse.status, 200);
   const detail = await detailResponse.json();
   assert.equal(detail.session.events[0].event, 'session.created');
+  assert.equal(detail.session.messages[0].role, 'system');
 
   const badPrompt = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
     method: 'POST',
@@ -203,6 +233,18 @@ test('web server exposes fake Pi session routes as local JSON APIs', async (t) =
   assert.equal(promptResponse.status, 200);
   const prompted = await promptResponse.json();
   assert.equal(prompted.events.length, 2);
+  assert.deepEqual(prompted.messages.map((message) => message.role), ['system', 'user', 'assistant']);
+
+  const streamResponse = await fetch(`${base}/api/pi-sessions/api-pi/stream`);
+  assert.equal(streamResponse.status, 200);
+  assert.match(streamResponse.headers.get('content-type') || '', /text\/event-stream/);
+  const streamText = await readStreamUntil(streamResponse.body, /event: snapshot/);
+  assert.match(streamText, /event: snapshot/);
+  const snapshotJson = streamText.match(/data: (.*)/)?.[1];
+  assert.ok(snapshotJson, 'expected Pi session stream snapshot data');
+  const snapshot = JSON.parse(snapshotJson);
+  assert.deepEqual(snapshot.messages.map((message) => message.role), ['system', 'user', 'assistant']);
+  assert.equal(snapshot.messages.filter((message) => message.role === 'assistant').length, 1);
 
   const eventsResponse = await fetch(`${base}/api/pi-sessions/api-pi/events?after=1`);
   assert.equal(eventsResponse.status, 200);

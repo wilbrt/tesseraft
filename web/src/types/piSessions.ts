@@ -13,6 +13,16 @@ export type PiSessionEvent = {
   data?: Record<string, unknown>;
 };
 
+export type PiChatMessage = {
+  id: string;
+  session_id: string;
+  sequence: number;
+  created_at: string;
+  role: PiSessionRole;
+  text: string;
+  status?: PiSessionStatus;
+};
+
 export type PiSessionSummary = {
   id: string;
   title: string;
@@ -24,4 +34,5 @@ export type PiSessionSummary = {
 
 export type PiSessionDetail = PiSessionSummary & {
   events: PiSessionEvent[];
+  messages: PiChatMessage[];
 };

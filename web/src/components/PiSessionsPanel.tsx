@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 import { getJson, postJson } from '../lib/api';
-import type { PiSessionDetail, PiSessionEvent, PiSessionSummary } from '../types/piSessions';
+import type { PiChatMessage, PiSessionDetail, PiSessionEvent, PiSessionSummary } from '../types/piSessions';
 
 const DEFAULT_VISIBLE_EVENTS = 50;
+
+type PiSessionSnapshot = {
+  session: PiSessionDetail;
+  messages: PiChatMessage[];
+};
 
 const eventSummary = (event: PiSessionEvent): string => event.text || event.prompt || event.event;
 
@@ -10,12 +15,22 @@ export const PiSessionsPanel = () => {
   const [sessions, setSessions] = useState<PiSessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<PiSessionDetail | null>(null);
+  const [messages, setMessages] = useState<PiChatMessage[]>([]);
   const [events, setEvents] = useState<PiSessionEvent[]>([]);
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [streamStatus, setStreamStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
+
+  const applySnapshot = (snapshot: PiSessionSnapshot): void => {
+    setSelectedSession(snapshot.session);
+    setMessages(snapshot.messages || snapshot.session.messages || []);
+    setEvents(snapshot.session.events || []);
+    setLastRefresh(new Date().toLocaleTimeString());
+  };
 
   const loadSessions = async (): Promise<PiSessionSummary[]> => {
     const data = await getJson<{ sessions: PiSessionSummary[] }>('/api/pi-sessions');
@@ -26,15 +41,10 @@ export const PiSessionsPanel = () => {
   const loadSession = async (sessionId: string): Promise<void> => {
     setError(null);
     try {
-      const [detail, eventData] = await Promise.all([
-        getJson<{ session: PiSessionDetail }>(`/api/pi-sessions/${encodeURIComponent(sessionId)}`),
-        getJson<{ events: PiSessionEvent[] }>(`/api/pi-sessions/${encodeURIComponent(sessionId)}/events`)
-      ]);
+      const detail = await getJson<{ session: PiSessionDetail }>(`/api/pi-sessions/${encodeURIComponent(sessionId)}`);
       setSelectedSessionId(sessionId);
-      setSelectedSession(detail.session);
-      setEvents(eventData.events || []);
+      applySnapshot({ session: detail.session, messages: detail.session.messages || [] });
       setExpandedEventIds(new Set());
-      setLastRefresh(new Date().toLocaleTimeString());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     }
@@ -64,13 +74,14 @@ export const PiSessionsPanel = () => {
 
   const sendPrompt = async (): Promise<void> => {
     if (!selectedSessionId || !prompt.trim()) return;
+    const promptToSend = prompt;
+    setPrompt('');
     setError(null);
     try {
-      await postJson<{ session: PiSessionSummary; events: PiSessionEvent[] }>(`/api/pi-sessions/${encodeURIComponent(selectedSessionId)}/prompts`, { prompt });
-      setPrompt('');
+      await postJson<{ session: PiSessionSummary; events: PiSessionEvent[]; messages: PiChatMessage[] }>(`/api/pi-sessions/${encodeURIComponent(selectedSessionId)}/prompts`, { prompt: promptToSend });
       await loadSessions();
-      await loadSession(selectedSessionId);
     } catch (promptError) {
+      setPrompt(promptToSend);
       setError(promptError instanceof Error ? promptError.message : String(promptError));
     }
   };
@@ -78,6 +89,30 @@ export const PiSessionsPanel = () => {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setStreamStatus('disconnected');
+      return undefined;
+    }
+
+    const source = new EventSource(`/api/pi-sessions/${encodeURIComponent(selectedSessionId)}/stream`);
+    setStreamStatus('connected');
+    source.addEventListener('snapshot', (event) => {
+      try {
+        applySnapshot(JSON.parse((event as MessageEvent).data) as PiSessionSnapshot);
+        setStreamStatus('connected');
+      } catch (parseError) {
+        setError(parseError instanceof Error ? parseError.message : String(parseError));
+      }
+    });
+    source.onerror = () => setStreamStatus('error');
+
+    return () => {
+      source.close();
+      setStreamStatus('disconnected');
+    };
+  }, [selectedSessionId]);
 
   const hiddenEventCount = Math.max(0, events.length - DEFAULT_VISIBLE_EVENTS);
   const visibleEvents = events.slice(-DEFAULT_VISIBLE_EVENTS);
@@ -115,7 +150,7 @@ export const PiSessionsPanel = () => {
         </ul>
       </section>
       <section className="panel detail">
-        <h2>Pi session detail</h2>
+        <h2>Pi session chat</h2>
         {!selectedSession && <div className="empty">Select or create a Pi session.</div>}
         {selectedSession && (
           <>
@@ -123,38 +158,50 @@ export const PiSessionsPanel = () => {
               <dt>Session ID</dt><dd>{selectedSession.id}</dd>
               <dt>Title</dt><dd>{selectedSession.title}</dd>
               <dt>Status</dt><dd>{selectedSession.status}</dd>
+              <dt>Stream</dt><dd><span className={`status-pill ${streamStatus}`}>{streamStatus}</span></dd>
               <dt>Last refresh</dt><dd>{lastRefresh || 'not refreshed'}</dd>
             </dl>
+            <div className="pi-chat-transcript" aria-label="Pi session chat transcript">
+              {messages.length === 0 && <div className="empty">No chat messages yet. Send a prompt to start the conversation.</div>}
+              {messages.map((message) => (
+                <article key={message.id} className={`pi-chat-message ${message.role}`}>
+                  <div className="pi-chat-meta">{message.role}{message.status ? ` · ${message.status}` : ''}</div>
+                  <p>{message.text}</p>
+                </article>
+              ))}
+            </div>
             <div className="control-card pi-prompt-form">
               <label>
                 Prompt
                 <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Send a prompt to the local Pi session" />
               </label>
               <button type="button" disabled={!prompt.trim()} onClick={() => void sendPrompt()}>Send prompt</button>
-              <button type="button" onClick={() => void loadSession(selectedSession.id)}>Refresh events</button>
+              <button type="button" onClick={() => void loadSession(selectedSession.id)}>Refresh chat</button>
             </div>
           </>
         )}
-        <h3>Events / output</h3>
-        {hiddenEventCount > 0 && (
-          <p className="muted">Showing latest {visibleEvents.length} of {events.length} events to keep this view responsive.</p>
-        )}
-        <ol className="event-list pi-event-list" start={hiddenEventCount + 1}>
-          {events.length === 0 && <li className="muted">No Pi session events found.</li>}
-          {visibleEvents.map((event) => {
-            const expanded = expandedEventIds.has(event.id);
-            return (
-              <li key={event.id}>
-                <div className="event-head">
-                  <code>{event.sequence}. {event.event}{event.role ? ` (${event.role})` : ''}</code>
-                  <button type="button" className="link-button" onClick={() => toggleEvent(event.id)}>{expanded ? 'Hide JSON' : 'Show JSON'}</button>
-                </div>
-                <p>{eventSummary(event)}</p>
-                {expanded && <pre>{JSON.stringify(event, null, 2)}</pre>}
-              </li>
-            );
-          })}
-        </ol>
+        <details className="pi-diagnostics" open={showDiagnostics} onToggle={(event) => setShowDiagnostics(event.currentTarget.open)}>
+          <summary>Diagnostics: raw Pi session events</summary>
+          {hiddenEventCount > 0 && (
+            <p className="muted">Showing latest {visibleEvents.length} of {events.length} events to keep this view responsive.</p>
+          )}
+          <ol className="event-list pi-event-list" start={hiddenEventCount + 1}>
+            {events.length === 0 && <li className="muted">No Pi session events found.</li>}
+            {visibleEvents.map((event) => {
+              const expanded = expandedEventIds.has(event.id);
+              return (
+                <li key={event.id}>
+                  <div className="event-head">
+                    <code>{event.sequence}. {event.event}{event.role ? ` (${event.role})` : ''}</code>
+                    <button type="button" className="link-button" onClick={() => toggleEvent(event.id)}>{expanded ? 'Hide JSON' : 'Show JSON'}</button>
+                  </div>
+                  <p>{eventSummary(event)}</p>
+                  {expanded && <pre>{JSON.stringify(event, null, 2)}</pre>}
+                </li>
+              );
+            })}
+          </ol>
+        </details>
       </section>
     </>
   );

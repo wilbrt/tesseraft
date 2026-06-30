@@ -13,6 +13,16 @@ export type PiSessionEvent = {
   data?: Record<string, unknown>;
 };
 
+export type PiChatMessage = {
+  id: string;
+  session_id: string;
+  sequence: number;
+  created_at: string;
+  role: PiSessionRole;
+  text: string;
+  status?: PiSessionStatus;
+};
+
 export type PiSessionSummary = {
   id: string;
   title: string;
@@ -24,11 +34,13 @@ export type PiSessionSummary = {
 
 export type PiSessionDetail = PiSessionSummary & {
   events: PiSessionEvent[];
+  messages: PiChatMessage[];
 };
 
 export type SendPromptResult = {
   session: PiSessionSummary;
   events: PiSessionEvent[];
+  messages: PiChatMessage[];
 };
 
 export type CreatePiSessionInput = {
@@ -42,6 +54,7 @@ export type PiSessionAdapter = {
   getSession: (sessionId: string) => Promise<PiSessionDetail | null>;
   sendPrompt: (sessionId: string, prompt: string) => Promise<SendPromptResult | null>;
   listEvents: (sessionId: string, after?: number) => Promise<PiSessionEvent[] | null>;
+  listMessages: (sessionId: string, after?: number) => Promise<PiChatMessage[] | null>;
 };
 
 type StoredSession = PiSessionSummary & { events: PiSessionEvent[] };
@@ -49,6 +62,35 @@ type StoredSession = PiSessionSummary & { events: PiSessionEvent[] };
 const toIso = (): string => new Date().toISOString();
 const validId = (value: string): boolean => /^[A-Za-z0-9._-]+$/.test(value);
 const cloneEvent = (event: PiSessionEvent): PiSessionEvent => ({ ...event, data: event.data ? { ...event.data } : undefined });
+const cloneMessage = (message: PiChatMessage): PiChatMessage => ({ ...message });
+
+export const derivePiChatMessages = (events: PiSessionEvent[], after?: number): PiChatMessage[] => {
+  const messages: PiChatMessage[] = [];
+  for (const event of events) {
+    const role = event.role || (event.event.startsWith('session.') ? 'system' : undefined);
+    const text = event.text || event.prompt || '';
+    if (!role || !text) continue;
+
+    const last = messages[messages.length - 1];
+    const assistantDelta = role === 'assistant' && event.event !== 'assistant.message';
+    if (assistantDelta && last?.role === 'assistant') {
+      last.text += text;
+      last.created_at = event.created_at;
+      continue;
+    }
+
+    messages.push({
+      id: `msg-${event.id}`,
+      session_id: event.session_id,
+      sequence: event.sequence,
+      created_at: event.created_at,
+      role,
+      text,
+      status: event.event === 'session.error' ? 'error' : undefined
+    });
+  }
+  return messages.filter((message) => after === undefined || message.sequence > after).map(cloneMessage);
+};
 const cloneSummary = (session: StoredSession): PiSessionSummary => ({
   id: session.id,
   title: session.title,
@@ -57,7 +99,7 @@ const cloneSummary = (session: StoredSession): PiSessionSummary => ({
   updated_at: session.updated_at,
   event_count: session.events.length
 });
-const cloneDetail = (session: StoredSession): PiSessionDetail => ({ ...cloneSummary(session), events: session.events.map(cloneEvent) });
+const cloneDetail = (session: StoredSession): PiSessionDetail => ({ ...cloneSummary(session), events: session.events.map(cloneEvent), messages: derivePiChatMessages(session.events) });
 
 export const createFakePiSessionAdapter = (): PiSessionAdapter => {
   const sessions = new Map<string, StoredSession>();
@@ -112,12 +154,17 @@ export const createFakePiSessionAdapter = (): PiSessionAdapter => {
       const assistantEvent = appendEvent(session, { event: 'assistant.message', role: 'assistant', text: assistantText, data: { adapter: 'fake' } });
       session.status = 'done';
       session.updated_at = assistantEvent.created_at;
-      return { session: cloneSummary(session), events: [cloneEvent(userEvent), cloneEvent(assistantEvent)] };
+      return { session: cloneSummary(session), events: [cloneEvent(userEvent), cloneEvent(assistantEvent)], messages: derivePiChatMessages(session.events) };
     },
     listEvents: async (sessionId, after) => {
       const session = sessions.get(sessionId);
       if (!session) return null;
       return session.events.filter((event) => after === undefined || event.sequence > after).map(cloneEvent);
+    },
+    listMessages: async (sessionId, after) => {
+      const session = sessions.get(sessionId);
+      if (!session) return null;
+      return derivePiChatMessages(session.events, after);
     }
   };
 };
@@ -212,12 +259,17 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
         appendEvent(session, { event: 'session.error', role: 'system', text: error instanceof Error ? error.message : String(error) });
         throw error;
       }
-      return { session: cloneSummary(session), events: session.events.slice(before).map(cloneEvent) };
+      return { session: cloneSummary(session), events: session.events.slice(before).map(cloneEvent), messages: derivePiChatMessages(session.events) };
     },
     listEvents: async (sessionId, after) => {
       const session = sessions.get(sessionId);
       if (!session) return null;
       return session.events.filter((event) => after === undefined || event.sequence > after).map(cloneEvent);
+    },
+    listMessages: async (sessionId, after) => {
+      const session = sessions.get(sessionId);
+      if (!session) return null;
+      return derivePiChatMessages(session.events, after);
     }
   };
 };
