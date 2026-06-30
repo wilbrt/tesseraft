@@ -17,6 +17,9 @@ header {
 
 header h1 { margin: 0 0 0.25rem; }
 header p { margin: 0; color: #cbd5e1; }
+.tabs { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.tabs button { cursor: pointer; border: 1px solid #64748b; border-radius: 999px; padding: 0.45rem 0.9rem; background: transparent; color: #e2e8f0; font-weight: 700; }
+.tabs button.active { background: #e2e8f0; color: #172033; }
 
 main {
   display: grid;

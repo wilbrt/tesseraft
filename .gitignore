@@ -5,3 +5,7 @@ node_modules/
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# Generated web build outputs
+web/dist-server/
+web/static/
