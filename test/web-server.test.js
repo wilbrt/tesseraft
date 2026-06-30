@@ -186,6 +186,17 @@ test('Pi chat message derivation coalesces assistant deltas', () => {
   assert.equal(messages[1].text, 'Hello');
 });
 
+test('Pi chat message derivation includes real SDK assistant text deltas without explicit role', () => {
+  const messages = derivePiChatMessages([
+    { id: 'e1', session_id: 's1', sequence: 1, created_at: '2026-01-01T00:00:00.000Z', event: 'prompt.sent', role: 'user', text: 'Hello' },
+    { id: 'e2', session_id: 's1', sequence: 2, created_at: '2026-01-01T00:00:01.000Z', event: 'message_update', text: 'Hel', data: { sdk_event: { type: 'message_update', assistantMessageEvent: { delta: 'Hel' } } } },
+    { id: 'e3', session_id: 's1', sequence: 3, created_at: '2026-01-01T00:00:02.000Z', event: 'message_update', text: 'lo', data: { sdk_event: { type: 'message_update', assistantMessageEvent: { delta: 'lo' } } } }
+  ]);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].role, 'assistant');
+  assert.equal(messages[1].text, 'Hello');
+});
+
 test('web server exposes fake Pi session routes as local JSON APIs', async (t) => {
   const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
   const port = await listen(server);
