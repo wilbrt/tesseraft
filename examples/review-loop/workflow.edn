@@ -42,26 +42,27 @@
    :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
              :design-doc {:path "design/design.md" :required true}
              :branch-name {:path "design/branch-name.txt" :required true}}
-   :transitions [{:when {:status "pass"} :next :ensure-branch}
+   :transitions [{:when {:status "pass"} :next :ensure-worktree}
                  {:when {:status "fail"} :next :failed}]}
 
-  :ensure-branch
+  :ensure-worktree
   {:type :deterministic
-   :title "Create or check out branch"
-   :handler :git/ensure-branch
+   :title "Create isolated worktree"
+   :handler :git/ensure-worktree
    :runtime {:timeout "5m"}
    :inputs {:branch-file "design/branch-name.txt"}
+   :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
    :next :execute}
 
   :execute
   {:type :agent
-   :title "Execute"
+   :title "Execute in worktree"
    :executor :pi-cli
    :prompt-template "prompts/execute.md.tmpl"
    :prompt-output "prompts/generated/execute-{{run.round}}.md"
    :session-name "review-loop-execute-{{run.round}}"
    :tools [:read :bash :edit :write :grep :find :ls]
-   :runtime {:cwd "{{inputs.repo-root}}" :timeout "90m"}
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
    :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "execution/summary-{{run.round}}.md" :required true}
              :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
@@ -70,13 +71,13 @@
 
   :manual-testing
   {:type :agent
-   :title "Manual browser testing"
+   :title "Manual browser testing in worktree"
    :executor :pi-cli
    :prompt-template "prompts/manual-testing.md.tmpl"
    :prompt-output "prompts/generated/manual-testing-{{run.round}}.md"
    :session-name "review-loop-manual-testing-{{run.round}}"
    :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
    :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "manual-testing/report-{{run.round}}.md" :required true}
              :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
@@ -85,13 +86,13 @@
 
   :review
   {:type :agent
-   :title "Review with pass/fail status"
+   :title "Review with pass/fail status in worktree"
    :executor :pi-cli
    :prompt-template "prompts/review.md.tmpl"
    :prompt-output "prompts/generated/review-{{run.round}}.md"
    :session-name "review-loop-review-{{run.round}}"
    :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
    :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "review/report-{{run.round}}.md" :required true}
              :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
@@ -100,13 +101,13 @@
 
   :pr-draft
   {:type :agent
-   :title "Draft PR metadata"
+   :title "Draft PR metadata in worktree"
    :executor :pi-cli
    :prompt-template "prompts/pr-draft.md.tmpl"
    :prompt-output "prompts/generated/pr-draft.md"
    :session-name "review-loop-draft"
    :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{inputs.repo-root}}" :timeout "20m"}
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
    :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
              :title {:path "pr/pr-title.txt" :required true}
              :body {:path "pr/pr-body.md" :required true}}
@@ -115,12 +116,13 @@
 
   :create-pr
   {:type :deterministic
-   :title "Create pull request"
+   :title "Create pull request from worktree"
    :handler :github/create-pr
-   :runtime {:timeout "5m" :requires-secrets [:github-token]}
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m" :requires-secrets [:github-token]}
    :inputs {:title-file "pr/pr-title.txt"
             :body-file "pr/pr-body.md"
-            :branch-file "design/branch-name.txt"}
+            :branch-file "design/branch-name.txt"
+            :repo-dir-file "worktree/path.txt"}
    :outputs {:pr-json {:path "pr/pr.json" :required true}}
    :next :done}
 
