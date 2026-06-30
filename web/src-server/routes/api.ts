@@ -156,6 +156,51 @@ const handleSendPiPrompt = async (req: Request, res: Response, adapter: PiSessio
   jsonResponse(res, 200, result);
 };
 
+const piSessionSnapshot = async (adapter: PiSessionAdapter, sessionId: string): Promise<unknown | null> => {
+  const session = await adapter.getSession(sessionId);
+  if (!session) return null;
+  const messages = await adapter.listMessages(sessionId);
+  return { session, messages: messages || [] };
+};
+
+const handlePiSessionStream = async (req: Request, res: Response, adapter: PiSessionAdapter, sessionId: string): Promise<void> => {
+  const initial = await piSessionSnapshot(adapter, sessionId);
+  if (!initial) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Pi session not found', { session_id: sessionId }));
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive'
+  });
+  res.write(': connected\n\n');
+  let closed = false;
+  let lastPayload = '';
+  let interval: ReturnType<typeof setInterval> | null = null;
+
+  const closeStream = (): void => {
+    if (closed) return;
+    closed = true;
+    if (interval) clearInterval(interval);
+    res.end();
+  };
+  const sendSnapshot = async (): Promise<void> => {
+    if (closed) return;
+    const snapshot = await piSessionSnapshot(adapter, sessionId);
+    if (!snapshot) return closeStream();
+    const payload = JSON.stringify(snapshot);
+    if (payload !== lastPayload) {
+      lastPayload = payload;
+      res.write(`event: snapshot\ndata: ${payload}\n\n`);
+    } else {
+      res.write(': heartbeat\n\n');
+    }
+  };
+
+  await sendSnapshot();
+  if (!closed) interval = setInterval(() => { void sendSnapshot().catch((error) => res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`)); }, 1000);
+  req.on('close', closeStream);
+};
+
 const handleRunStream = async (req: Request, res: Response, runId: string): Promise<void> => {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -244,6 +289,11 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
       after = parsedAfter;
     }
     return void piSessionAdapter.listEvents(sessionId, after).then((events) => events ? jsonResponse(res, 200, { session_id: sessionId, events }) : jsonResponse(res, 404, errorBody(404, 'not_found', 'Pi session not found', { session_id: sessionId }))).catch(next);
+  });
+  router.get('/pi-sessions/:sessionId/stream', (req, res, next) => {
+    const sessionId = safeDecode(req.params.sessionId);
+    if (sessionId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed Pi session id'));
+    return void handlePiSessionStream(req, res, piSessionAdapter, sessionId).catch(next);
   });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });

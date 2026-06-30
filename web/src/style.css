@@ -144,6 +144,17 @@ pre {
 .control-card button { cursor: pointer; border: 0; border-radius: 0.45rem; padding: 0.55rem 0.75rem; background: #1d4ed8; color: white; font-weight: 700; }
 .link-button { cursor: pointer; border: 0; background: transparent; color: #1d4ed8; font-weight: 700; padding: 0; }
 .event-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline; }
+.pi-chat-transcript { display: grid; gap: 0.75rem; margin: 1rem 0; padding: 0.85rem; min-height: 14rem; max-height: 34rem; overflow: auto; border: 1px solid #d9dee8; border-radius: 0.75rem; background: #f8fafc; }
+.pi-chat-message { width: min(88%, 42rem); border: 1px solid #d9dee8; border-radius: 0.85rem; padding: 0.7rem 0.85rem; background: white; box-shadow: 0 1px 1px rgba(15, 23, 42, 0.05); }
+.pi-chat-message p { margin: 0.25rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pi-chat-message.user { justify-self: end; background: #dbeafe; border-color: #93c5fd; }
+.pi-chat-message.assistant { justify-self: start; background: #ffffff; }
+.pi-chat-message.system, .pi-chat-message.tool { justify-self: center; width: min(100%, 38rem); background: #eef2ff; color: #475569; text-align: center; }
+.pi-chat-meta { color: #667085; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.pi-diagnostics { margin-top: 1rem; }
+.pi-diagnostics summary { cursor: pointer; color: #1d4ed8; font-weight: 700; }
+.status-pill.connected { background: #dcfce7; color: #166534; }
+.status-pill.disconnected { background: #e5e7eb; color: #374151; }
 .control-card button:disabled { cursor: not-allowed; background: #94a3b8; }
 .check { display: flex !important; grid-template-columns: auto 1fr; align-items: center; font-weight: 500 !important; }
 .warning, .success { border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.75rem; }
@@ -179,6 +190,12 @@ pre {
   .workflow-inputs { background: #111827; border-color: #374151; }
   .workflow-input-field small { color: #cbd5e1; }
   .item-list li, .event-list li, .timeline li { border-color: #273449; }
+  .pi-chat-transcript { background: #0f172a; border-color: #374151; }
+  .pi-chat-message { background: #111827; border-color: #374151; }
+  .pi-chat-message.user { background: #1e3a8a; border-color: #2563eb; }
+  .pi-chat-message.assistant { background: #111827; }
+  .pi-chat-message.system, .pi-chat-message.tool { background: #1f2937; color: #cbd5e1; }
+  .pi-chat-meta { color: #cbd5e1; }
   pre, .graph-canvas { background: #0f172a; border-color: #374151; }
   .graph-node rect { fill: #1f2937; stroke: #60a5fa; }
   .node-title { fill: #f8fafc; }

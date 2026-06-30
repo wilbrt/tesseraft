@@ -70,7 +70,7 @@ test('Run component sources expose attempt, artifact, and failure surfaces', () 
   assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });
 
-test('Pi sessions UI source exposes tab, real-default guidance, prompt form, refresh, and API routes', () => {
+test('Pi sessions UI source exposes tab, chat UI, SSE stream, prompt form, refresh, and diagnostics', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const panel = fs.readFileSync('web/src/components/PiSessionsPanel.tsx', 'utf8');
   assert.match(app, /'pi-sessions'/);
@@ -79,10 +79,15 @@ test('Pi sessions UI source exposes tab, real-default guidance, prompt form, ref
   assert.match(panel, /real Pi SDK by default/);
   assert.match(panel, /TESSERAFT_PI_ADAPTER=fake/);
   assert.match(panel, /\/api\/pi-sessions/);
+  assert.match(panel, /new EventSource/);
+  assert.match(panel, /\/api\/pi-sessions\/\$\{encodeURIComponent\(selectedSessionId\)\}\/stream/);
   assert.match(panel, /\/api\/pi-sessions\/\$\{encodeURIComponent\(selectedSessionId\)\}\/prompts/);
+  assert.match(panel, /Pi session chat/);
+  assert.match(panel, /Pi session chat transcript/);
+  assert.match(panel, /Diagnostics: raw Pi session events/);
   assert.match(panel, /Refresh sessions/);
-  assert.match(panel, /Refresh events/);
-  assert.match(panel, /Events \/ output/);
+  assert.match(panel, /Refresh chat/);
+  assert.doesNotMatch(panel, /Events \/ output/);
   assert.match(panel, /Send prompt/);
 });
 
