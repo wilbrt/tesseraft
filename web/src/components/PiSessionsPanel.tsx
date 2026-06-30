@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { getJson, postJson } from '../lib/api';
 import type { PiSessionDetail, PiSessionEvent, PiSessionSummary } from '../types/piSessions';
 
+const DEFAULT_VISIBLE_EVENTS = 50;
+
+const eventSummary = (event: PiSessionEvent): string => event.text || event.prompt || event.event;
+
 export const PiSessionsPanel = () => {
   const [sessions, setSessions] = useState<PiSessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -11,6 +15,7 @@ export const PiSessionsPanel = () => {
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
 
   const loadSessions = async (): Promise<PiSessionSummary[]> => {
     const data = await getJson<{ sessions: PiSessionSummary[] }>('/api/pi-sessions');
@@ -28,6 +33,7 @@ export const PiSessionsPanel = () => {
       setSelectedSessionId(sessionId);
       setSelectedSession(detail.session);
       setEvents(eventData.events || []);
+      setExpandedEventIds(new Set());
       setLastRefresh(new Date().toLocaleTimeString());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -73,11 +79,22 @@ export const PiSessionsPanel = () => {
     void refresh();
   }, []);
 
+  const hiddenEventCount = Math.max(0, events.length - DEFAULT_VISIBLE_EVENTS);
+  const visibleEvents = events.slice(-DEFAULT_VISIBLE_EVENTS);
+  const toggleEvent = (eventId: string): void => {
+    setExpandedEventIds((current) => {
+      const next = new Set(current);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  };
+
   return (
     <>
       <section className="panel">
         <h2>Pi Sessions</h2>
-        <p className="muted">Pi sessions use the real Pi SDK by default. Set TESSERAFT_PI_ADAPTER=fake on the web server only when you explicitly want local fake responses.</p>
+        <p className="muted">Uses the real Pi SDK by default. Set TESSERAFT_PI_ADAPTER=fake on the web server only for local fake responses.</p>
         {error && <div className="error">{error}</div>}
         <div className="control-card pi-session-create">
           <label>
@@ -92,7 +109,7 @@ export const PiSessionsPanel = () => {
           {sessions.map((session) => (
             <li key={session.id} className={session.id === selectedSessionId ? 'selected-row' : ''}>
               <button type="button" onClick={() => void loadSession(session.id)}>{session.title}</button>
-              <span>{session.id} — {session.status} — {session.event_count} events</span>
+              <span className="meta-line">{session.status} · {session.event_count} events · <code>{session.id}</code></span>
             </li>
           ))}
         </ul>
@@ -119,15 +136,24 @@ export const PiSessionsPanel = () => {
           </>
         )}
         <h3>Events / output</h3>
-        <ol className="event-list pi-event-list">
+        {hiddenEventCount > 0 && (
+          <p className="muted">Showing latest {visibleEvents.length} of {events.length} events to keep this view responsive.</p>
+        )}
+        <ol className="event-list pi-event-list" start={hiddenEventCount + 1}>
           {events.length === 0 && <li className="muted">No Pi session events found.</li>}
-          {events.map((event) => (
-            <li key={event.id}>
-              <code>{event.sequence}. {event.event}{event.role ? ` (${event.role})` : ''}</code>
-              {event.text && <p>{event.text}</p>}
-              <pre>{JSON.stringify(event, null, 2)}</pre>
-            </li>
-          ))}
+          {visibleEvents.map((event) => {
+            const expanded = expandedEventIds.has(event.id);
+            return (
+              <li key={event.id}>
+                <div className="event-head">
+                  <code>{event.sequence}. {event.event}{event.role ? ` (${event.role})` : ''}</code>
+                  <button type="button" className="link-button" onClick={() => toggleEvent(event.id)}>{expanded ? 'Hide JSON' : 'Show JSON'}</button>
+                </div>
+                <p>{eventSummary(event)}</p>
+                {expanded && <pre>{JSON.stringify(event, null, 2)}</pre>}
+              </li>
+            );
+          })}
         </ol>
       </section>
     </>

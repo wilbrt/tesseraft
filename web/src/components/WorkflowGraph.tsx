@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { layoutGraph, type GraphEdge, type GraphNode } from '../lib/graphLayout';
 
 type Props = {
@@ -73,20 +73,30 @@ export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, onSelectNod
   );
 };
 
-const NodeModal = ({ node, onClose }: { node: GraphNode; onClose: () => void }) => (
-  <div className="modal-backdrop" role="presentation" onClick={onClose}>
-    <div className="modal" role="dialog" aria-modal="true" aria-label={`Node ${node.id} details`} onClick={(event) => event.stopPropagation()}>
-      <div className="modal-header">
-        <h2>Node details: {node.id}</h2>
-        <button type="button" onClick={onClose} aria-label="Close node details">×</button>
+const NodeModal = ({ node, onClose }: { node: GraphNode; onClose: () => void }) => {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={`Node ${node.id} details`} onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Node details: {node.id}</h2>
+          <button type="button" onClick={onClose} aria-label="Close node details">×</button>
+        </div>
+        <dl>
+          <div className="field-row"><dt>ID</dt><dd>{node.id}</dd></div>
+          <div className="field-row"><dt>Type</dt><dd>{String(node.type || '')}</dd></div>
+          <div className="field-row"><dt>Title</dt><dd>{String(node.title || '')}</dd></div>
+        </dl>
+        <h3>Structured JSON</h3>
+        <pre>{JSON.stringify(node, null, 2)}</pre>
       </div>
-      <dl>
-        <div className="field-row"><dt>ID</dt><dd>{node.id}</dd></div>
-        <div className="field-row"><dt>Type</dt><dd>{String(node.type || '')}</dd></div>
-        <div className="field-row"><dt>Title</dt><dd>{String(node.title || '')}</dd></div>
-      </dl>
-      <h3>Structured JSON</h3>
-      <pre>{JSON.stringify(node, null, 2)}</pre>
     </div>
-  </div>
-);
+  );
+};

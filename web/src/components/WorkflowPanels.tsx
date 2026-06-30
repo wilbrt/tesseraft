@@ -30,7 +30,7 @@ export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, gr
       <h2>Workflow detail</h2>
       {workflowError && <div className="error">{workflowError}</div>}
       {!workflowDetail && !workflowError && <div className="empty">{selectedWorkflow ? 'Loading workflow...' : 'Select a workflow.'}</div>}
-      {workflowDetail && <FieldList fields={[["Name", workflowDetail.name], ["Path", workflowDetail.path], ["API version", workflowDetail.api_version], ["Lint", workflowDetail.lint?.ok ? 'ok' : 'has issues'], ["Selected graph node", selectedNodeId || 'none']]} />}
+      {workflowDetail && <FieldList fields={[["Name", workflowDetail.name], ["Path", workflowDetail.path], ["API version", workflowDetail.api_version], ["Lint status", workflowDetail.lint?.ok ? 'Pass' : 'Has issues'], ["Graph node selected", selectedNodeId || 'None']]} />}
       <WorkflowGraph nodes={graph.nodes} edges={graph.edges} selectedNodeId={selectedNodeId} onSelectNode={(node) => onSelectNode(node.id)} />
     </section>
   </>

@@ -8,7 +8,7 @@ export const FailureSummary = ({ run }: { run: RunDetail | null }) => {
   if (!run || (failures.length === 0 && !['failed', 'error'].includes(run.status || ''))) return null;
   return (
     <div className="failure-summary" aria-label="Run failure summary">
-      <strong>Failure / issues</strong>
+      <strong>Issues to inspect</strong>
       <ul>
         {['failed', 'error'].includes(run.status || '') && <li>Run status: {run.status}</li>}
         {failures.map((failure, index) => <li key={`${failure.source || 'failure'}-${index}`}>{failure.message || failure.path || failure.node_id}</li>)}
@@ -73,7 +73,7 @@ export const RunsPanel = ({ runs, selectedRun, runDetail, events, artifacts, run
         <h2>Run detail</h2>
         {runError && <div className="error">{runError}</div>}
         {!runDetail && !runError && <div className="empty">{selectedRun ? 'Loading run...' : 'Select a run.'}</div>}
-        {runDetail && <FieldList fields={[["Run ID", runDetail.run_id], ["Workflow", runDetail.workflow_name], ["Status", runDetail.status], ["State", runDetail.state], ["Round / attempt", `${runDetail.round ?? ''} / ${runDetail.attempt ?? ''}`], ["Path", runDetail.path], ["Selected node filter", selectedNodeId || 'none'], ["Auto-refresh", isActiveRun(runDetail) ? `active, last refresh ${lastRunRefresh || 'pending'}` : 'inactive']]} />}
+        {runDetail && <FieldList fields={[["Run ID", runDetail.run_id], ["Workflow", runDetail.workflow_name], ["Status", runDetail.status], ["State", runDetail.state], ["Round / attempt", `${runDetail.round ?? ''} / ${runDetail.attempt ?? ''}`], ["Path", runDetail.path], ["Event filter", selectedNodeId ? `Graph node: ${selectedNodeId}` : 'All events'], ["Auto-refresh", isActiveRun(runDetail) ? `Active, last refresh ${lastRunRefresh || 'pending'}` : 'Inactive']]} />}
         <FailureSummary run={runDetail} />
         <AttemptTimeline attempts={runDetail?.attempts || []} selectedNodeId={selectedNodeId} />
         <ArtifactBrowser runId={selectedRun} artifacts={artifacts} selectedNodeId={selectedNodeId} />

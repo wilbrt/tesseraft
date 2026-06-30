@@ -66,7 +66,7 @@ test('Run component sources expose attempt, artifact, and failure surfaces', () 
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   assert.match(runPanels, /Attempt timeline/);
   assert.match(artifactBrowser, /Artifact browser/);
-  assert.match(runPanels, /Failure \/ issues/);
+  assert.match(runPanels, /Issues to inspect/);
   assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });
 
