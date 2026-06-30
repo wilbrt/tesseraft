@@ -2,6 +2,7 @@ import type { Request, Response, Router } from 'express';
 import express from 'express';
 import { runControlPlane, runRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
 import { errorBody, jsonResponse, safeDecode } from '../lib/http.js';
+import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/piSessionAdapter.js';
 
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
 type JsonRecord = Record<string, unknown>;
@@ -97,6 +98,34 @@ const handleStartRun = async (req: Request, res: Response): Promise<void> => {
   jsonResponse(res, result.status, result.body);
 };
 
+const handlePiError = (res: Response, error: unknown): void => {
+  const err = error as Error & { status?: number; code?: string };
+  const status = err.status || 500;
+  const code = err.code || (status === 500 ? 'internal_error' : 'bad_request');
+  jsonResponse(res, status, errorBody(status, code, err.message || 'Pi session request failed'));
+};
+
+const readOptionalString = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+
+const handleCreatePiSession = async (req: Request, res: Response, adapter: PiSessionAdapter): Promise<void> => {
+  try {
+    const body = (req.body || {}) as JsonRecord;
+    const session = await adapter.createSession({ id: readOptionalString(body.id), title: readOptionalString(body.title) });
+    jsonResponse(res, 201, { session });
+  } catch (error) {
+    handlePiError(res, error);
+  }
+};
+
+const handleSendPiPrompt = async (req: Request, res: Response, adapter: PiSessionAdapter, sessionId: string): Promise<void> => {
+  const body = req.body as JsonRecord;
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  if (!prompt) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'prompt is required'));
+  const result = await adapter.sendPrompt(sessionId, prompt);
+  if (!result) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Pi session not found', { session_id: sessionId }));
+  jsonResponse(res, 200, result);
+};
+
 const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume'): Promise<void> => {
   const body = req.body as JsonRecord;
   const detail = await refreshedRun(runId);
@@ -117,9 +146,36 @@ const handleExistingRunMutation = async (req: Request, res: Response, runId: str
   jsonResponse(res, result.status, result.body);
 };
 
-export const createApiRouter = (): Router => {
+export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfiguredPiSessionAdapter()): Router => {
   const router = express.Router();
   router.use(express.json({ limit: '64kb' }));
+
+  router.get('/pi-sessions', (req, res, next) => {
+    void piSessionAdapter.listSessions().then((sessions) => jsonResponse(res, 200, { sessions })).catch(next);
+  });
+  router.post('/pi-sessions', (req, res, next) => { void handleCreatePiSession(req, res, piSessionAdapter).catch(next); });
+  router.get('/pi-sessions/:sessionId', (req, res, next) => {
+    const sessionId = safeDecode(req.params.sessionId);
+    if (sessionId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed Pi session id'));
+    return void piSessionAdapter.getSession(sessionId).then((session) => session ? jsonResponse(res, 200, { session }) : jsonResponse(res, 404, errorBody(404, 'not_found', 'Pi session not found', { session_id: sessionId }))).catch(next);
+  });
+  router.post('/pi-sessions/:sessionId/prompts', (req, res, next) => {
+    const sessionId = safeDecode(req.params.sessionId);
+    if (sessionId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed Pi session id'));
+    return void handleSendPiPrompt(req, res, piSessionAdapter, sessionId).catch(next);
+  });
+  router.get('/pi-sessions/:sessionId/events', (req, res, next) => {
+    const sessionId = safeDecode(req.params.sessionId);
+    const afterValue = Array.isArray(req.query.after) ? req.query.after[0] : req.query.after;
+    let after: number | undefined;
+    if (sessionId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed Pi session id'));
+    if (afterValue !== undefined) {
+      const parsedAfter = Number(afterValue);
+      if (!Number.isInteger(parsedAfter) || parsedAfter < 0) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'after must be a non-negative integer'));
+      after = parsedAfter;
+    }
+    return void piSessionAdapter.listEvents(sessionId, after).then((events) => events ? jsonResponse(res, 200, { session_id: sessionId, events }) : jsonResponse(res, 404, errorBody(404, 'not_found', 'Pi session not found', { session_id: sessionId }))).catch(next);
+  });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });
   router.post('/runs/:runId/:operation', (req, res, next) => {

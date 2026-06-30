@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
+import { createFakePiSessionAdapter } from '../web/dist-server/lib/piSessionAdapter.js';
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -101,6 +102,87 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.equal(artifact.artifact.path, 'events.jsonl');
   assert.equal(artifact.previewable, true);
   assert.match(artifact.content, /run.finished/);
+});
+
+test('fake Pi session adapter creates sessions, prompts, and filtered events', async () => {
+  const adapter = createFakePiSessionAdapter();
+  const created = await adapter.createSession({ id: 'unit-pi', title: 'Unit Pi' });
+  assert.equal(created.id, 'unit-pi');
+  assert.equal(created.events[0].event, 'session.created');
+
+  const listed = await adapter.listSessions();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].event_count, 1);
+
+  const sent = await adapter.sendPrompt('unit-pi', 'hello pi');
+  assert.ok(sent);
+  assert.equal(sent.events.length, 2);
+  assert.equal(sent.events[0].role, 'user');
+  assert.equal(sent.events[1].role, 'assistant');
+  assert.match(sent.events[1].text, /Fake Pi adapter response/);
+
+  const filtered = await adapter.listEvents('unit-pi', 1);
+  assert.equal(filtered.length, 2);
+  assert.deepEqual(filtered.map((event) => event.sequence), [2, 3]);
+  assert.equal(await adapter.getSession('missing'), null);
+});
+
+test('web server exposes fake Pi session routes as local JSON APIs', async (t) => {
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const emptyList = await fetch(`${base}/api/pi-sessions`);
+  assert.equal(emptyList.status, 200);
+  assert.deepEqual(await emptyList.json(), { sessions: [] });
+
+  const createdResponse = await fetch(`${base}/api/pi-sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'api-pi', title: 'API Pi' })
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  assert.equal(created.session.id, 'api-pi');
+  assert.equal(created.session.title, 'API Pi');
+
+  const listResponse = await fetch(`${base}/api/pi-sessions`);
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  assert.equal(listed.sessions.length, 1);
+
+  const detailResponse = await fetch(`${base}/api/pi-sessions/api-pi`);
+  assert.equal(detailResponse.status, 200);
+  const detail = await detailResponse.json();
+  assert.equal(detail.session.events[0].event, 'session.created');
+
+  const badPrompt = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: '' })
+  });
+  assert.equal(badPrompt.status, 400);
+  assert.equal((await badPrompt.json()).error.code, 'bad_request');
+
+  const promptResponse = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: 'Summarize events' })
+  });
+  assert.equal(promptResponse.status, 200);
+  const prompted = await promptResponse.json();
+  assert.equal(prompted.events.length, 2);
+
+  const eventsResponse = await fetch(`${base}/api/pi-sessions/api-pi/events?after=1`);
+  assert.equal(eventsResponse.status, 200);
+  const events = await eventsResponse.json();
+  assert.equal(events.session_id, 'api-pi');
+  assert.deepEqual(events.events.map((event) => event.sequence), [2, 3]);
+
+  const missingResponse = await fetch(`${base}/api/pi-sessions/missing/events`);
+  assert.equal(missingResponse.status, 404);
+  assert.equal((await missingResponse.json()).error.code, 'not_found');
 });
 
 test('web server supports local smoke start, step, and resume mutations', async (t) => {

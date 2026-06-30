@@ -70,12 +70,28 @@ test('Run component sources expose attempt, artifact, and failure surfaces', () 
   assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });
 
+test('Pi sessions UI source exposes tab, local fake guidance, prompt form, refresh, and API routes', () => {
+  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
+  const panel = fs.readFileSync('web/src/components/PiSessionsPanel.tsx', 'utf8');
+  assert.match(app, /'pi-sessions'/);
+  assert.match(app, />Pi Sessions<\/button>/);
+  assert.match(app, /<PiSessionsPanel \/>/);
+  assert.match(panel, /TESSERAFT_PI_ADAPTER=real/);
+  assert.match(panel, /\/api\/pi-sessions/);
+  assert.match(panel, /\/api\/pi-sessions\/\$\{encodeURIComponent\(selectedSessionId\)\}\/prompts/);
+  assert.match(panel, /Refresh sessions/);
+  assert.match(panel, /Refresh events/);
+  assert.match(panel, /Events \/ output/);
+  assert.match(panel, /Send prompt/);
+});
+
 test('App and RunControls expose tabs, warnings, auto-refresh, and POST routes', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const controls = fs.readFileSync('web/src/components/RunControls.tsx', 'utf8');
   assert.match(app, /Run Console sections/);
   assert.match(app, />Workflows<\/button>/);
   assert.match(app, />Runs<\/button>/);
+  assert.match(app, />Pi Sessions<\/button>/);
   assert.match(controls, /Run controls/);
   assert.match(controls, /Local mutation warning/);
   assert.match(app, /Active runs auto-refresh/);
