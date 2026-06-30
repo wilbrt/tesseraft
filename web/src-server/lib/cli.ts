@@ -1,9 +1,10 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { ROOT_DIR, tesseraftBin } from './paths.js';
 import { errorBody } from './http.js';
 
 export type ControlPlaneResult = { status: number; body: unknown };
 export type RuntimeResult = { status: number; body: unknown; exitCode: number | null; stderr: string };
+export type BackgroundRuntime = { pid?: number };
 
 const statusFromControlPlane = (data: unknown, fallback: number): number => {
   if (data && typeof data === 'object' && 'status' in data && typeof data.status === 'number') return data.status;
@@ -31,6 +32,12 @@ export const runControlPlane = (args: string[], options: { timeout?: number } = 
     resolve({ status: 200, body: parsed });
   });
 });
+
+export const startRuntime = (args: string[]): BackgroundRuntime => {
+  const child = spawn(tesseraftBin(), ['run', ...args], { cwd: ROOT_DIR, detached: true, stdio: 'ignore' });
+  child.unref();
+  return { pid: child.pid };
+};
 
 export const runRuntime = (args: string[], options: { timeout?: number } = {}): Promise<RuntimeResult> => new Promise((resolve) => {
   execFile(tesseraftBin(), ['run', ...args], { cwd: ROOT_DIR, timeout: options.timeout || 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {

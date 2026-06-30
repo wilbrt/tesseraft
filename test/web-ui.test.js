@@ -86,7 +86,7 @@ test('Pi sessions UI source exposes tab, real-default guidance, prompt form, ref
   assert.match(panel, /Send prompt/);
 });
 
-test('App and RunControls expose tabs, warnings, auto-refresh, and POST routes', () => {
+test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const controls = fs.readFileSync('web/src/components/RunControls.tsx', 'utf8');
   assert.match(app, /Run Console sections/);
@@ -95,10 +95,12 @@ test('App and RunControls expose tabs, warnings, auto-refresh, and POST routes',
   assert.match(app, />Pi Sessions<\/button>/);
   assert.match(controls, /Run controls/);
   assert.match(controls, /Local mutation warning/);
-  assert.match(app, /Active runs auto-refresh/);
-  assert.match(app, /window\.setInterval/);
+  assert.match(app, /Active runs stream updates/);
+  assert.match(app, /new EventSource/);
+  assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun\)\}\/stream/);
+  assert.doesNotMatch(app, /window\.setInterval/);
   assert.match(controls, /Non-smoke workflows may run agents, processes, or other side effects/);
-  assert.match(controls, /I understand this may execute local side effects/);
+  assert.match(controls, /I understand this may execute local side effects automatically/);
   assert.match(controls, /Workflow inputs/);
   assert.match(controls, /workflowDetail\?\.normalized\?\.inputs/);
   assert.match(controls, /type === 'boolean'/);
@@ -108,6 +110,7 @@ test('App and RunControls expose tabs, warnings, auto-refresh, and POST routes',
   assert.doesNotMatch(controls, /parseInputs/);
   assert.match(controls, /Confirm one local node execution/);
   assert.match(controls, /postJson<MutationResult>\('\/api\/runs'/);
+  assert.match(controls, /max_steps: maxSteps/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
 });

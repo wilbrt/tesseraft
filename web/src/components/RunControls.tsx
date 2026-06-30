@@ -73,7 +73,7 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
       {!smokeSafe && <p className="warning strong">Selected workflow/run is not the smoke-demo local-safe workflow. Confirm before mutating.</p>}
       <div className="control-grid">
         <div className="control-card start-workflow-card">
-          <h3>Start selected workflow</h3>
+          <h3>Start and run selected workflow</h3>
           {!selectedWorkflow && <p className="muted">Select a workflow to see the inputs it needs.</p>}
           {selectedWorkflow && !workflowDetail && <p className="loading">Loading workflow inputs...</p>}
           <label>Run ID <input value={runId} onChange={(event) => setRunId(event.target.value)} /></label>
@@ -105,8 +105,9 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
             ))}
           </div>
           {missingRequired.length > 0 && <p className="error inline">Required inputs missing: {missingRequired.map(humanizeInputName).join(', ')}</p>}
-          <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects.</label>
-          <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs() }), runId)}>Start run</button>
+          <label>Max automated steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
+          <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects automatically.</label>
+          <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps }), runId)}>Start and run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>

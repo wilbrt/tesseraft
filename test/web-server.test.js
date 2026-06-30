@@ -22,6 +22,17 @@ const removeRun = (runId) => {
   fs.rmSync(path.join(process.cwd(), '.agent-runs', 'smoke-demo', runId), { recursive: true, force: true });
 };
 
+const waitForRunStatus = async (base, runId, status, attempts = 50) => {
+  for (let i = 0; i < attempts; i += 1) {
+    const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    if (body.run.status === status) return body.run;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Run ${runId} did not reach status ${status}`);
+};
+
 test('parseArgs accepts port zero for tests', () => {
   assert.deepEqual(parseArgs(['--port', '0']), { host: '127.0.0.1', port: 0 });
 });
@@ -89,6 +100,12 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const events = await eventsResponse.json();
   assert.equal(events.run_id, 'web-server-test');
   assert.ok(events.events.some((event) => event.event === 'run.finished'));
+
+  const streamResponse = await fetch(`${base}/api/runs/web-server-test/stream`);
+  assert.equal(streamResponse.status, 200);
+  assert.match(streamResponse.headers.get('content-type') || '', /text\/event-stream/);
+  const streamText = await streamResponse.text();
+  assert.match(streamText, /event: snapshot/);
 
   const artifactsResponse = await fetch(`${base}/api/runs/web-server-test/artifacts`);
   assert.equal(artifactsResponse.status, 200);
@@ -198,7 +215,7 @@ test('web server exposes fake Pi session routes as local JSON APIs', async (t) =
   assert.equal((await missingResponse.json()).error.code, 'not_found');
 });
 
-test('web server supports local smoke start, step, and resume mutations', async (t) => {
+test('web server supports local smoke start-and-run, step, and resume mutations', async (t) => {
   const runId = `web-mutation-${Date.now()}`;
   removeRun(runId);
   t.after(() => removeRun(runId));
@@ -213,12 +230,15 @@ test('web server supports local smoke start, step, and resume mutations', async 
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ workflow_name: 'smoke-demo', run_id: runId, inputs: { ticket: 'SMOKE-1' } })
   });
-  assert.equal(startResponse.status, 200);
+  assert.equal(startResponse.status, 202);
   const started = await startResponse.json();
   assert.equal(started.operation, 'start');
-  assert.equal(started.status, 'ok');
+  assert.equal(started.status, 'running');
+  assert.equal(started.code, 'background_started');
   assert.equal(started.run_id, runId);
-  assert.equal(started.latest_runtime.run.status, 'running');
+
+  const completedRun = await waitForRunStatus(base, runId, 'done');
+  assert.equal(completedRun.state, 'done');
 
   const duplicateResponse = await fetch(`${base}/api/runs`, {
     method: 'POST',
@@ -236,7 +256,7 @@ test('web server supports local smoke start, step, and resume mutations', async 
   const stepped = await stepResponse.json();
   assert.equal(stepped.operation, 'step');
   assert.equal(stepped.status, 'ok');
-  assert.equal(stepped.latest_runtime.run.status, 'running');
+  assert.equal(stepped.latest_runtime.run.status, 'done');
   assert.equal(stepped.latest_runtime.run.state, 'done');
 
   const resumeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/resume`, {
@@ -244,11 +264,11 @@ test('web server supports local smoke start, step, and resume mutations', async 
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ max_steps: 1 })
   });
-  assert.ok([200, 422].includes(resumeResponse.status));
+  assert.equal(resumeResponse.status, 202);
   const resumed = await resumeResponse.json();
   assert.equal(resumed.operation, 'resume');
-  assert.ok(['ok', 'guarded'].includes(resumed.status));
-  if (resumeResponse.status === 422) assert.equal(resumed.code, 'max_steps_exceeded');
+  assert.equal(resumed.status, 'running');
+  assert.equal(resumed.code, 'background_started');
 
   const runResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
   assert.equal(runResponse.status, 200);

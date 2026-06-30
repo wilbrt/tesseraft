@@ -165,18 +165,29 @@
       (update-in [:run :attempt] inc)
       (assoc-in [:run :updated-at] (store/now))))
 
-(defn step! [wf ctx]
+(defn finish-if-terminal [wf ctx]
   (let [state-id (get-in ctx [:run :state])
         node (spec/node wf state-id)]
-    (when-not node (throw (ex-info "Current state not found" {:state state-id})))
     (if (= :terminal (:type node))
       (do
         (store/event! ctx {:event "run.finished" :state (name state-id)})
-        (assoc-in ctx [:run :status] "done"))
-      (let [result (execute-node! wf ctx state-id node)
-            tr (choose-transition node result)]
-        (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
-        (advance ctx tr result)))))
+        (-> ctx
+            (assoc-in [:run :status] "done")
+            (assoc-in [:run :updated-at] (store/now))))
+      ctx)))
+
+(defn step! [wf ctx]
+  (if (= "done" (get-in ctx [:run :status]))
+    ctx
+    (let [state-id (get-in ctx [:run :state])
+          node (spec/node wf state-id)]
+      (when-not node (throw (ex-info "Current state not found" {:state state-id})))
+      (if (= :terminal (:type node))
+        (finish-if-terminal wf ctx)
+        (let [result (execute-node! wf ctx state-id node)
+              tr (choose-transition node result)]
+          (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
+          (finish-if-terminal wf (advance ctx tr result)))))))
 
 (defn assert-lint-ok! [workflow-file]
   (let [result (lint/lint-file workflow-file)]

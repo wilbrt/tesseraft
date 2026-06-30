@@ -1,6 +1,6 @@
 import type { Request, Response, Router } from 'express';
 import express from 'express';
-import { runControlPlane, runRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
+import { runControlPlane, runRuntime, startRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
 import { errorBody, jsonResponse, safeDecode } from '../lib/http.js';
 import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/piSessionAdapter.js';
 
@@ -68,9 +68,31 @@ const inspectRuntime = async (runDir: string): Promise<unknown> => {
   return inspected.status === 200 ? inspected.body : null;
 };
 
+const runSnapshot = async (runId: string): Promise<unknown> => {
+  const [detail, events, artifacts, runs] = await Promise.all([
+    runControlPlane(['run', runId]),
+    runControlPlane(['events', runId]),
+    runControlPlane(['artifacts', runId]),
+    runControlPlane(['runs'])
+  ]);
+  if (detail.status !== 200) return detail.body;
+  return {
+    run_id: runId,
+    run: detail.body && typeof detail.body === 'object' && 'run' in detail.body ? (detail.body as { run?: unknown }).run : null,
+    events: events.status === 200 && events.body && typeof events.body === 'object' && 'events' in events.body ? (events.body as { events?: unknown[] }).events || [] : [],
+    artifacts: artifacts.status === 200 && artifacts.body && typeof artifacts.body === 'object' && 'artifacts' in artifacts.body ? (artifacts.body as { artifacts?: unknown[] }).artifacts || [] : [],
+    runs: runs.status === 200 && runs.body && typeof runs.body === 'object' && 'runs' in runs.body ? (runs.body as { runs?: unknown[] }).runs || [] : []
+  };
+};
+
 const mutationResponse = async (operation: string, runId: string, cli: RuntimeResult, runDir?: string): Promise<{ status: number; body: unknown }> => {
   const detail = await refreshedRun(runId);
   return { status: cli.status, body: { operation, status: cli.status === 200 ? 'ok' : 'error', run_id: runId, cli: { exit_code: cli.exitCode, stderr: cli.stderr || undefined, result: cli.body }, latest_runtime: runDir ? await inspectRuntime(runDir) : null, run_detail: detail.status === 200 ? detail.body : null } };
+};
+
+const readMaxSteps = (value: unknown, fallback: number): number | null => {
+  if (value === undefined) return fallback;
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 1000 ? value as number : null;
 };
 
 const handleStartRun = async (req: Request, res: Response): Promise<void> => {
@@ -78,9 +100,11 @@ const handleStartRun = async (req: Request, res: Response): Promise<void> => {
   const workflowName = body.workflow_name;
   const runId = body.run_id;
   const inputs = body.inputs ?? {};
+  const maxSteps = readMaxSteps(body.max_steps, 100);
   if (typeof workflowName !== 'string' || workflowName.trim() === '') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'workflow_name is required'));
   if (typeof runId !== 'string' || !/^[A-Za-z0-9._-]+$/.test(runId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'run_id is required and may contain only letters, numbers, dot, underscore, and dash'));
   if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || Object.values(inputs).some((value) => typeof value !== 'string')) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'inputs must be an object of string values'));
+  if (maxSteps === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
 
   const existing = await refreshedRun(runId);
   if (existing.status === 200) return jsonResponse(res, 409, errorBody(409, 'conflict', 'Run id already exists', { run_id: runId }));
@@ -90,12 +114,18 @@ const handleStartRun = async (req: Request, res: Response): Promise<void> => {
   const filePath = workflowPath(workflow.body);
   if (!filePath) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Workflow detail did not include a path'));
 
-  const args = ['start', filePath, '--run-id', runId, '--format', 'json'];
-  for (const [key, value] of Object.entries(inputs as Record<string, string>)) args.push('--input', `${key}=${value}`);
-  const cli = await runRuntime(args);
-  const runDir = cli.body && typeof cli.body === 'object' ? (cli.body as { run?: { dir?: unknown } }).run?.dir : undefined;
-  const result = await mutationResponse('start', runId, cli, typeof runDir === 'string' ? runDir : undefined);
-  jsonResponse(res, result.status, result.body);
+  const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json'];
+  for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);
+  const started = await runRuntime(startArgs);
+  const runDir = started.body && typeof started.body === 'object' ? (started.body as { run?: { dir?: unknown } }).run?.dir : undefined;
+  if (started.status !== 200 || typeof runDir !== 'string') {
+    const result = await mutationResponse('start', runId, started, typeof runDir === 'string' ? runDir : undefined);
+    return jsonResponse(res, result.status, result.body);
+  }
+
+  const background = startRuntime(['resume', '--run-dir', runDir, '--max-steps', String(maxSteps), '--format', 'json']);
+  const detail = await refreshedRun(runId);
+  jsonResponse(res, 202, { operation: 'start', status: 'running', code: 'background_started', run_id: runId, background, cli: { exit_code: started.exitCode, result: started.body }, latest_runtime: await inspectRuntime(runDir), run_detail: detail.status === 200 ? detail.body : null });
 };
 
 const handlePiError = (res: Response, error: unknown): void => {
@@ -126,22 +156,61 @@ const handleSendPiPrompt = async (req: Request, res: Response, adapter: PiSessio
   jsonResponse(res, 200, result);
 };
 
+const handleRunStream = async (req: Request, res: Response, runId: string): Promise<void> => {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive'
+  });
+  res.write(': connected\n\n');
+  let closed = false;
+  let lastPayload = '';
+  let interval: ReturnType<typeof setInterval> | null = null;
+
+  const closeStream = (): void => {
+    if (closed) return;
+    closed = true;
+    if (interval) clearInterval(interval);
+    res.end();
+  };
+  const isTerminalSnapshot = (snapshot: unknown): boolean => {
+    const run = snapshot && typeof snapshot === 'object' && 'run' in snapshot ? (snapshot as { run?: { status?: unknown } }).run : null;
+    return Boolean(run && typeof run.status === 'string' && ['done', 'failed', 'error'].includes(run.status));
+  };
+  const sendSnapshot = async (): Promise<void> => {
+    if (closed) return;
+    const snapshot = await runSnapshot(runId);
+    const payload = JSON.stringify(snapshot);
+    if (payload !== lastPayload) {
+      lastPayload = payload;
+      res.write(`event: snapshot\ndata: ${payload}\n\n`);
+    } else {
+      res.write(': heartbeat\n\n');
+    }
+    if (isTerminalSnapshot(snapshot)) closeStream();
+  };
+
+  await sendSnapshot();
+  if (!closed) interval = setInterval(() => { void sendSnapshot().catch((error) => res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`)); }, 1000);
+  req.on('close', closeStream);
+};
+
 const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume'): Promise<void> => {
   const body = req.body as JsonRecord;
   const detail = await refreshedRun(runId);
   if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
   const runDir = runDetailPath(detail.body);
   if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
-  if (operation === 'resume' && (!Number.isInteger(body.max_steps) || (body.max_steps as number) < 1 || (body.max_steps as number) > 1000)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
+  const maxSteps = readMaxSteps(body.max_steps, 100);
+  if (operation === 'resume' && maxSteps === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
 
-  const args = operation === 'step' ? ['step', '--run-dir', runDir, '--format', 'json'] : ['resume', '--run-dir', runDir, '--max-steps', String(body.max_steps), '--format', 'json'];
-  const cli = await runRuntime(args);
-  if (operation === 'resume' && cli.status !== 200 && /Exceeded max steps/i.test(cli.stderr)) {
-    const latest = await inspectRuntime(runDir);
+  if (operation === 'resume') {
+    const background = startRuntime(['resume', '--run-dir', runDir, '--max-steps', String(maxSteps), '--format', 'json']);
     const refreshed = await refreshedRun(runId);
-    return jsonResponse(res, 422, { operation, status: 'guarded', code: 'max_steps_exceeded', run_id: runId, cli: { exit_code: cli.exitCode, stderr: cli.stderr }, latest_runtime: latest, run_detail: refreshed.status === 200 ? refreshed.body : null });
+    return jsonResponse(res, 202, { operation, status: 'running', code: 'background_started', run_id: runId, background, latest_runtime: await inspectRuntime(runDir), run_detail: refreshed.status === 200 ? refreshed.body : null });
   }
 
+  const cli = await runRuntime(['step', '--run-dir', runDir, '--format', 'json']);
   const result = await mutationResponse(operation, runId, cli, runDir);
   jsonResponse(res, result.status, result.body);
 };
@@ -178,6 +247,11 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });
+  router.get('/runs/:runId/stream', (req, res, next) => {
+    const runId = safeDecode(req.params.runId);
+    if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleRunStream(req, res, runId).catch(next);
+  });
   router.post('/runs/:runId/:operation', (req, res, next) => {
     const runId = safeDecode(req.params.runId);
     const operation = req.params.operation;

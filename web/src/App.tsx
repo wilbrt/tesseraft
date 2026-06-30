@@ -9,6 +9,7 @@ import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowD
 import './style.css';
 
 type ActiveTab = 'workflows' | 'runs' | 'pi-sessions';
+type RunSnapshot = { run?: RunDetail; events?: EventRecord[]; artifacts?: Artifact[]; runs?: RunSummary[] };
 
 export const App = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('workflows');
@@ -60,6 +61,14 @@ export const App = () => {
     }
   };
 
+  const applyRunSnapshot = (snapshot: RunSnapshot): void => {
+    if (snapshot.run) setRunDetail(snapshot.run);
+    if (snapshot.events) setEvents(snapshot.events);
+    if (snapshot.artifacts) setArtifacts(snapshot.artifacts);
+    if (snapshot.runs) setRuns({ data: snapshot.runs, error: null });
+    setLastRunRefresh(new Date().toLocaleTimeString());
+  };
+
   const selectRun = async (runId: string): Promise<void> => {
     setSelectedRun(runId);
     setRunError(null);
@@ -73,10 +82,7 @@ export const App = () => {
         getJson<{ events: EventRecord[] }>(`/api/runs/${encodeURIComponent(runId)}/events`),
         getJson<{ artifacts: Artifact[] }>(`/api/runs/${encodeURIComponent(runId)}/artifacts`)
       ]);
-      setRunDetail(detail.run);
-      setEvents(eventData.events || []);
-      setArtifacts(artifactData.artifacts || []);
-      setLastRunRefresh(new Date().toLocaleTimeString());
+      applyRunSnapshot({ run: detail.run, events: eventData.events || [], artifacts: artifactData.artifacts || [] });
     } catch (error) {
       setRunError(error instanceof Error ? error.message : String(error));
     }
@@ -84,12 +90,17 @@ export const App = () => {
 
   useEffect(() => {
     if (!selectedRun || !isActiveRun(runDetail)) return undefined;
-    const interval = window.setInterval(() => {
-      void loadRuns();
-      void selectRun(selectedRun);
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, [selectedRun, runDetail?.status, runDetail?.state, runDetail?.attempt]);
+    const source = new EventSource(`/api/runs/${encodeURIComponent(selectedRun)}/stream`);
+    const onSnapshot = (event: MessageEvent): void => {
+      const snapshot = JSON.parse(event.data) as RunSnapshot;
+      applyRunSnapshot(snapshot);
+      if (snapshot.run && !isActiveRun(snapshot.run)) source.close();
+    };
+    const onError = (): void => setRunError('Run event stream disconnected; select the run to reconnect.');
+    source.addEventListener('snapshot', onSnapshot as EventListener);
+    source.addEventListener('error', onError);
+    return () => source.close();
+  }, [selectedRun, runDetail?.status]);
 
   const refreshAfterMutation = async (runId?: string): Promise<void> => {
     await loadRuns();
@@ -105,7 +116,7 @@ export const App = () => {
     <>
       <header>
         <h1>Tesseraft Local Web UI</h1>
-        <p>Local inspection and controlled execution for workflows, visual graphs, runs, attempts, artifacts, and events. Active runs auto-refresh.</p>
+        <p>Local inspection and controlled execution for workflows, visual graphs, runs, attempts, artifacts, and events. Active runs stream updates.</p>
         <nav className="tabs" aria-label="Run Console sections">
           <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} onClick={() => setActiveTab('workflows')}>Workflows</button>
           <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} onClick={() => setActiveTab('runs')}>Runs</button>
