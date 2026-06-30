@@ -1,18 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { postJson } from '../lib/api';
 import { snippet } from '../lib/runConsole';
-import type { MutationResult, RunDetail } from '../types/runConsole';
+import type { MutationResult, RunDetail, WorkflowDetail, WorkflowInputDefinition } from '../types/runConsole';
 
 type Props = {
   selectedWorkflow: string | null;
+  workflowDetail: WorkflowDetail | null;
   selectedRun: string | null;
   runDetail: RunDetail | null;
   onRefresh: (runId?: string) => Promise<void>;
 };
 
-export const RunControls = ({ selectedWorkflow, selectedRun, runDetail, onRefresh }: Props) => {
+type WorkflowInputField = { name: string; definition: WorkflowInputDefinition };
+
+const humanizeInputName = (name: string): string => name.split('-').map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part).join(' ');
+const stringifyDefault = (value: WorkflowInputDefinition['default']): string => value === undefined || value === null ? '' : String(value);
+const inputHelp = (name: string, definition: WorkflowInputDefinition): string => {
+  if (definition.description) return definition.description;
+  if (definition.type === 'path') return 'Path on this machine, such as . for the current repository.';
+  if (definition.type === 'integer') return 'Whole number.';
+  if (definition.type === 'boolean') return 'Choose true or false.';
+  if (name === 'ticket') return 'Ticket or issue key to fetch, for example PROJ-123.';
+  if (name === 'branch' || name === 'base-branch') return 'Git branch name.';
+  return 'Workflow input value.';
+};
+
+export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, runDetail, onRefresh }: Props) => {
   const [runId, setRunId] = useState(`run-${Date.now()}`);
-  const [inputsText, setInputsText] = useState('');
+  const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [maxSteps, setMaxSteps] = useState(10);
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmStep, setConfirmStep] = useState(false);
@@ -21,16 +36,17 @@ export const RunControls = ({ selectedWorkflow, selectedRun, runDetail, onRefres
   const [result, setResult] = useState<MutationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const smokeSafe = selectedWorkflow === 'smoke-demo' || runDetail?.workflow_name === 'smoke-demo';
+  const inputFields = useMemo<WorkflowInputField[]>(() => Object.entries(workflowDetail?.normalized?.inputs || {}).map(([name, definition]) => ({ name, definition })).sort((a, b) => Number(Boolean(b.definition.required)) - Number(Boolean(a.definition.required)) || a.name.localeCompare(b.name)), [workflowDetail]);
 
-  const parseInputs = (): Record<string, string> => {
-    const inputs: Record<string, string> = {};
-    for (const line of inputsText.split('\n').map((item) => item.trim()).filter(Boolean)) {
-      const [key, ...rest] = line.split('=');
-      if (!key || rest.length === 0) throw new Error(`Invalid input "${line}"; use key=value`);
-      inputs[key] = rest.join('=');
-    }
-    return inputs;
-  };
+  useEffect(() => {
+    const nextValues: Record<string, string> = {};
+    for (const field of inputFields) nextValues[field.name] = stringifyDefault(field.definition.default);
+    setInputValues(nextValues);
+  }, [inputFields]);
+
+  const setInputValue = (name: string, value: string): void => setInputValues((current) => ({ ...current, [name]: value }));
+  const buildInputs = (): Record<string, string> => Object.fromEntries(Object.entries(inputValues).filter(([, value]) => value.trim() !== ''));
+  const missingRequired = inputFields.filter((field) => field.definition.required && !inputValues[field.name]?.trim()).map((field) => field.name);
 
   const mutate = async (label: string, action: () => Promise<MutationResult>, refreshRunId?: string): Promise<void> => {
     setBusy(true);
@@ -56,12 +72,41 @@ export const RunControls = ({ selectedWorkflow, selectedRun, runDetail, onRefres
       <p className="warning"><strong>Local mutation warning:</strong> start, step, and resume execute workflow nodes on this machine. Non-smoke workflows may run agents, processes, or other side effects.</p>
       {!smokeSafe && <p className="warning strong">Selected workflow/run is not the smoke-demo local-safe workflow. Confirm before mutating.</p>}
       <div className="control-grid">
-        <div className="control-card">
+        <div className="control-card start-workflow-card">
           <h3>Start selected workflow</h3>
+          {!selectedWorkflow && <p className="muted">Select a workflow to see the inputs it needs.</p>}
+          {selectedWorkflow && !workflowDetail && <p className="loading">Loading workflow inputs...</p>}
           <label>Run ID <input value={runId} onChange={(event) => setRunId(event.target.value)} /></label>
-          <label>Inputs (key=value, one per line) <textarea value={inputsText} onChange={(event) => setInputsText(event.target.value)} /></label>
+          <div className="workflow-inputs" aria-label="Workflow inputs">
+            <h4>Workflow inputs</h4>
+            {selectedWorkflow && workflowDetail && inputFields.length === 0 && <p className="muted">This workflow declares no start inputs. Defaults will be used.</p>}
+            {inputFields.map(({ name, definition }) => (
+              <label key={name} className="workflow-input-field">
+                <span>{definition.title || humanizeInputName(name)} {definition.required && <strong className="required">required</strong>}</span>
+                {definition.type === 'boolean' ? (
+                  <select value={inputValues[name] ?? 'false'} onChange={(event) => setInputValue(name, event.target.value)}>
+                    <option value="false">False</option>
+                    <option value="true">True</option>
+                  </select>
+                ) : definition.enum && definition.enum.length > 0 ? (
+                  <select value={inputValues[name] ?? ''} onChange={(event) => setInputValue(name, event.target.value)}>
+                    {!definition.required && <option value="">Use default / leave blank</option>}
+                    {definition.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
+                  </select>
+                ) : definition.type === 'integer' ? (
+                  <input type="number" step="1" value={inputValues[name] ?? ''} onChange={(event) => setInputValue(name, event.target.value)} />
+                ) : name === 'prompt' ? (
+                  <textarea value={inputValues[name] ?? ''} onChange={(event) => setInputValue(name, event.target.value)} placeholder="Describe what the workflow should do" />
+                ) : (
+                  <input value={inputValues[name] ?? ''} onChange={(event) => setInputValue(name, event.target.value)} placeholder={definition.type === 'path' ? '.' : undefined} />
+                )}
+                <small>{inputHelp(name, definition)}{definition.default !== undefined ? ` Default: ${String(definition.default)}.` : ''}</small>
+              </label>
+            ))}
+          </div>
+          {missingRequired.length > 0 && <p className="error inline">Required inputs missing: {missingRequired.map(humanizeInputName).join(', ')}</p>}
           <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects.</label>
-          <button type="button" disabled={!selectedWorkflow || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: parseInputs() }), runId)}>Start run</button>
+          <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs() }), runId)}>Start run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>

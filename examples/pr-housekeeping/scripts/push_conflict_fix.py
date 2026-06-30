@@ -17,7 +17,7 @@ def main():
     worktree = pathlib.Path(meta["worktree"])
     push_refspec = meta["push_refspec"]
     out_dir = run_dir / "conflict-repair"
-    dry_run = truthy(inputs.get("dry-run", "true"))
+    dry_run = truthy(inputs.get("dry-run", "false"))
     push_log = out_dir / "push-summary.md"
 
     if dry_run:

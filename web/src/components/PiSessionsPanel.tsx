@@ -77,7 +77,7 @@ export const PiSessionsPanel = () => {
     <>
       <section className="panel">
         <h2>Pi Sessions</h2>
-        <p className="muted">Local fake Pi adapter is used unless TESSERAFT_PI_ADAPTER=real is set on the web server.</p>
+        <p className="muted">Pi sessions use the real Pi SDK by default. Set TESSERAFT_PI_ADAPTER=fake on the web server only when you explicitly want local fake responses.</p>
         {error && <div className="error">{error}</div>}
         <div className="control-card pi-session-create">
           <label>

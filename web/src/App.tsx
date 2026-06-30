@@ -120,7 +120,7 @@ export const App = () => {
           <RunsPanel runs={runs} selectedRun={selectedRun} runDetail={runDetail} events={events} artifacts={artifacts} runError={runError} selectedNodeId={selectedNodeId} lastRunRefresh={lastRunRefresh} onSelectRun={selectRun} />
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
-        {activeTab !== 'pi-sessions' && <RunControls selectedWorkflow={selectedWorkflow} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
+        {activeTab !== 'pi-sessions' && <RunControls selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
       </main>
     </>
   );
