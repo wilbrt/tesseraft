@@ -65,6 +65,21 @@
    :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "execution/summary-{{run.round}}.md" :required true}
              :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :manual-testing}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :manual-testing
+  {:type :agent
+   :title "Manual browser testing"
+   :executor :pi-cli
+   :prompt-template "prompts/manual-testing.md.tmpl"
+   :prompt-output "prompts/generated/manual-testing-{{run.round}}.md"
+   :session-name "review-loop-manual-testing-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "manual-testing/report-{{run.round}}.md" :required true}
+             :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :review}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
 

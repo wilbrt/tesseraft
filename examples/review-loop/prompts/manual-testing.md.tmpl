@@ -1,0 +1,45 @@
+Fresh Pi session: MANUAL TESTING.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Issues file: {{run.issues-file}}
+- Repository root: {{inputs.repo-root}}
+
+Goal:
+Perform a focused browser-based product review of the implemented Web UI or user-facing surface before code review. Use Agent Browser to inspect the running UI similarly to a human manual testing pass, with special attention to clarity, succinctness, usability, accessibility, console errors, and responsive behavior.
+
+Rules:
+- Do not edit source code.
+- Do not commit, push, create pull requests, or mutate workflow definitions.
+- Prefer safe read-only inspection. Do not execute destructive or side-effecting UI actions unless the prompt explicitly requires them and the UI clearly confirms the action is safe.
+- If the UI is not already running, inspect project docs/scripts and start the smallest local dev or preview server needed for testing.
+- Install or invoke Agent Browser with the published package when needed, for example: `npm exec --yes agent-browser@latest -- --help`.
+- Use an isolated Agent Browser session name for the run.
+- Collect evidence from snapshots, bounded DOM/text inspection, console/errors, screenshots when useful, and at least one narrow/mobile viewport check when the surface is web-based.
+- Avoid full snapshots of very large pages; use bounded `eval` metrics or filtered inspection when event logs or histories are large.
+- Produce actionable issues only. If the manual test finds UX, accessibility, responsiveness, runtime, or clarity problems that should be fixed before review, fail and write issues for the next execution round.
+- If no actionable manual-testing issues remain, pass so the workflow can continue to code review.
+
+Suggested Agent Browser commands:
+```bash
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} doctor
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} open http://localhost:7341
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} snapshot --depth 6
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} console
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} errors
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} set viewport 390 844
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} eval 'JSON.stringify({overflowX:document.documentElement.scrollWidth>document.documentElement.clientWidth, bodyChars:document.body.innerText.length})'
+```
+
+Write:
+- Report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Status: {{run.dir}}/manual-testing/status-{{run.round}}.json
+- If failing: {{run.dir}}/manual-testing/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"manual browser testing passed","issues_file":null}
+{"status":"fail","summary":"manual browser testing found usability issues","issues_file":"manual-testing/issues-{{run.round}}.json"}
+
+Failure issues should be JSON matching the issues schema and should contain only actionable manual-testing findings for the next execution round.
