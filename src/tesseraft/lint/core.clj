@@ -175,7 +175,7 @@
                (resource-group-checks base-path group (get resources group)))))))
 
 (def ambient-resource-kinds
-  #{:input :default :asset :prompt-template
+  #{:asset :prompt-template
     :capability :tool :handler :executor :secret :policy :policies
     :run-state})
 
@@ -205,6 +205,24 @@
 
 (defn ambient-resource? [resource]
   (contains? ambient-resource-kinds (keyword (normalize-resource-value (:kind resource)))))
+
+(def input-resource-aliases
+  {:prompt #{"user-prompt"}})
+
+(defn binding-resource-ids [kind binding-key binding]
+  (let [binding-name (normalize-resource-value binding-key)
+        explicit-names (when (map? binding)
+                         (keep #(some-> (get binding %) normalize-resource-value)
+                               [:name :resource-name]))]
+    (set (map #(vector kind %)
+              (concat [binding-name]
+                      explicit-names
+                      (get input-resource-aliases (keyword binding-key)))))))
+
+(defn workflow-ambient-resource-ids [wf]
+  (set (concat
+         (mapcat (fn [[k v]] (binding-resource-ids :input k v)) (:inputs wf))
+         (mapcat (fn [[k v]] (binding-resource-ids :default k v)) (:defaults wf)))))
 
 (defn one-shot-consume? [resource]
   (let [mode (normalize-resource-mode (:mode resource))
@@ -268,12 +286,7 @@
   (let [ids (spec/reachable-states wf)
         preds (resource-flow-predecessors wf)
         initial (:initial wf)
-        ambient (set (concat
-                       (for [k (keys (:inputs wf))]
-                         [:input (normalize-resource-value k)])
-                       (for [k (keys (:defaults wf))]
-                         [:default (normalize-resource-value k)])))
-        initial-state {:available ambient :consumed #{}}
+        initial-state {:available (workflow-ambient-resource-ids wf) :consumed #{}}
         max-passes (max 1 (* 20 (max 1 (count ids))))]
     (loop [pass 0 out-states {}]
       (let [in-state (fn [id]
@@ -344,12 +357,7 @@
   (let [{out-states :states converged? :converged} (resource-flow-states wf)
         preds (resource-flow-predecessors wf)
         initial (:initial wf)
-        ambient (set (concat
-                       (for [k (keys (:inputs wf))]
-                         [:input (normalize-resource-value k)])
-                       (for [k (keys (:defaults wf))]
-                         [:default (normalize-resource-value k)])))
-        initial-state {:available ambient :consumed #{}}
+        initial-state {:available (workflow-ambient-resource-ids wf) :consumed #{}}
         in-state (fn [id]
                    (merge-resource-states
                      (concat

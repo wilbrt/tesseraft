@@ -271,6 +271,7 @@ check_invalid_resource_flow resource-missing-producer resource-missing-producer
 check_invalid_resource_flow resource-read-consume-missing-producer resource-missing-producer
 check_invalid_resource_flow resource-branch-missing-producer resource-missing-producer
 check_invalid_resource_flow resource-double-consume resource-double-consume
+check_invalid_resource_flow resource-undeclared-input resource-missing-producer
 
 set +e
 ./bin/tesseraft lint test/fixtures/invalid/resource-warnings.workflow.edn --strict >/tmp/tesseraft-resource-warnings-lint.out 2>&1
