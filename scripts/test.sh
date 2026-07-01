@@ -22,6 +22,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
+./bin/tesseraft lint test/fixtures/valid/resource-ambient-path.workflow.edn
 
 printf '\nLinting self-contained node fixtures...\n'
 ./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn
@@ -272,6 +273,7 @@ check_invalid_resource_flow resource-read-consume-missing-producer resource-miss
 check_invalid_resource_flow resource-branch-missing-producer resource-missing-producer
 check_invalid_resource_flow resource-double-consume resource-double-consume
 check_invalid_resource_flow resource-undeclared-input resource-missing-producer
+check_invalid_resource_flow resource-ambient-path-mismatch resource-missing-producer
 check_invalid_resource_flow resource-cycle-conservative resource-cycle-conservative
 
 set +e

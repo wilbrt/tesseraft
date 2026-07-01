@@ -213,11 +213,16 @@
   (let [binding-name (normalize-resource-value binding-key)
         explicit-names (when (map? binding)
                          (keep #(some-> (get binding %) normalize-resource-value)
-                               [:name :resource-name]))]
-    (set (map #(vector kind %)
-              (concat [binding-name]
+                               [:name :resource-name]))
+        names (concat [binding-name]
                       explicit-names
-                      (get input-resource-aliases (keyword binding-key)))))))
+                      (get input-resource-aliases (keyword binding-key)))
+        path (when (map? binding)
+               (some-> (:path binding) normalize-resource-value))]
+    (set (concat
+           (map #(vector kind %) names)
+           (when path
+             (map #(vector kind % path) names))))))
 
 (defn workflow-ambient-resource-ids [wf]
   (set (concat
