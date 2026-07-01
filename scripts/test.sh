@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN_DIR=".agent-runs/smoke-demo/smoke-test"
+RUN_DIRS=(".agent-runs/smoke-demo/smoke-test" ".agent-runs/process-failure-fixture/process-failure-test")
 TMP_DIR="$(mktemp -d)"
 cleanup() {
-  rm -rf "$RUN_DIR" "$TMP_DIR"
+  rm -rf "${RUN_DIRS[@]}" "$TMP_DIR"
 }
 trap cleanup EXIT
 cleanup
@@ -86,6 +86,72 @@ if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   echo "Expected smoke workflow run status to be done" >&2
   exit 1
 fi
+
+printf '\nChecking external process failure evidence...\n'
+FAIL_RUN_ID="process-failure-test"
+FAIL_RUN_DIR=".agent-runs/process-failure-fixture/$FAIL_RUN_ID"
+FAIL_WORKFLOW="$TMP_DIR/process-failure.workflow.edn"
+cat >"$FAIL_WORKFLOW" <<'EDN'
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "process-failure-fixture"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true}
+ :initial :boom
+ :states
+ {:boom
+  {:type :process
+   :title "Failing process"
+   :command ["bash" "-lc" "echo external failure >&2; exit 7"]
+   :runtime {:timeout "10s"}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}
+EDN
+rm -rf "$FAIL_RUN_DIR"
+./bin/tesseraft run start "$FAIL_WORKFLOW" --run-id "$FAIL_RUN_ID" --format json >/tmp/tesseraft-process-failure-start.json
+set +e
+FAIL_OUTPUT="$(./bin/tesseraft run step --run-dir "$FAIL_RUN_DIR" --format json 2>&1)"
+FAIL_STATUS=$?
+set -e
+if [[ "$FAIL_STATUS" -eq 0 ]]; then
+  printf '%s\n' "$FAIL_OUTPUT" >&2
+  echo "Expected process failure step to exit nonzero" >&2
+  exit 1
+fi
+python3 - <<'PY'
+import json, os, re
+from pathlib import Path
+run_dir = Path('.agent-runs/process-failure-fixture/process-failure-test')
+state = run_dir / 'state.edn'
+events = run_dir / 'events.jsonl'
+assert state.exists(), 'state.edn missing'
+text = state.read_text()
+assert ':status "failed"' in text, text
+rows = [json.loads(line) for line in events.read_text().splitlines() if line.strip()]
+assert any(e.get('event') == 'node.started' for e in rows), rows
+failed = [e for e in rows if e.get('event') == 'node.failed']
+assert len(failed) == 1, rows
+result = failed[0]['result']
+assert result['status'] == 'error', result
+assert result['ok'] is False, result
+assert result.get('exit-code') == 7 or result.get('exit_code') == 7, result
+log_file = result.get('log-file') or result.get('log_file')
+assert log_file and Path(log_file).exists(), result
+PY
+./bin/tesseraft control-plane run "$FAIL_RUN_ID" >/tmp/tesseraft-process-failure-run.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-process-failure-run.json'))
+assert x['run']['status'] == 'failed'
+assert any(a['status'] == 'error' and a['node_id'] == 'boom' for a in x['run']['attempts']), x
+assert any(f['source'] == 'attempt' and f.get('node_id') == 'boom' for f in x['run']['failures']), x
+PY
+rm -f /tmp/tesseraft-process-failure-start.json /tmp/tesseraft-process-failure-run.json
 
 printf '\nChecking read-only control-plane commands...\n'
 ./bin/tesseraft control-plane workflows >/tmp/tesseraft-cp-workflows.json

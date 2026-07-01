@@ -46,8 +46,8 @@ The API is an adapter over current contracts:
 | Graph data | Normalized states and transitions, or linter graph emit | Workflow package files and linter/spec code |
 | Run summary/detail | `.agent-runs/<workflow>/<run-id>/state.edn` and related runtime files | Runtime state files |
 | Events | `.agent-runs/<workflow>/<run-id>/events.jsonl` | Append-only event log |
-| Node attempts | Runtime attempt records when present, plus event/state-derived summaries | Runtime files |
-| Artifacts | Declared outputs and files under the run directory | Runtime artifact files and workflow output contracts |
+| Node attempts | Runtime attempt records when present, plus event/state-derived summaries from `node.started`, `node.finished`, and `node.failed` | Runtime files |
+| Artifacts | Declared outputs and files under the run directory, including diagnostics such as logs and prompts referenced by failure events | Runtime artifact files and workflow output contracts |
 
 ## Common conventions
 
@@ -214,7 +214,7 @@ Response sketch:
 Constraints:
 
 - Attempt objects should preserve fields from `schemas/node-attempt.schema.json` when available.
-- The endpoint may derive summaries from events, but derived fields must not overwrite runtime records.
+- The endpoint may derive summaries from events, including `node.failed` runtime failure evidence, but derived fields must not overwrite runtime records.
 - Runtime controls are not performed through this read endpoint.
 
 ### `GET /runs/{run-id}/events`

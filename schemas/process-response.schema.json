@@ -11,13 +11,26 @@
       "type": "boolean"
     },
     "status": {
-      "type": "string"
+      "type": "string",
+      "description": "Declared workflow outcome for successful protocol responses. Nonzero process exits, malformed JSON, ok=false, or status=error are runtime/external failures."
     },
     "outputs": {
       "type": "object"
     },
     "summary": {
       "type": "string"
+    },
+    "error_type": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "log_file": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": "integer"
     }
   },
   "additionalProperties": true
