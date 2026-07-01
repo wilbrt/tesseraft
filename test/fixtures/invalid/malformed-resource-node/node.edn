@@ -1,0 +1,7 @@
+{:api-version "tesseraft.node/v1"
+ :kind :node
+ :metadata {:name "malformed-resource-node"}
+ :requirements {:resources {:uses [{:kind :capability :name "pi"}]}}
+ :node {:type :deterministic
+        :handler :noop/succeed
+        :resources {:requires ["not-a-map"]}}}

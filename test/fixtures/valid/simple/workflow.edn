@@ -5,5 +5,11 @@
  :defaults {:max-rounds 2 :state-timeout "1m"}
  :policies {:require-timeouts true :require-max-rounds true}
  :initial :start
- :states {:start {:type :deterministic :handler :noop/succeed :runtime {:timeout "1m"} :next :done}
+ :states {:start {:type :deterministic
+                  :handler :noop/succeed
+                  :runtime {:timeout "1m"}
+                  :resources {:requires [{:kind :input :name "ticket" :mode :read}
+                                         {:kind :capability :name "noop-handler" :handler "noop/succeed"}]
+                              :produces [{:kind :artifact :name "status" :path "start/status.json"}]}
+                  :next :done}
           :done {:type :terminal :status :success}}}
