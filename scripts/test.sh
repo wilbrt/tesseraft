@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN_DIRS=(".agent-runs/smoke-demo/smoke-test" ".agent-runs/process-failure-fixture/process-failure-test")
+RUN_DIRS=(".agent-runs/smoke-demo/smoke-test" ".agent-runs/process-failure-fixture/process-failure-test" ".agent-runs/agent-model-provider-fixture/agent-model-provider-test")
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "${RUN_DIRS[@]}" "$TMP_DIR"
@@ -23,6 +23,82 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-ambient-path.workflow.edn
+
+printf '\nChecking agent node model/provider plumbing...\n'
+AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"
+AGENT_MODEL_PROMPT_DIR="$TMP_DIR/prompts"
+AGENT_MODEL_STUB="$TMP_DIR/pi-stub.sh"
+AGENT_MODEL_ARGV="$TMP_DIR/pi-argv.txt"
+AGENT_MODEL_RUN_ID="agent-model-provider-test"
+AGENT_MODEL_RUN_DIR=".agent-runs/agent-model-provider-fixture/$AGENT_MODEL_RUN_ID"
+mkdir -p "$AGENT_MODEL_PROMPT_DIR"
+cat >"$AGENT_MODEL_PROMPT_DIR/agent.md.tmpl" <<'EOF'
+Write the status artifact.
+EOF
+cat >"$AGENT_MODEL_WORKFLOW" <<EOF
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "agent-model-provider-fixture"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :agent
+ :states
+ {:agent
+  {:type :agent
+   :executor :pi-cli
+   :provider "openai"
+   :model "gpt-4o-mini"
+   :prompt-template "prompts/agent.md.tmpl"
+   :runtime {:cwd "." :timeout "10s"}
+   :outputs {:status {:path "agent/status.json" :required true}}
+   :next :done}
+  :done {:type :terminal :status :success}}}
+EOF
+cat >"$AGENT_MODEL_STUB" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"$AGENT_MODEL_ARGV"
+mkdir -p "$AGENT_RUN_DIR/agent"
+printf '{"status":"pass","summary":"stubbed pi","issues_file":null}\n' >"$AGENT_RUN_DIR/agent/status.json"
+EOF
+chmod +x "$AGENT_MODEL_STUB"
+rm -rf "$AGENT_MODEL_RUN_DIR"
+./bin/tesseraft lint "$AGENT_MODEL_WORKFLOW" --format json >/tmp/tesseraft-agent-model-lint.json
+AGENT_MODEL_INVALID_WORKFLOW="$TMP_DIR/agent-model-provider-invalid.workflow.edn"
+cp "$AGENT_MODEL_WORKFLOW" "$AGENT_MODEL_INVALID_WORKFLOW"
+python3 - <<PY
+from pathlib import Path
+p = Path('$AGENT_MODEL_INVALID_WORKFLOW')
+s = p.read_text().replace(':provider "openai"', ':provider ""').replace(':model "gpt-4o-mini"', ':model 123')
+p.write_text(s)
+PY
+set +e
+./bin/tesseraft lint "$AGENT_MODEL_INVALID_WORKFLOW" --format json >/tmp/tesseraft-agent-model-invalid-lint.json 2>&1
+agent_model_invalid_status=$?
+set -e
+if [[ "$agent_model_invalid_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-agent-model-invalid-lint.json >&2
+  echo "Expected invalid agent model/provider lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "invalid-agent-provider" /tmp/tesseraft-agent-model-invalid-lint.json || ! grep -q "invalid-agent-model" /tmp/tesseraft-agent-model-invalid-lint.json; then
+  cat /tmp/tesseraft-agent-model-invalid-lint.json >&2
+  echo "Expected invalid agent model/provider diagnostics" >&2
+  exit 1
+fi
+AGENT_MODEL_ARGV="$AGENT_MODEL_ARGV" PI_BIN="$AGENT_MODEL_STUB" ./bin/tesseraft run "$AGENT_MODEL_WORKFLOW" --run-id "$AGENT_MODEL_RUN_ID" --format json >/tmp/tesseraft-agent-model-run.json
+python3 - <<PY
+from pathlib import Path
+argv = Path('$AGENT_MODEL_ARGV').read_text().splitlines()
+assert '--provider' in argv, argv
+assert argv[argv.index('--provider') + 1] == 'openai', argv
+assert '--model' in argv, argv
+assert argv[argv.index('--model') + 1] == 'gpt-4o-mini', argv
+log = Path('$AGENT_MODEL_RUN_DIR/logs/agent-1.log').read_text()
+assert 'PROVIDER: openai' in log, log
+assert 'MODEL: gpt-4o-mini' in log, log
+PY
+rm -f /tmp/tesseraft-agent-model-lint.json /tmp/tesseraft-agent-model-invalid-lint.json /tmp/tesseraft-agent-model-run.json
 
 printf '\nLinting self-contained node fixtures...\n'
 ./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn

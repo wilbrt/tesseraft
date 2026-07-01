@@ -30,6 +30,11 @@
                (get-in wf [:policies :allowed-agent-tools] [])
                (:allowed-tools opts))))
 
+(defn optional-nonblank-string-check [code path field value]
+  (when (and (some? value)
+             (or (not (string? value)) (str/blank? value)))
+    [(err code path (str "Agent node " field " must be a non-blank string when present"))]))
+
 (defn top-level-checks [wf]
   (let [required [:api-version :kind :metadata :initial :states]]
     (concat
@@ -457,6 +462,8 @@
                    (when (and (:executor n) (not (contains? (known-executors opts) (:executor n))))
                      [(err :unknown-executor [:states id :executor]
                            (str "Unknown agent executor: " (:executor n)))])
+                   (optional-nonblank-string-check :invalid-agent-provider [:states id :provider] ":provider" (:provider n))
+                   (optional-nonblank-string-check :invalid-agent-model [:states id :model] ":model" (:model n))
                    (when-not (:prompt-template n)
                      [(err :agent-missing-prompt-template [:states id :prompt-template]
                            "Agent node must declare :prompt-template")])
@@ -713,6 +720,8 @@
             (when (and (:executor node) (not (contains? (known-executors opts) (:executor node))))
               [(err :unknown-executor [:node :executor]
                     (str "Unknown agent executor: " (:executor node)))])
+            (optional-nonblank-string-check :invalid-agent-provider [:node :provider] ":provider" (:provider node))
+            (optional-nonblank-string-check :invalid-agent-model [:node :model] ":model" (:model node))
             (when-not (:prompt-template node)
               [(err :agent-missing-prompt-template [:node :prompt-template]
                     "Agent node must declare :prompt-template")])
