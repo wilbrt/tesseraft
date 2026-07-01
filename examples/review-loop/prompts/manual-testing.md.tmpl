@@ -4,17 +4,23 @@ Inputs:
 - User prompt: {{run.dir}}/prompt/prompt.md
 - Design doc: {{run.dir}}/design/design.md
 - Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Manual-testing spec: {{run.dir}}/manual-testing/spec.md
+- Test-server resource: {{run.dir}}/manual-testing/test-server-{{run.round}}.json
 - Issues file: {{run.issues-file}}
 - Repository root: {{inputs.repo-root}}
+- Worktree root: {{run.worktree-dir}}
 
 Goal:
-Perform a focused browser-based product review of the implemented Web UI or user-facing surface before code review. Use Agent Browser to inspect the running UI similarly to a human manual testing pass, with special attention to clarity, succinctness, usability, accessibility, console errors, and responsive behavior.
+Perform a focused browser-based product review of the implemented Web UI or user-facing surface before code review. Consume the design-produced manual-testing spec and the produced test-server resource; do not invent, reuse, or hardcode a localhost address.
 
 Rules:
 - Do not edit source code.
 - Do not commit, push, create pull requests, or mutate workflow definitions.
+- Read `{{run.dir}}/manual-testing/spec.md` first. If it declares manual testing skipped, verify it includes an explicit design-produced skip rationale/gate, write the report/status explaining the skip, and do not run browser checks.
+- Read `{{run.dir}}/manual-testing/test-server-{{run.round}}.json` and use only its `url` field as the browser target.
+- Before opening the browser, verify the test-server artifact provenance: `cwd` or `worktree_root` must equal `{{run.worktree-dir}}`, `kind` should be `web-service`, and the host/port/url must agree. If provenance does not match, fail with an actionable stale-server issue.
+- Do not start a replacement server or choose a port yourself. If the produced server is unavailable, fail with an actionable setup/resource issue.
 - Prefer safe read-only inspection. Do not execute destructive or side-effecting UI actions unless the prompt explicitly requires them and the UI clearly confirms the action is safe.
-- If the UI is not already running, inspect project docs/scripts and start the smallest local dev or preview server needed for testing.
 - Install or invoke Agent Browser with the published package when needed, for example: `npm exec --yes agent-browser@latest -- --help`.
 - Use an isolated Agent Browser session name for the run.
 - Collect evidence from snapshots, bounded DOM/text inspection, console/errors, screenshots when useful, and at least one narrow/mobile viewport check when the surface is web-based.
@@ -24,8 +30,9 @@ Rules:
 
 Suggested Agent Browser commands:
 ```bash
+SERVER_URL="$(node -e "const fs=require('fs'); const p='{{run.dir}}/manual-testing/test-server-{{run.round}}.json'; const x=JSON.parse(fs.readFileSync(p,'utf8')); if (x.worktree_root !== '{{run.worktree-dir}}' && x.cwd !== '{{run.worktree-dir}}') { throw new Error('test-server provenance does not match worktree'); } console.log(x.url);")"
 npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} doctor
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} open http://localhost:7341
+npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} open "$SERVER_URL"
 npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} snapshot --depth 6
 npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} console
 npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} errors

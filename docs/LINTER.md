@@ -44,3 +44,5 @@ Optional `:resources` declarations are linted for conservative shape and consist
 - `invalid-resource-path` — `:path` or produced-resource `:schema` is not a safe relative path.
 
 Unknown groups, unknown modes, and duplicates are warnings; malformed declarations, unknown fields, and unsafe paths are errors. `--strict` treats warnings as failures.
+
+Resource kinds are intentionally open-ended. Workflows may declare higher-level contracts such as `:manual-testing-spec`, `:web-service`, or `:test-server` without schema changes as long as the resource maps use the documented fields. The linter checks declaration shape and known handler names; it does not prove that every consumer reads the produced service URL.

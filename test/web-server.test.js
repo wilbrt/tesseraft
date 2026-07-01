@@ -134,7 +134,17 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const reviewLoopDetail = await reviewLoopResponse.json();
   const executeState = reviewLoopDetail.workflow.normalized.states.execute;
   assert.equal(executeState.resources.requires[0].kind, 'worktree');
+  assert.equal(executeState.transitions[0].next, 'start-test-server');
   assert.ok(executeState.resources.produces.some((resource) => resource.name === 'execution-status'));
+  const designState = reviewLoopDetail.workflow.normalized.states.design;
+  assert.equal(designState.outputs['manual-testing-spec'].path, 'manual-testing/spec.md');
+  assert.ok(designState.resources.produces.some((resource) => resource.kind === 'manual-testing-spec'));
+  const startServerState = reviewLoopDetail.workflow.normalized.states['start-test-server'];
+  assert.equal(startServerState.handler, 'start-test-server');
+  assert.ok(startServerState.resources.produces.some((resource) => resource.kind === 'web-service'));
+  const manualTestingState = reviewLoopDetail.workflow.normalized.states['manual-testing'];
+  assert.ok(manualTestingState.resources.requires.some((resource) => resource.kind === 'manual-testing-spec'));
+  assert.ok(manualTestingState.resources.consumes.some((resource) => resource.kind === 'web-service'));
 
   const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
   assert.equal(graphResponse.status, 200);
@@ -150,6 +160,8 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.ok(executeNode, 'expected review-loop execute graph node');
   assert.equal(executeNode.resources.requires[0].kind, 'worktree');
   assert.ok(executeNode.resources.produces.some((resource) => resource.name === 'execution-status'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'execute' && edge.to === 'start-test-server'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'start-test-server' && edge.to === 'manual-testing'));
 
   const runsResponse = await fetch(`${base}/api/runs`);
   assert.equal(runsResponse.status, 200);

@@ -79,7 +79,9 @@ Nodes may declare optional resource metadata. This metadata is lintable proof ev
             :produces [{:kind :design-doc :name "design" :path "design/design.md"}]}
 ```
 
-Allowed groups are `:requires`, `:consumes`, and `:produces`. Each group value is a vector of maps. Each resource map must include `:kind` and `:name`; optional fields are `:path`, `:mode`, `:description`, `:schema`, `:source`, `:tool`, `:secret`, `:handler`, and `:executor`. Values must remain JSON-normalizable. Suggested kinds include inputs, artifacts, worktrees, branches, prompts, design docs, issue files, validation reports, review evidence, PR metadata/URLs, logs/artifacts, secrets, capabilities, tools, and policy/approval gates. Suggested modes are `:reusable`, `:one-shot`, `:read`, `:write`, and `:read-write`.
+Allowed groups are `:requires`, `:consumes`, and `:produces`. Each group value is a vector of maps. Each resource map must include `:kind` and `:name`; optional fields are `:path`, `:mode`, `:description`, `:schema`, `:source`, `:tool`, `:secret`, `:handler`, and `:executor`. Values must remain JSON-normalizable. Suggested kinds include inputs, artifacts, worktrees, branches, prompts, design docs, manual-testing specs, web-service/test-server resources, issue files, validation reports, review evidence, PR metadata/URLs, logs/artifacts, secrets, capabilities, tools, and policy/approval gates. Suggested modes are `:reusable`, `:one-shot`, `:read`, `:write`, and `:read-write`.
+
+A `:manual-testing-spec` artifact records the design-produced browser testing contract: whether testing is required or skipped, the skip gate/rationale if any, tested surfaces, expected evidence, setup requirements, stale-server hazards, responsive/console checks, acceptance criteria, and provenance checks. A `:web-service` or `:test-server` resource is a produced service endpoint, not ambient localhost state. Its JSON artifact should include `kind`, `url`, `host`, `port`, `pid` when available, `cwd`/`worktree_root`, `command`, `started_at`, and lifecycle cleanup notes.
 
 ## 7. Agent node
 
@@ -113,6 +115,8 @@ Agent nodes must declare a status artifact. Runtime agent sessions must not modi
 Handlers must be registered by the runner. The linter validates known handlers when a handler registry is provided.
 
 Built-in git handlers include `:git/ensure-branch` and `:git/ensure-worktree`. Worktree mode creates or reuses a deterministic Git worktree for the run, writes a worktree path artifact (default `worktree/path.txt`), and exposes the selected checkout as `{{run.worktree-dir}}` for downstream agent and deterministic nodes. Worktree cleanup is explicit/manual; runners must not remove worktrees automatically.
+
+The built-in `:web/start-test-server` handler starts a local worktree-rooted web UI on an OS-assigned port, waits for readiness, and writes a web-service JSON artifact for downstream manual testing. Consumers must use the produced URL and verify the artifact's `cwd`/`worktree_root` provenance rather than assuming a fixed localhost port.
 
 ## 9. Process node
 

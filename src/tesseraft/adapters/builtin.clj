@@ -256,6 +256,73 @@
     (store/write-json! out-path feedback)
     {:status "ok" :feedback-file out-path}))
 
+(defn java-pid [proc]
+  (try
+    (.pid proc)
+    (catch Throwable _ nil)))
+
+(defn read-line-with-timeout [reader timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (.ready reader) (.readLine reader)
+        (> (System/currentTimeMillis) deadline) nil
+        :else (do (Thread/sleep 50) (recur))))))
+
+(defn wait-for-http-ok [url timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [last-error nil]
+      (if (> (System/currentTimeMillis) deadline)
+        (throw (ex-info "Timed out waiting for web service readiness" {:url url :last-error last-error}))
+        (let [result (p/shell {:continue true :out :string :err :string}
+                              "bash" "-lc" (str "curl -fsS --max-time 2 " (pr-str url) " >/dev/null"))]
+          (if (zero? (:exit result))
+            true
+            (do (Thread/sleep 200) (recur (or (:err result) (:out result))))))))))
+
+(defn start-test-server! [_wf ctx _state-id node]
+  (let [cwd (absolute-normal-path (repo-dir ctx node))
+        host (or (get-in node [:inputs :host]) "127.0.0.1")
+        port (str (or (get-in node [:inputs :port]) 0))
+        build-command (get-in node [:inputs :build-command] ["npm" "run" "web:build"])
+        command (mapv str (or (get-in node [:inputs :command]) ["node" "web/server.js" "--host" host "--port" port]))
+        out-path (artifact-path ctx (or (get-in node [:outputs :test-server :path]) "manual-testing/test-server.json"))]
+    (when build-command
+      (apply shell! {:dir cwd} (map str build-command)))
+    (let [proc (p/process command {:dir cwd :out :pipe :err :pipe})
+          java-proc (:proc proc)
+          pid (java-pid java-proc)
+          stdout-reader (java.io.BufferedReader. (java.io.InputStreamReader. (:out proc)))
+          url (loop [lines [] attempts 100]
+                (when (zero? attempts)
+                  (when java-proc (.destroy java-proc))
+                  (throw (ex-info "Timed out waiting for test server URL" {:command command :cwd cwd :stdout lines})))
+                (let [line (read-line-with-timeout stdout-reader 1000)
+                      lines (cond-> lines line (conj line))
+                      match (when line (re-find #"http://127\.0\.0\.1:(\d+)" line))]
+                  (if match
+                    (str "http://" host ":" (second match))
+                    (recur lines (dec attempts)))))
+          uri (java.net.URI. url)
+          selected-port (Integer/parseInt (str (.getPort uri)))
+          artifact {:kind "web-service"
+                    :name "test-server"
+                    :url url
+                    :host host
+                    :port selected-port
+                    :pid pid
+                    :cwd cwd
+                    :worktree_root cwd
+                    :command command
+                    :build_command build-command
+                    :started_at (store/now)
+                    :lifecycle {:cleanup "kill pid after manual testing/review run"
+                                :cleanup_command (when pid (str "kill " pid))
+                                :owner "tesseraft deterministic handler :web/start-test-server"}}]
+      (wait-for-http-ok url 10000)
+      (store/write-json! out-path artifact)
+      {:status "ok" :test-server-file out-path :url url :pid pid})))
+
 (defn notify-pinga! [_wf ctx _state-id _node]
   (let [msg (str "Workflow finished: " (get-in ctx [:workflow :name]) "\nRun dir: " (run-dir ctx) "\n")]
     (if-let [pinga (not-empty (System/getenv "PINGA_BIN"))]
@@ -270,6 +337,7 @@
    :git/push git-push!
    :github/create-pr github-create-pr!
    :github/fetch-pr-feedback github-fetch-pr-feedback!
+   :web/start-test-server start-test-server!
    :notify/pinga notify-pinga!
    :noop/succeed (fn [_wf _ctx _state-id _node] {:status "ok"})})
 
