@@ -46,14 +46,20 @@
         session-dir (str (fs/path run-dir "pi-sessions"))
         session-name (session-name ctx state-id node)
         tools (comma-tools (:tools node))
+        provider (:provider node)
+        model (:model node)
         log-file (str (fs/path run-dir "logs" (str (name state-id) "-" (get-in ctx [:run :attempt]) ".log")))
         args (cond-> [pi-bin "--approve" "--session-dir" session-dir "--name" session-name]
                tools (into ["--tools" tools])
+               provider (into ["--provider" provider])
+               model (into ["--model" model])
                true (into ["-p" (str "@" prompt-file)]))]
     (fs/create-dirs (fs/parent log-file))
     (spit log-file
           (str "COMMAND: " (str/join " " args) "\n\n"
                "CWD: " repo-root "\n\n"
+               "PROVIDER: " (or provider "<default>") "\n"
+               "MODEL: " (or model "<default>") "\n\n"
                "PROMPT_FILE: " prompt-file "\n\n"
                "STATUS: running\n\n"))
     (let [result (apply p/shell {:dir repo-root
@@ -65,12 +71,16 @@
       (spit log-file
             (str "COMMAND: " (str/join " " args) "\n\n"
                  "CWD: " repo-root "\n\n"
+                 "PROVIDER: " (or provider "<default>") "\n"
+                 "MODEL: " (or model "<default>") "\n\n"
                  "PROMPT_FILE: " prompt-file "\n\n"
                  "STATUS: exited " (:exit result) "\n\n"
                  "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
-      {:executor "pi-cli"
-       :ok (zero? (:exit result))
-       :exit-code (:exit result)
-       :prompt-file prompt-file
-       :log-file log-file
-       :session-name session-name})))
+      (cond-> {:executor "pi-cli"
+               :ok (zero? (:exit result))
+               :exit-code (:exit result)
+               :prompt-file prompt-file
+               :log-file log-file
+               :session-name session-name}
+        provider (assoc :provider provider)
+        model (assoc :model model)))))

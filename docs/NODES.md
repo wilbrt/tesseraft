@@ -52,6 +52,8 @@ The first version models a single reusable node. Multi-node reusable subgraphs c
  :node {:type :agent
         :title "Design"
         :executor :pi-cli
+        :provider "openai"
+        :model "gpt-4o-mini"
         :prompt-template "prompts/design.md.tmpl"
         :tools [:read :bash]
         :runtime {:timeout "30m"}
@@ -69,6 +71,7 @@ The package owns intrinsic node behavior:
 
 - node type,
 - executor, handler, or process command,
+- optional per-agent-node Pi `:provider` and `:model` strings,
 - prompt/script/schema assets,
 - output contracts,
 - tool and secret requirements,
@@ -91,7 +94,7 @@ The importing workflow owns integration:
 - artifact path prefix if needed,
 - collision resolution.
 
-For that reason, package nodes may omit `:next` and `:transitions`. Import tooling should attach workflow-specific transitions.
+For that reason, package nodes may omit `:next` and `:transitions`. Import tooling should attach workflow-specific transitions. Agent package nodes may include optional non-blank `:provider` and `:model` strings; when imported into a workflow, those settings apply only to that node and omission preserves executor defaults.
 
 ## Asset closure
 
