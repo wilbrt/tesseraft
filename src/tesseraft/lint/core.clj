@@ -304,6 +304,46 @@
           (>= pass max-passes) {:states next-out :converged false}
           :else (recur (inc pass) next-out))))))
 
+(defn reachable-from [graph start]
+  (loop [seen #{} stack [start]]
+    (if-let [id (peek stack)]
+      (if (or (nil? id) (seen id))
+        (recur seen (pop stack))
+        (recur (conj seen id) (into (pop stack) (get graph id))))
+      seen)))
+
+(defn cyclic-resource-components [wf]
+  (let [graph (spec/graph wf)
+        ids (spec/reachable-states wf)
+        reachability (into {} (map (fn [id] [id (reachable-from graph id)])) ids)]
+    (->> ids
+         (map (fn [id]
+                (set (filter #(contains? (get reachability %) id)
+                             (get reachability id)))))
+         (filter (fn [component]
+                   (or (> (count component) 1)
+                       (contains? (get graph (first component)) (first component)))))
+         set)))
+
+(defn resource-cycle-diagnostics [wf]
+  (apply concat
+         (for [component (cyclic-resource-components wf)
+               :let [produced (set (mapcat (fn [id]
+                                             (keep resource-identity
+                                                   (get-in wf [:states id :resources :produces])))
+                                           component))]
+               id component
+               [idx resource] (map-indexed vector (get-in wf [:states id :resources :consumes] []))
+               :let [rid (resource-identity resource)]
+               :when (and rid
+                          (one-shot-consume? resource)
+                          (not (contains? produced rid)))]
+           [(warn :resource-cycle-conservative
+                  [:states id :resources :consumes idx]
+                  (str "Node " id " consumes one-shot resource " (resource-label resource)
+                       " inside a cycle, but that cycle does not produce a fresh matching resource before reuse can be proven")
+                  "Move the one-shot consume outside the cycle, produce a fresh resource identity inside the cycle before each consume, or mark read-only/reusable access with :mode :read or :mode :reusable.")])))
+
 (defn resource-node-diagnostics [id node state]
   (let [available (:available state)
         consumed (:consumed state)
@@ -367,6 +407,7 @@
       (when-not converged?
         [(warn :resource-cycle-conservative [:states]
                "Resource flow analysis reached its iteration bound; cyclic resource availability may need explicit reusable/read modes or acyclic production before use")])
+      (resource-cycle-diagnostics wf)
       (apply concat
              (for [[id node] (:states wf)
                    :let [state (in-state id)]

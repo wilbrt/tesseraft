@@ -1,0 +1,21 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resource-cycle-conservative"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :producer
+ :states {:producer {:type :deterministic
+                     :handler :noop/succeed
+                     :runtime {:timeout "1m"}
+                     :resources {:produces [{:kind :web-service
+                                             :name "test-server"
+                                             :path "manual-testing/test-server.json"}]}
+                     :next :loop-consumer}
+          :loop-consumer {:type :deterministic
+                          :handler :noop/succeed
+                          :runtime {:timeout "1m"}
+                          :resources {:consumes [{:kind :web-service
+                                                  :name "test-server"
+                                                  :path "manual-testing/test-server.json"}]}
+                          :next :loop-consumer}
+          :done {:type :terminal :status :success}}}
