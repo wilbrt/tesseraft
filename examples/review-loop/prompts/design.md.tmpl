@@ -6,7 +6,7 @@ Inputs:
 - Base branch: {{inputs.base-branch}}
 
 Goal:
-Turn the user prompt into a concise implementation design.
+Turn the user prompt into a concise implementation design and an explicit manual-testing spec.
 
 Rules:
 - Inspect the repository as needed.
@@ -15,12 +15,15 @@ Rules:
 - Identify relevant files, risks, and validation commands.
 - Keep the design focused enough for a bounded execution session.
 - Choose a short, safe branch name for the work.
+- Write the initial manual-testing spec artifact. It must say whether manual testing is required or may be skipped. If skipped, include an explicit skip rationale/gate that downstream review can inspect.
+- The manual-testing spec must cover: surfaces to test, expected evidence, setup requirements, stale-server hazards, responsive/console checks, acceptance criteria, and provenance expectations for the worktree-rooted test server.
 - Branch names should use lowercase letters, numbers, slashes, and hyphens only.
 - Prefer semantic prefixes such as `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`.
 - Do not use `agent/` as the branch prefix.
 
 Write:
 - Design doc: {{run.dir}}/design/design.md
+- Manual-testing spec: {{run.dir}}/manual-testing/spec.md
 - Branch name: {{run.dir}}/design/branch-name.txt
 - Status JSON: {{run.dir}}/design/status.json
 

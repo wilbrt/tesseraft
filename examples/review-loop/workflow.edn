@@ -44,13 +44,15 @@
    :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
    :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
              :design-doc {:path "design/design.md" :required true}
-             :branch-name {:path "design/branch-name.txt" :required true}}
+             :branch-name {:path "design/branch-name.txt" :required true}
+             :manual-testing-spec {:path "manual-testing/spec.md" :required true}}
    :resources {:requires [{:kind :prompt :name "prompt" :path "prompt/prompt.md" :mode :read}
                           {:kind :capability :name "repo-read" :mode :read}
                           {:kind :capability :name "pi" :executor "pi-cli"}
                           {:kind :tool :name "read" :tool "read"}]
                :produces [{:kind :validation-report :name "design-status" :path "design/status.json"}
                           {:kind :design-doc :name "design" :path "design/design.md"}
+                          {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md"}
                           {:kind :branch :name "branch-name" :path "design/branch-name.txt"}]}
    :transitions [{:when {:status "pass"} :next :ensure-worktree}
                  {:when {:status "fail"} :next :failed}]}
@@ -90,8 +92,23 @@
                           {:kind :artifact :name "execution-summary" :path "execution/summary-{{run.round}}.md"}
                           {:kind :issue-file :name "execution-issues" :path "execution/issues-{{run.round}}.json"}
                           {:kind :artifact :name "code-changes" :source "worktree/path.txt"}]}
-   :transitions [{:when {:status "pass"} :next :manual-testing}
+   :transitions [{:when {:status "pass"} :next :start-test-server}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :start-test-server
+  {:type :deterministic
+   :title "Start worktree test server"
+   :handler :web/start-test-server
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m"}
+   :inputs {:host "127.0.0.1"
+            :port 0
+            :build-command ["npm" "run" "web:build"]
+            :command ["node" "web/server.js" "--host" "127.0.0.1" "--port" "0"]}
+   :outputs {:test-server {:path "manual-testing/test-server-{{run.round}}.json" :required true}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :capability :name "web-start-test-server" :handler "web/start-test-server"}]
+               :produces [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json"}]}
+   :next :manual-testing}
 
   :manual-testing
   {:type :agent
@@ -106,8 +123,10 @@
              :report {:path "manual-testing/report-{{run.round}}.md" :required true}
              :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md" :mode :read}
                           {:kind :capability :name "browser-manual-testing" :mode :read}
                           {:kind :capability :name "pi" :executor "pi-cli"}]
+               :consumes [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :read}]
                :produces [{:kind :validation-report :name "manual-testing-status" :path "manual-testing/status-{{run.round}}.json"}
                           {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
                           {:kind :issue-file :name "manual-testing-issues" :path "manual-testing/issues-{{run.round}}.json"}]}
