@@ -1,0 +1,33 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resource-reusable-read"}
+ :inputs {:prompt {:type :string :required true}}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :producer
+ :states {:producer {:type :deterministic
+                     :handler :noop/succeed
+                     :runtime {:timeout "1m"}
+                     :resources {:requires [{:kind :input :name "prompt" :mode :read}
+                                            {:kind :capability :name "noop" :handler "noop/succeed"}]
+                                 :produces [{:kind :web-service
+                                             :name "test-server"
+                                             :path "manual-testing/test-server.json"}]}
+                     :next :first-reader}
+          :first-reader {:type :deterministic
+                         :handler :noop/succeed
+                         :runtime {:timeout "1m"}
+                         :resources {:consumes [{:kind :web-service
+                                                 :name "test-server"
+                                                 :path "manual-testing/test-server.json"
+                                                 :mode :read}]}
+                         :next :second-reader}
+          :second-reader {:type :deterministic
+                          :handler :noop/succeed
+                          :runtime {:timeout "1m"}
+                          :resources {:consumes [{:kind :web-service
+                                                  :name "test-server"
+                                                  :path "manual-testing/test-server.json"
+                                                  :mode :read}]}
+                          :next :done}
+          :done {:type :terminal :status :success}}}

@@ -23,6 +23,8 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/review-loop/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
+./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
+./bin/tesseraft lint test/fixtures/valid/resource-ambient-path.workflow.edn
 
 printf '\nLinting self-contained node fixtures...\n'
 ./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn
@@ -291,6 +293,35 @@ if ! grep -q "resource-group-not-vector\|resource-missing-name\|resource-unknown
   exit 1
 fi
 rm -f /tmp/tesseraft-invalid-resources-lint.out
+
+check_invalid_resource_flow() {
+  local fixture="$1"
+  local expected="$2"
+  local output="/tmp/tesseraft-${fixture}-lint.out"
+  set +e
+  ./bin/tesseraft lint "test/fixtures/invalid/${fixture}.workflow.edn" --format json >"$output" 2>&1
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    cat "$output" >&2
+    echo "Expected invalid resource-flow fixture to fail: $fixture" >&2
+    exit 1
+  fi
+  if ! grep -q "$expected" "$output"; then
+    cat "$output" >&2
+    echo "Expected $fixture to report $expected" >&2
+    exit 1
+  fi
+  rm -f "$output"
+}
+
+check_invalid_resource_flow resource-missing-producer resource-missing-producer
+check_invalid_resource_flow resource-read-consume-missing-producer resource-missing-producer
+check_invalid_resource_flow resource-branch-missing-producer resource-missing-producer
+check_invalid_resource_flow resource-double-consume resource-double-consume
+check_invalid_resource_flow resource-undeclared-input resource-missing-producer
+check_invalid_resource_flow resource-ambient-path-mismatch resource-missing-producer
+check_invalid_resource_flow resource-cycle-conservative resource-cycle-conservative
 
 set +e
 ./bin/tesseraft lint test/fixtures/invalid/resource-warnings.workflow.edn --strict >/tmp/tesseraft-resource-warnings-lint.out 2>&1
