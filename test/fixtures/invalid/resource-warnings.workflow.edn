@@ -1,0 +1,13 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resource-warnings"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :deterministic
+                  :handler :noop/succeed
+                  :runtime {:timeout "1m"}
+                  :resources {:requires [{:kind :artifact :name "prompt" :path "prompt.md" :mode "bogus"}
+                                         {:kind "artifact" :name "prompt" :path "prompt.md" :mode "read"}]}
+                  :next :done}
+          :done {:type :terminal :status :success}}}

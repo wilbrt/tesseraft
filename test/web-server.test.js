@@ -129,6 +129,13 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const workflows = await workflowsResponse.json();
   assert.ok(workflows.workflows.some((workflow) => workflow.name === 'smoke-demo'));
 
+  const reviewLoopResponse = await fetch(`${base}/api/workflows/review-loop`);
+  assert.equal(reviewLoopResponse.status, 200);
+  const reviewLoopDetail = await reviewLoopResponse.json();
+  const executeState = reviewLoopDetail.workflow.normalized.states.execute;
+  assert.equal(executeState.resources.requires[0].kind, 'worktree');
+  assert.ok(executeState.resources.produces.some((resource) => resource.name === 'execution-status'));
+
   const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
   assert.equal(graphResponse.status, 200);
   const graph = await graphResponse.json();

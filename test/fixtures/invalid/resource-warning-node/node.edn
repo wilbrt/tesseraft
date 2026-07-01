@@ -1,0 +1,8 @@
+{:api-version "tesseraft.node/v1"
+ :kind :node
+ :metadata {:name "resource-warning-node"}
+ :requirements {:resources {:requires [{:kind :capability :name "pi" :mode "reusable"}]}}
+ :node {:type :deterministic
+        :handler :noop/succeed
+        :resources {:produces [{:kind :artifact :name "status" :path "status.json" :mode "bogus"}
+                               {:kind "artifact" :name "status" :path "status.json" :mode :write}]}}}

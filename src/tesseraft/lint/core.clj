@@ -96,8 +96,18 @@
         (warn :unreachable-state [:states id]
               (str "State is unreachable from initial state: " id))))))
 
+(defn normalize-resource-value [x]
+  (cond
+    (keyword? x) (name x)
+    (string? x) x
+    :else x))
+
+(defn normalize-resource-mode [mode]
+  (when (or (keyword? mode) (string? mode))
+    (keyword (normalize-resource-value mode))))
+
 (defn duplicate-resource-key [group resource]
-  [group (:kind resource) (:name resource) (:path resource)])
+  (mapv normalize-resource-value [group (:kind resource) (:name resource) (:path resource)]))
 
 (defn resource-entry-checks [group path resource]
   (if-not (map? resource)
@@ -114,8 +124,7 @@
         (err :resource-unknown-field (conj path field)
              (str "Unknown resource field " field)))
       (when (and (contains? resource :mode)
-                 (keyword? (:mode resource))
-                 (not (contains? spec/resource-modes (:mode resource))))
+                 (not (contains? spec/resource-modes (normalize-resource-mode (:mode resource)))))
         [(warn :resource-unknown-mode (conj path :mode)
                (str "Unknown resource mode " (:mode resource)))])
       (when (and (contains? resource :path)
