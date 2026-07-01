@@ -1,0 +1,28 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resource-double-consume"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :producer
+ :states {:producer {:type :deterministic
+                     :handler :noop/succeed
+                     :runtime {:timeout "1m"}
+                     :resources {:produces [{:kind :web-service
+                                             :name "test-server"
+                                             :path "manual-testing/test-server.json"}]}
+                     :next :first-consumer}
+          :first-consumer {:type :deterministic
+                           :handler :noop/succeed
+                           :runtime {:timeout "1m"}
+                           :resources {:consumes [{:kind :web-service
+                                                   :name "test-server"
+                                                   :path "manual-testing/test-server.json"}]}
+                           :next :second-consumer}
+          :second-consumer {:type :deterministic
+                            :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :resources {:consumes [{:kind :web-service
+                                                    :name "test-server"
+                                                    :path "manual-testing/test-server.json"}]}
+                            :next :done}
+          :done {:type :terminal :status :success}}}

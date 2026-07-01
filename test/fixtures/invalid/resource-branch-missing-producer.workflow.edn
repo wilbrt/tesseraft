@@ -1,0 +1,29 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resource-branch-missing-producer"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :split
+ :states {:split {:type :router
+                  :transitions [{:when {:status "produce"} :next :producer}
+                                {:when {:else true} :next :skip}]}
+          :producer {:type :deterministic
+                     :handler :noop/succeed
+                     :runtime {:timeout "1m"}
+                     :resources {:produces [{:kind :artifact
+                                             :name "branch-report"
+                                             :path "reports/branch.md"}]}
+                     :next :join}
+          :skip {:type :deterministic
+                 :handler :noop/succeed
+                 :runtime {:timeout "1m"}
+                 :next :join}
+          :join {:type :deterministic
+                 :handler :noop/succeed
+                 :runtime {:timeout "1m"}
+                 :resources {:requires [{:kind :artifact
+                                         :name "branch-report"
+                                         :path "reports/branch.md"
+                                         :mode :read}]}
+                 :next :done}
+          :done {:type :terminal :status :success}}}
