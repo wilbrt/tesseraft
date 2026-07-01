@@ -18,12 +18,15 @@ export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, gr
       {workflows.error && <div className="error">{workflows.error}</div>}
       <ul className="item-list">
         {workflows.data.length === 0 && <li className="muted">No workflows found.</li>}
-        {workflows.data.map((workflow) => (
-          <li key={workflow.name}>
-            <button type="button" onClick={() => onSelectWorkflow(workflow.name)}>{workflow.name || '(unnamed)'}</button>
-            <span>{workflow.path}</span>
-          </li>
-        ))}
+        {workflows.data.map((workflow) => {
+          const selected = workflow.name === selectedWorkflow;
+          return (
+            <li key={workflow.name} className={selected ? 'selected-row' : undefined} aria-current={selected ? 'true' : undefined}>
+              <button type="button" onClick={() => onSelectWorkflow(workflow.name)}>{workflow.name || '(unnamed)'}</button>
+              <span>{workflow.path}</span>
+            </li>
+          );
+        })}
       </ul>
     </section>
     <section className="panel detail">

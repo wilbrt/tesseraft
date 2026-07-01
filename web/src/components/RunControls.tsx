@@ -66,15 +66,26 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
     }
   };
 
+  const selectedRunContext = selectedRun ? `${selectedRun}${runDetail?.status ? ` · ${runDetail.status}` : ''}` : 'No run selected';
+
   return (
     <section className="panel run-controls" aria-label="Run controls">
-      <h2>Run controls</h2>
-      <p className="warning"><strong>Local mutation warning:</strong> start, step, and resume execute workflow nodes on this machine. Non-smoke workflows may run agents, processes, or other side effects.</p>
-      {!smokeSafe && <p className="warning strong">Selected workflow/run is not the smoke-demo local-safe workflow. Confirm before mutating.</p>}
+      <div className="panel-heading-row">
+        <div>
+          <h2>Run controls</h2>
+          <p className="muted">Start the selected workflow, or operate the selected run.</p>
+        </div>
+        <div className="context-mini" aria-label="Run control context">
+          <span><strong>Workflow</strong>{selectedWorkflow || 'No workflow selected'}</span>
+          <span><strong>Run</strong>{selectedRunContext}</span>
+        </div>
+      </div>
+      <p className="warning"><strong>Local mutation warning:</strong> these actions execute workflow nodes on this machine. Non-smoke workflows may run agents, processes, or other side effects.</p>
+      {!smokeSafe && <p className="warning strong">Not smoke-demo. Confirm before mutating.</p>}
       <div className="control-grid">
         <div className="control-card start-workflow-card">
-          <h3>Start and run selected workflow</h3>
-          {!selectedWorkflow && <p className="muted">Select a workflow to see the inputs it needs.</p>}
+          <h3>Start workflow</h3>
+          {!selectedWorkflow && <p className="muted">Select a workflow to see inputs.</p>}
           {selectedWorkflow && !workflowDetail && <p className="loading">Loading workflow inputs...</p>}
           <label>Run ID <input value={runId} onChange={(event) => setRunId(event.target.value)} /></label>
           <div className="workflow-inputs" aria-label="Workflow inputs">

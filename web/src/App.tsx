@@ -112,15 +112,31 @@ export const App = () => {
     }
   };
 
+  const activeSectionLabel: Record<ActiveTab, string> = {
+    workflows: 'Workflows',
+    runs: 'Runs',
+    'pi-sessions': 'Pi Sessions'
+  };
+  const runStatus = runDetail?.status || (selectedRun ? 'loading' : null);
+  const streamFreshness = runDetail && isActiveRun(runDetail) ? `Streaming · ${lastRunRefresh || 'pending'}` : 'Stream idle';
+
   return (
     <>
       <header>
-        <h1>Tesseraft Local Web UI</h1>
-        <p>Local inspection and controlled execution for workflows, visual graphs, runs, attempts, artifacts, and events. Active runs stream updates.</p>
+        <div className="header-topline">
+          <h1>Tesseraft Console</h1>
+          <span className="status-pill">{activeSectionLabel[activeTab]}</span>
+        </div>
+        <div className="context-strip" aria-label="Current console context">
+          <span className="context-chip"><strong>Workflow</strong>{selectedWorkflow || 'No workflow selected'}</span>
+          <span className="context-chip"><strong>Run</strong>{selectedRun ? `${selectedRun}${runStatus ? ` · ${runStatus}` : ''}` : 'No run selected'}</span>
+          <span className="context-chip"><strong>Graph node</strong>{selectedNodeId || 'No node selected'}</span>
+          <span className="context-chip"><strong>Refresh</strong>{streamFreshness}</span>
+        </div>
         <nav className="tabs" aria-label="Run Console sections">
-          <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} onClick={() => setActiveTab('workflows')}>Workflows</button>
-          <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} onClick={() => setActiveTab('runs')}>Runs</button>
-          <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} onClick={() => setActiveTab('pi-sessions')}>Pi Sessions</button>
+          <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} aria-label="Workflows: inspect workflow graphs" onClick={() => setActiveTab('workflows')}>Workflows <span>inspect</span></button>
+          <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} aria-label="Runs: operate and inspect run status" onClick={() => setActiveTab('runs')}>Runs <span>operate</span></button>
+          <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} aria-label="Pi Sessions: chat with Pi sessions" onClick={() => setActiveTab('pi-sessions')}>Pi Sessions <span>chat</span></button>
         </nav>
       </header>
       <main>
