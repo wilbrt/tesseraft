@@ -27,7 +27,11 @@ This document defines the initial vocabulary and boundaries so future UI work ca
 - **Workflow package**: A set of workflow definition files and assets such as `workflow.edn`, prompt templates, scripts, schemas, and policies. The package defines workflow behavior.
 - **Run**: One execution of a workflow pinned to an immutable workflow version such as a content hash or Git commit. Existing runs must not silently switch versions.
 - **Artifact**: A declared output file or structured value produced by a node attempt and recorded according to the workflow's artifact contracts.
-- **Event log**: The append-only runtime history for a run, including events such as `run.started`, `node.started`, `node.finished`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`.
+- **Resource**: A workflow object with proof semantics, such as an input, artifact, branch/worktree, schema, prompt template, approval, policy, or capability. Resources may be reusable, produced, consumed, one-shot, unavailable until produced, or capability-like.
+- **Proof trace**: The durable runtime evidence for a run: event logs, artifacts, node attempts, validated transitions, approval records, and run state.
+- **Expected outcome**: A declared node result such as `status: fail` that intentionally drives workflow transitions.
+- **External failure**: A runtime/environment failure such as a missing dependency, malformed process output, nonzero subprocess exit, missing required artifact, timeout, or unknown handler/executor. It is recorded as failed evidence rather than treated as a declared transition outcome.
+- **Event log**: The append-only runtime history for a run, including events such as `run.started`, `node.started`, `node.finished`, `node.failed`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`.
 - **Node package**: A portable package for one reusable workflow node and its intrinsic assets, interface, requirements, and node declaration. Importing workflows own routing and integration.
 - **Approval**: A human decision gate in a run. Approval requests and decisions are runtime events and must be recorded durably.
 
@@ -48,7 +52,7 @@ This document defines the initial vocabulary and boundaries so future UI work ca
 3. Linter output is the validation authority for authoring changes before a runner accepts them.
 4. A run is pinned to an immutable workflow version at start time.
 5. Runtime effects mutate run state, not workflow definitions.
-6. Event logs, artifacts, node attempts, and run state describe runtime history and current status.
+6. Event logs, artifacts, node attempts, and run state describe runtime history and current status; together they form the reconstructable proof trace.
 7. Approval requests and decisions are runtime records, not private UI state.
 8. UI state may cache, filter, arrange, or draft information, but authoritative behavior and runtime history must be reconstructable from durable contracts.
 
@@ -77,7 +81,7 @@ Workflow Studio must not:
 Run Console helps users operate runs. It may:
 
 - start a run from a selected immutable workflow version;
-- display current run state, node attempts, transition decisions, events, artifacts, and failures;
+- display current run state, node attempts, transition decisions, events, artifacts, failures, and the proof trace that distinguishes expected outcomes from external failures;
 - stream agent and process events exposed by the runner;
 - show the exact workflow version used by a run;
 - request and record approval decisions through the control plane;

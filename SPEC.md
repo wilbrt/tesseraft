@@ -7,6 +7,8 @@ Version: `tesseraft.workflow/v1`
 
 The workflow specification defines a portable, infrastructure-as-code format for declaring deterministic and agentic state machines.
 
+Tesseraft workflows are controlled resource transformations. Inputs, artifacts, branches/worktrees, schemas, prompt templates, approvals, policies, and capabilities are resources with explicit semantics: some are reusable, some are produced, some are consumed once, some are unavailable until produced, and some are capability-like permissions such as tools, handlers, executors, or secrets. Nodes are resource transformation rules: they require resources, may consume resources, and produce resources. The linter is a practical static proof checker for possible executions; runtime events, artifacts, attempts, and validated transitions are the proof trace.
+
 A compliant implementation must be able to parse workflow definition files, validate them without side effects, render them as a directed graph, execute runs from a pinned workflow version, persist run state and node attempts, and support standalone linting in CI.
 
 The workflow definition is the source of truth. UI state, database state, and runtime state must not silently redefine workflow behavior.
@@ -150,7 +152,9 @@ Required artifacts are validated after node execution. The linter validates outp
 {"status":"pass","summary":"Short summary","issues_file":null}
 ```
 
-Supported statuses are `pass`, `fail`, `actions_needed`, `no_actions`, `ok`, and `error`.
+Supported declared workflow outcomes include `pass`, `fail`, `actions_needed`, `no_actions`, and `ok`. These are workflow semantics: for example, `status: fail` may intentionally select a retry or remediation transition and must not be treated as a runtime crash.
+
+`status: error` is reserved for normalized runtime/external failure evidence in the reference runner. External failures include missing dependencies or credentials, subprocess crashes or nonzero exits, malformed process output, timeouts, sandbox/network/environment failures, unknown handlers/executors, and required artifacts not being produced. External failures append durable `node.failed` evidence, mark the node attempt and run failed, preserve diagnostics such as logs/prompts/exit codes, and require explicit recovery, resume, or retry semantics rather than normal transition selection.
 
 ## 14. Standard issues artifact
 
@@ -176,7 +180,9 @@ Existing runs must not silently switch workflow versions.
 
 ## 17. Event log
 
-Runtime events are appended as JSONL. Required categories include `run.started`, `node.started`, `node.finished`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`.
+Runtime events are appended as JSONL. Required categories include `run.started`, `node.started`, `node.finished`, `node.failed`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`.
+
+The event log is part of the proof trace. After `node.started`, a runner must append a closing event (`node.finished` for declared outcomes or `node.failed` for runtime/external failures) before marking the run failed or advancing state.
 
 ## 18. Executor protocol
 
@@ -198,9 +204,13 @@ Response:
 {"ok":true,"status":"pass","outputs":{"ticket-json":"ticket.json"}}
 ```
 
+A zero exit with valid JSON and `ok` not false is a protocol-level response whose `status` may drive declared transitions. A nonzero exit, malformed JSON, `ok:false`, or `status:"error"` is treated by the reference runner as an external/runtime failure and does not enter transition selection.
+
 ## 20. Linter requirements
 
 A compliant linter detects malformed files, unsupported versions, missing initial state, missing terminal state, unknown transitions, unreachable states, dead ends, unknown node types, unknown handlers, unknown executors, missing prompt templates, missing process scripts, missing status outputs for agent nodes, invalid artifact paths, duplicate artifact outputs, cycles without retry/exit policy, unresolved template variables, and policy violations.
+
+As resource vocabulary matures, the linter should also validate declared requirements, capabilities, produced artifacts, consumed resources, and reusable/one-shot resource contracts where they are statically knowable. This is a practical proof check, not a requirement for a full theorem prover.
 
 ## 21. Linter result format
 

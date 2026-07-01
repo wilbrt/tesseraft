@@ -21,7 +21,8 @@
       "minimum": 1
     },
     "status": {
-      "type": "string"
+      "type": "string",
+      "description": "Attempt lifecycle status such as running, ok, error, failed, or blocked. Runtime/external failures should use error or failed."
     },
     "started_at": {
       "type": "string"
@@ -42,6 +43,20 @@
       }
     },
     "next_state": {
+      "type": "string"
+    },
+    "result": {
+      "type": "object",
+      "description": "JSON-compatible node result or normalized runtime failure result."
+    },
+    "error": {
+      "type": "string",
+      "description": "Human-readable runtime/external failure summary when the attempt failed outside declared workflow semantics."
+    },
+    "log_file": {
+      "type": "string"
+    },
+    "prompt_file": {
       "type": "string"
     }
   },

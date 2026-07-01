@@ -42,7 +42,10 @@ The first version models a single reusable node. Multi-node reusable subgraphs c
                 :handlers []
                 :tools [:read :bash]
                 :secrets []
-                :template-vars ["inputs.prompt" "run.dir"]}
+                :template-vars ["inputs.prompt" "run.dir"]
+                :resources {:requires [{:kind :input :name "prompt" :mode :reusable}
+                                       {:kind :capability :name "pi-cli"}]
+                            :produces [{:kind :artifact :name "design" :path "design/design.md"}]}}
  :assets {:prompts ["prompts/design.md.tmpl"]
           :scripts []
           :schemas ["schemas/status.schema.json"]}
@@ -69,7 +72,10 @@ The package owns intrinsic node behavior:
 - prompt/script/schema assets,
 - output contracts,
 - tool and secret requirements,
-- template-variable requirements.
+- template-variable requirements,
+- practical resource requirements and productions when known.
+
+Resource vocabulary is optional in the first node package version and must remain JSON-compatible. Use it to describe requirements such as inputs, tools, secrets, handlers, executors, existing assets, produced artifacts, consumed resources, reusable resources, one-shot resources, and capability-like permissions. Importing or linting a package may use this vocabulary as static proof evidence, but packages are not required to encode a complete theorem proof.
 
 The importing workflow owns integration:
 
@@ -92,6 +98,8 @@ Common asset classes are:
 - `:prompts` — prompt templates used by agent nodes,
 - `:scripts` — process command files or helper scripts,
 - `:schemas` — JSON schemas referenced by outputs or artifacts.
+
+Assets and resources differ: assets are package files distributed with the node, while resources are runtime or proof objects that a node requires, consumes, or produces. A prompt template can be both an asset and a reusable resource; a generated report is normally a produced artifact resource.
 
 The linter should ensure referenced prompt templates, process scripts, and schemas exist. It should also warn when a known reference is not declared in `:assets`.
 

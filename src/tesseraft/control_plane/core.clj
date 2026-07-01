@@ -282,6 +282,17 @@
                 attempt (cond-> attempt
                           (result-error-summary result) (assoc :error (result-error-summary result)))]
             (recur (rest events) (dissoc active state) (conj acc attempt)))
+          "node.failed"
+          (let [state (:state event)
+                current (or (get active state) {:attempt (or (:attempt event) (inc (count acc))) :node_id state :state state})
+                result (:result event)
+                attempt (cond-> (assoc current
+                                       :finished_at (:at event)
+                                       :status "error"
+                                       :result result)
+                          (or (:error event) (result-error-summary result))
+                          (assoc :error (or (:error event) (result-error-summary result))))]
+            (recur (rest events) (dissoc active state) (conj acc attempt)))
           "transition.selected"
           (let [from (:from event)]
             (recur (rest events)

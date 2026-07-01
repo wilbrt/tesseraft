@@ -86,8 +86,8 @@ Inspect current state with:
 
 Useful run files and directories include:
 
-- `state.edn` — current run context, state, status, round, attempt, workflow file, and inputs.
-- `events.jsonl` — run, node, transition, and effect events.
+- `state.edn` — current run context, state, status, round, attempt, workflow file, and inputs. External/runtime failures mark the run `failed` without advancing to a declared transition.
+- `events.jsonl` — run, node, transition, and effect events. A started node is closed by `node.finished` for declared workflow outcomes or `node.failed` for external/runtime failures.
 - `issues.json` — merged execution/review issues used by retry loops.
 - `logs/` — process and Pi stdout/stderr logs.
 - `prompts/generated/` — rendered prompts sent to Pi.
@@ -100,7 +100,7 @@ The key state sequence is:
 collect-prompt -> design -> ensure-branch -> execute -> review -> pr-draft -> create-pr -> done
 ```
 
-`review-loop` uses the same state shape, with an explicit pass/fail review artifact loop. Failed `execute` or `review` steps merge issues, increment the round, and return to `execute` until the workflow passes or fails.
+`review-loop` uses the same state shape, with an explicit pass/fail review artifact loop. Declared `status: fail` outcomes from `execute` or `review` merge issues, increment the round, and return to `execute` until the workflow passes or reaches a declared failure path. That expected outcome is distinct from an external/runtime failure such as a missing dependency, subprocess crash, malformed output, timeout, or missing required artifact; external failures leave durable `node.failed` evidence and require explicit recovery/resume/retry.
 
 ## Where side effects happen
 
