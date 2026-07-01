@@ -6,9 +6,9 @@ import fs from 'node:fs';
 import { WorkflowGraph, formatCondition } from '../web/src/components/WorkflowGraph.tsx';
 import { layoutGraph } from '../web/src/lib/graphLayout.ts';
 
-test('layoutGraph produces deterministic visual positions and edges', () => {
+test('layoutGraph produces deterministic visual positions and preserves node resources', () => {
   const layout = layoutGraph([
-    { id: 'start', type: 'prompt', title: 'Start' },
+    { id: 'start', type: 'prompt', title: 'Start', resources: { requires: [{ kind: 'input', name: 'prompt' }] } },
     { id: 'done', type: 'terminal', title: 'Done' }
   ], [
     { from: 'start', to: 'done', condition: { else: true } }
@@ -21,6 +21,7 @@ test('layoutGraph produces deterministic visual positions and edges', () => {
   assert.ok(start);
   assert.ok(done);
   assert.ok(done.x > start.x);
+  assert.deepEqual(start.resources, { requires: [{ kind: 'input', name: 'prompt' }] });
   assert.deepEqual(layout.edges[0].condition, { else: true });
 });
 
@@ -64,6 +65,8 @@ test('Run component sources expose attempt, artifact, and failure surfaces', () 
   const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
   const artifactBrowser = fs.readFileSync('web/src/components/ArtifactBrowser.tsx', 'utf8');
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
+  const workflowGraph = fs.readFileSync('web/src/components/WorkflowGraph.tsx', 'utf8');
+  assert.match(workflowGraph, /JSON\.stringify\(node, null, 2\)/);
   assert.match(runPanels, /Attempt timeline/);
   assert.match(artifactBrowser, /Artifact browser/);
   assert.match(runPanels, /Issues to inspect/);

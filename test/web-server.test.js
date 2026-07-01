@@ -136,6 +136,14 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.ok(graph.nodes.some((node) => node.id === 'start'));
   assert.ok(graph.edges.some((edge) => edge.from === 'start' && edge.to === 'done'));
 
+  const reviewLoopGraphResponse = await fetch(`${base}/api/workflows/review-loop/graph`);
+  assert.equal(reviewLoopGraphResponse.status, 200);
+  const reviewLoopGraph = await reviewLoopGraphResponse.json();
+  const executeNode = reviewLoopGraph.nodes.find((node) => node.id === 'execute');
+  assert.ok(executeNode, 'expected review-loop execute graph node');
+  assert.equal(executeNode.resources.requires[0].kind, 'worktree');
+  assert.ok(executeNode.resources.produces.some((resource) => resource.name === 'execution-status'));
+
   const runsResponse = await fetch(`${base}/api/runs`);
   assert.equal(runsResponse.status, 200);
   const runs = await runsResponse.json();
