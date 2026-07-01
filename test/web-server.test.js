@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
@@ -50,6 +50,43 @@ const readStreamUntil = async (stream, pattern, attempts = 5) => {
 
 test('parseArgs accepts port zero for tests', () => {
   assert.deepEqual(parseArgs(['--port', '0']), { host: '127.0.0.1', port: 0 });
+});
+
+test('built web wrapper starts and serves HTTP', async () => {
+  const child = spawn(process.execPath, ['web/server.js', '--host', '127.0.0.1', '--port', '0'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`web wrapper did not start: ${stderr}`)), 5000);
+      child.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once('exit', (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`web wrapper exited with ${code}: ${stderr}`));
+      });
+      child.stdout.on('data', (chunk) => {
+        const text = String(chunk);
+        const match = text.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(`http://127.0.0.1:${match[1]}`);
+        }
+      });
+    });
+
+    const response = await fetch(url);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Tesseraft Local Web UI/);
+  } finally {
+    child.kill('SIGTERM');
+  }
 });
 
 test('routeApi maps supported API routes to control-plane commands', () => {
