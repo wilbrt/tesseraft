@@ -61,12 +61,15 @@ export const RunsPanel = ({ runs, selectedRun, runDetail, events, artifacts, run
         {runs.error && <div className="error">{runs.error}</div>}
         <ul className="item-list">
           {runs.data.length === 0 && <li className="muted">No runs found. Run a workflow locally to populate this list.</li>}
-          {runs.data.map((run) => (
-            <li key={run.run_id}>
-              <button type="button" onClick={() => onSelectRun(run.run_id)}>{run.run_id}</button>
-              <span>{run.workflow_name} — {run.status}</span>
-            </li>
-          ))}
+          {runs.data.map((run) => {
+            const selected = run.run_id === selectedRun;
+            return (
+              <li key={run.run_id} className={selected ? 'selected-row' : undefined} aria-current={selected ? 'true' : undefined}>
+                <button type="button" onClick={() => onSelectRun(run.run_id)}>{run.run_id}</button>
+                <span>{run.workflow_name} — <span className={`status-pill ${run.status || 'unknown'}`}>{run.status}</span></span>
+              </li>
+            );
+          })}
         </ul>
       </section>
       <section className="panel detail">
