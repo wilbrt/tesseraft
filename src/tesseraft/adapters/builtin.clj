@@ -13,7 +13,9 @@
       (throw (ex-info "Command failed" {:args args :exit (:exit r) :out (:out r) :err (:err r)})))
     (:out r)))
 (defn run-dir [ctx] (get-in ctx [:run :dir]))
-(defn artifact-path [ctx p] (str (fs/path (run-dir ctx) p)))
+(defn artifact-path [ctx p]
+  (let [rendered (spec/render-template-string p ctx)]
+    (str (fs/path (run-dir ctx) rendered))))
 (defn artifact-text [ctx p]
   (when p
     (let [path (artifact-path ctx p)]
