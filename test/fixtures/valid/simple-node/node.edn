@@ -15,7 +15,7 @@
           :schemas ["schemas/status.schema.json"]}
  :node {:type :agent
         :title "Design"
-        :resources {:requires [{:kind :prompt :name "design-template" :path "prompts/design.md.tmpl"}]
+        :resources {:requires [{:kind :prompt-template :name "design-template" :path "prompts/design.md.tmpl"}]
                     :produces [{:kind :artifact :name "status" :path "design/status.json" :schema "schemas/status.schema.json"}
                                {:kind :design-doc :name "design" :path "design/design.md"}]}
         :executor :pi-cli

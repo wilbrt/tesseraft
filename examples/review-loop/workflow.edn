@@ -46,7 +46,7 @@
              :design-doc {:path "design/design.md" :required true}
              :branch-name {:path "design/branch-name.txt" :required true}
              :manual-testing-spec {:path "manual-testing/spec.md" :required true}}
-   :resources {:requires [{:kind :prompt :name "prompt" :path "prompt/prompt.md" :mode :read}
+   :resources {:requires [{:kind :prompt :name "prompt-md" :path "prompt/prompt.md" :mode :read}
                           {:kind :capability :name "repo-read" :mode :read}
                           {:kind :capability :name "pi" :executor "pi-cli"}
                           {:kind :tool :name "read" :tool "read"}]
@@ -84,10 +84,10 @@
              :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read-write}
                           {:kind :design-doc :name "design" :path "design/design.md" :mode :read}
-                          {:kind :prompt :name "prompt" :path "prompt/prompt.md" :mode :read}
+                          {:kind :prompt :name "prompt-md" :path "prompt/prompt.md" :mode :read}
+                          {:kind :run-state :name "issues" :path "issues.json" :mode :read}
                           {:kind :capability :name "write-access" :mode :write}
                           {:kind :capability :name "pi" :executor "pi-cli"}]
-               :consumes [{:kind :issue-file :name "retry-issues" :path "execution/issues-{{run.round}}.json" :mode :read}]
                :produces [{:kind :validation-report :name "execution-status" :path "execution/status-{{run.round}}.json"}
                           {:kind :artifact :name "execution-summary" :path "execution/summary-{{run.round}}.md"}
                           {:kind :issue-file :name "execution-issues" :path "execution/issues-{{run.round}}.json"}
