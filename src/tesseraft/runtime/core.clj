@@ -199,6 +199,29 @@
           (fail-run! ctx state-id result)))
       (throw t))))
 
+(defn recover-completed-agent-node [ctx state-id node]
+  (when (= :agent (:type node))
+    (let [status-path (artifact-path ctx (spec/status-output-path node))
+          required-paths (required-output-paths ctx node)]
+      (when (and status-path
+                 (fs/exists? status-path)
+                 (every? fs/exists? required-paths))
+        (let [status (store/read-json status-path)
+              result (merge {:executor "pi-cli"
+                             :ok true
+                             :recovered true
+                             :status-file status-path}
+                            status)]
+          (store/event! ctx {:event "node.recovered"
+                             :state (name state-id)
+                             :attempt (get-in ctx [:run :attempt])
+                             :result result})
+          (store/event! ctx {:event "node.finished"
+                             :state (name state-id)
+                             :attempt (get-in ctx [:run :attempt])
+                             :result result})
+          result)))))
+
 (defn match-transition? [result transition]
   (let [pred (:when transition)]
     (or (= true (:else pred))
@@ -271,7 +294,8 @@
       (when-not node (throw (ex-info "Current state not found" {:state state-id})))
       (if (= :terminal (:type node))
         (finish-if-terminal wf ctx)
-        (let [result (execute-node! wf ctx state-id node)
+        (let [result (or (recover-completed-agent-node ctx state-id node)
+                         (execute-node! wf ctx state-id node))
               tr (choose-transition node result)]
           (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
           (finish-if-terminal wf (advance ctx tr result)))))))

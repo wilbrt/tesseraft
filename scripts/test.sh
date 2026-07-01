@@ -5,7 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN_DIRS=(".agent-runs/smoke-demo/smoke-test" ".agent-runs/process-failure-fixture/process-failure-test")
+RUN_DIRS=(".agent-runs/smoke-demo/smoke-test"
+          ".agent-runs/recovery-fixture/recovery-test"
+          ".agent-runs/process-failure-fixture/process-failure-test")
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "${RUN_DIRS[@]}" "$TMP_DIR"
@@ -84,6 +86,51 @@ SMOKE_OUTPUT="$(./bin/tesseraft run examples/smoke/workflow.edn --run-id smoke-t
 printf '%s\n' "$SMOKE_OUTPUT"
 if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   echo "Expected smoke workflow run status to be done" >&2
+  exit 1
+fi
+
+printf '\nChecking interrupted agent recovery...\n'
+RECOVERY_RUN_DIR=".agent-runs/recovery-fixture/recovery-test"
+RECOVERY_WORKFLOW="$TMP_DIR/recovery.workflow.edn"
+cat >"$TMP_DIR/recovery-prompt.md.tmpl" <<'EOF'
+Recovery fixture prompt.
+EOF
+cat >"$RECOVERY_WORKFLOW" <<'EDN'
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "recovery-fixture"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true}
+ :initial :agent
+ :states
+ {:agent
+  {:type :agent
+   :executor :pi-cli
+   :prompt-template "recovery-prompt.md.tmpl"
+   :runtime {:timeout "1m"}
+   :outputs {:status {:path "agent/status.json" :required true}}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :status :success}}}
+EDN
+rm -rf "$RECOVERY_RUN_DIR"
+./bin/tesseraft run start "$RECOVERY_WORKFLOW" --run-id recovery-test --format json >/tmp/tesseraft-recovery-start.json
+mkdir -p "$RECOVERY_RUN_DIR/agent"
+cat >"$RECOVERY_RUN_DIR/agent/status.json" <<'EOF'
+{"status":"ok","summary":"preexisting completed artifact","issues_file":null}
+EOF
+RECOVERY_OUTPUT="$(./bin/tesseraft run step --run-dir "$RECOVERY_RUN_DIR" --format json)"
+printf '%s\n' "$RECOVERY_OUTPUT"
+if ! grep -q '"status" : "done"' <<<"$RECOVERY_OUTPUT"; then
+  echo "Expected recovered run to reach done" >&2
+  exit 1
+fi
+if ! grep -q '"event":"node.recovered"' "$RECOVERY_RUN_DIR/events.jsonl"; then
+  cat "$RECOVERY_RUN_DIR/events.jsonl" >&2
+  echo "Expected node.recovered event" >&2
   exit 1
 fi
 

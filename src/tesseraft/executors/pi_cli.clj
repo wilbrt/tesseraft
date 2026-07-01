@@ -49,22 +49,28 @@
         log-file (str (fs/path run-dir "logs" (str (name state-id) "-" (get-in ctx [:run :attempt]) ".log")))
         args (cond-> [pi-bin "--approve" "--session-dir" session-dir "--name" session-name]
                tools (into ["--tools" tools])
-               true (into ["-p" (str "@" prompt-file)]))
-        result (apply p/shell {:dir repo-root
-                               :out :string :err :string :continue true
-                               :extra-env {"AGENT_RUN_DIR" run-dir
-                                           "AGENT_STATE" (name state-id)
-                                           "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}}
-                      args)]
+               true (into ["-p" (str "@" prompt-file)]))]
     (fs/create-dirs (fs/parent log-file))
     (spit log-file
           (str "COMMAND: " (str/join " " args) "\n\n"
                "CWD: " repo-root "\n\n"
                "PROMPT_FILE: " prompt-file "\n\n"
-               "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
-    {:executor "pi-cli"
-     :ok (zero? (:exit result))
-     :exit-code (:exit result)
-     :prompt-file prompt-file
-     :log-file log-file
-     :session-name session-name}))
+               "STATUS: running\n\n"))
+    (let [result (apply p/shell {:dir repo-root
+                                 :out :string :err :string :continue true
+                                 :extra-env {"AGENT_RUN_DIR" run-dir
+                                             "AGENT_STATE" (name state-id)
+                                             "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}}
+                        args)]
+      (spit log-file
+            (str "COMMAND: " (str/join " " args) "\n\n"
+                 "CWD: " repo-root "\n\n"
+                 "PROMPT_FILE: " prompt-file "\n\n"
+                 "STATUS: exited " (:exit result) "\n\n"
+                 "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
+      {:executor "pi-cli"
+       :ok (zero? (:exit result))
+       :exit-code (:exit result)
+       :prompt-file prompt-file
+       :log-file log-file
+       :session-name session-name})))
