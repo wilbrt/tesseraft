@@ -61,12 +61,14 @@ test('WorkflowGraph marks selected nodes for run correlation', () => {
   assert.match(markup, /graph-node selected/);
 });
 
-test('Run component sources expose attempt, artifact, and failure surfaces', () => {
+test('Run component sources expose attempt, artifact, failure, and resource inspection surfaces', () => {
   const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
   const artifactBrowser = fs.readFileSync('web/src/components/ArtifactBrowser.tsx', 'utf8');
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const workflowGraph = fs.readFileSync('web/src/components/WorkflowGraph.tsx', 'utf8');
   assert.match(workflowGraph, /JSON\.stringify\(node, null, 2\)/);
+  assert.match(workflowGraph, />Resources</);
+  assert.match(workflowGraph, /JSON\.stringify\(node\.resources, null, 2\)/);
   assert.match(runPanels, /Attempt timeline/);
   assert.match(artifactBrowser, /Artifact browser/);
   assert.match(runPanels, /Issues to inspect/);
