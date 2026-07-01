@@ -8,6 +8,39 @@
     "metadata",
     "node"
   ],
+  "$defs": {
+    "resourceDeclaration": {
+      "type": "object",
+      "properties": {
+        "requires": { "$ref": "#/$defs/resourceList" },
+        "consumes": { "$ref": "#/$defs/resourceList" },
+        "produces": { "$ref": "#/$defs/resourceList" }
+      },
+      "additionalProperties": true
+    },
+    "resourceList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/resource" }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "mode": { "type": "string" },
+        "description": { "type": "string" },
+        "schema": { "type": "string" },
+        "source": { "type": "string" },
+        "tool": { "type": "string" },
+        "secret": { "type": ["string", "boolean"] },
+        "handler": { "type": "string" },
+        "executor": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
   "properties": {
     "api-version": {
       "const": "tesseraft.node/v1"
@@ -93,7 +126,8 @@
           "items": {
             "type": "string"
           }
-        }
+        },
+        "resources": { "$ref": "#/$defs/resourceDeclaration" }
       },
       "additionalProperties": true
     },
@@ -137,7 +171,8 @@
             "router",
             "terminal"
           ]
-        }
+        },
+        "resources": { "$ref": "#/$defs/resourceDeclaration" }
       },
       "additionalProperties": true
     }

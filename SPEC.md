@@ -70,6 +70,17 @@ Every non-terminal node must have either `:next` or `:transitions`.
  :ui {}}
 ```
 
+Nodes may declare optional resource metadata. This metadata is lintable proof evidence only; it does not replace `:inputs`, `:outputs`, `:tools`, `:runtime`, handlers, or transitions.
+
+```edn
+:resources {:requires [{:kind :input :name "prompt" :mode :reusable}
+                       {:kind :capability :name "pi"}]
+            :consumes [{:kind :issue-file :name "retry-issues" :path "execution/issues-{{run.round}}.json"}]
+            :produces [{:kind :design-doc :name "design" :path "design/design.md"}]}
+```
+
+Allowed groups are `:requires`, `:consumes`, and `:produces`. Each group value is a vector of maps. Each resource map must include `:kind` and `:name`; optional fields are `:path`, `:mode`, `:description`, `:schema`, `:source`, `:tool`, `:secret`, `:handler`, and `:executor`. Values must remain JSON-normalizable. Suggested kinds include inputs, artifacts, worktrees, branches, prompts, design docs, issue files, validation reports, review evidence, PR metadata/URLs, logs/artifacts, secrets, capabilities, tools, and policy/approval gates. Suggested modes are `:reusable`, `:one-shot`, `:read`, `:write`, and `:read-write`.
+
 ## 7. Agent node
 
 ```edn
@@ -208,9 +219,9 @@ A zero exit with valid JSON and `ok` not false is a protocol-level response whos
 
 ## 20. Linter requirements
 
-A compliant linter detects malformed files, unsupported versions, missing initial state, missing terminal state, unknown transitions, unreachable states, dead ends, unknown node types, unknown handlers, unknown executors, missing prompt templates, missing process scripts, missing status outputs for agent nodes, invalid artifact paths, duplicate artifact outputs, cycles without retry/exit policy, unresolved template variables, and policy violations.
+A compliant linter detects malformed files, unsupported versions, missing initial state, missing terminal state, unknown transitions, unreachable states, dead ends, unknown node types, unknown handlers, unknown executors, missing prompt templates, missing process scripts, missing status outputs for agent nodes, invalid artifact paths, duplicate artifact outputs, cycles without retry/exit policy, unresolved template variables, policy violations, and resource declaration shape errors.
 
-As resource vocabulary matures, the linter should also validate declared requirements, capabilities, produced artifacts, consumed resources, and reusable/one-shot resource contracts where they are statically knowable. This is a practical proof check, not a requirement for a full theorem prover.
+For `:resources`, the linter validates that declarations are maps, known groups are vectors, entries are maps with `:kind` and `:name`, fields are from the documented set, paths are safe relative paths, and duplicate `[group kind name path]` declarations are reported. Unknown groups and unknown modes are warnings. This is a practical proof check, not a requirement for a full theorem prover.
 
 ## 21. Linter result format
 

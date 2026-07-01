@@ -17,6 +17,9 @@
   #{:jira/fetch-ticket :git/ensure-branch :git/ensure-worktree :git/push :github/create-pr :github/fetch-pr-feedback :notify/pinga :noop/succeed})
 (def allowed-template-roots #{"inputs" "defaults" "run" "node" "artifacts" "workflow" "env"})
 (def known-run-vars #{"id" "dir" "state" "round" "attempt" "feedback-cycle" "issues-file" "branch" "worktree-dir"})
+(def resource-groups #{:requires :consumes :produces})
+(def resource-fields #{:kind :name :path :mode :description :schema :source :tool :secret :handler :executor})
+(def resource-modes #{:reusable :one-shot :read :write :read-write})
 
 (defn keywordize-node-id [x]
   (cond

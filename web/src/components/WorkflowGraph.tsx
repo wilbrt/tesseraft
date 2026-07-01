@@ -16,8 +16,9 @@ export const formatCondition = (condition: unknown): string => {
 };
 
 export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, onSelectNode }: Props) => {
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [modalNodeId, setModalNodeId] = useState<string | null>(null);
   const layout = useMemo(() => layoutGraph(nodes, edges), [nodes, edges]);
+  const modalNode = useMemo(() => modalNodeId ? nodes.find((node) => node.id === modalNodeId) || null : null, [modalNodeId, nodes]);
 
   return (
     <section className="graph-section" aria-label="Workflow graph">
@@ -49,7 +50,7 @@ export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, onSelectNod
                 <text x="14" y="24" className="node-title">{node.title || node.id}</text>
                 <text x="14" y="43" className="node-type">{node.type || 'node'}</text>
                 <foreignObject x="0" y="0" width="150" height="56">
-                  <button className="node-hitbox" type="button" aria-label={`Open node ${node.id} details`} onClick={() => { onSelectNode?.(node); setSelectedNode(node); }} />
+                  <button className="node-hitbox" type="button" aria-label={`Open node ${node.id} details`} onClick={() => { onSelectNode?.(node); setModalNodeId(node.id); }} />
                 </foreignObject>
               </g>
             ))}
@@ -68,7 +69,7 @@ export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, onSelectNod
           );
         })}
       </ul>
-      {selectedNode && <NodeModal node={selectedNode} onClose={() => setSelectedNode(null)} />}
+      {modalNode && <NodeModal node={modalNode} onClose={() => setModalNodeId(null)} />}
     </section>
   );
 };
@@ -94,6 +95,12 @@ const NodeModal = ({ node, onClose }: { node: GraphNode; onClose: () => void }) 
           <div className="field-row"><dt>Type</dt><dd>{String(node.type || '')}</dd></div>
           <div className="field-row"><dt>Title</dt><dd>{String(node.title || '')}</dd></div>
         </dl>
+        {'resources' in node && node.resources ? (
+          <>
+            <h3>Resources</h3>
+            <pre>{JSON.stringify(node.resources, null, 2)}</pre>
+          </>
+        ) : null}
         <h3>Structured JSON</h3>
         <pre>{JSON.stringify(node, null, 2)}</pre>
       </div>

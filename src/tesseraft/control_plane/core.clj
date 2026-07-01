@@ -136,7 +136,8 @@
                           (cond-> {:id (spec/normalize-id id)
                                    :type (:type node)}
                             (:title node) (assoc :title (:title node))
-                            (:outputs node) (assoc :outputs (:outputs node)))))
+                            (:outputs node) (assoc :outputs (:outputs node))
+                            (:resources node) (assoc :resources (:resources node)))))
             :edges (vec (for [[from node] (:states workflow)
                               tr (spec/transitions node)
                               :when (:next tr)]

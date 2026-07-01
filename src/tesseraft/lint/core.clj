@@ -96,6 +96,85 @@
         (warn :unreachable-state [:states id]
               (str "State is unreachable from initial state: " id))))))
 
+(defn normalize-resource-value [x]
+  (cond
+    (keyword? x) (name x)
+    (string? x) x
+    :else x))
+
+(defn normalize-resource-mode [mode]
+  (when (or (keyword? mode) (string? mode))
+    (keyword (normalize-resource-value mode))))
+
+(defn duplicate-resource-key [group resource]
+  (mapv normalize-resource-value [group (:kind resource) (:name resource) (:path resource)]))
+
+(defn resource-entry-checks [group path resource]
+  (if-not (map? resource)
+    [(err :resource-not-map path "Resource declaration must be a map")]
+    (concat
+      (when-not (contains? resource :kind)
+        [(err :resource-missing-kind (conj path :kind)
+              "Resource declaration must include :kind")])
+      (when-not (contains? resource :name)
+        [(err :resource-missing-name (conj path :name)
+              "Resource declaration must include :name")])
+      (for [field (keys resource)
+            :when (not (contains? spec/resource-fields field))]
+        (err :resource-unknown-field (conj path field)
+             (str "Unknown resource field " field)))
+      (when (and (contains? resource :mode)
+                 (not (contains? spec/resource-modes (normalize-resource-mode (:mode resource)))))
+        [(warn :resource-unknown-mode (conj path :mode)
+               (str "Unknown resource mode " (:mode resource)))])
+      (when (and (contains? resource :path)
+                 (not (spec/safe-relative-path? (:path resource))))
+        [(err :invalid-resource-path (conj path :path)
+              (str "Resource paths must be safe relative paths: " (:path resource)))])
+      (when (and (= group :produces)
+                 (contains? resource :schema)
+                 (not (spec/safe-relative-path? (:schema resource))))
+        [(err :invalid-resource-path (conj path :schema)
+              (str "Resource schemas must be safe relative paths: " (:schema resource)))]))))
+
+(defn resource-group-checks [base-path group entries]
+  (if-not (vector? entries)
+    [(err :resource-group-not-vector (conj base-path group)
+          (str "Resource group " group " must be a vector"))]
+    (let [entry-diags (apply concat
+                             (for [[idx resource] (map-indexed vector entries)]
+                               (resource-entry-checks group (conj base-path group idx) resource)))
+          duplicates (->> entries
+                          (filter map?)
+                          (group-by #(duplicate-resource-key group %))
+                          (filter (fn [[_ xs]] (> (count xs) 1))))]
+      (concat
+        entry-diags
+        (for [[k _] duplicates]
+          (warn :duplicate-resource-declaration (conj base-path group)
+                (str "Duplicate resource declaration " (pr-str k))))))))
+
+(defn resource-declaration-checks [base-path resources]
+  (cond
+    (nil? resources) []
+    (not (map? resources)) [(err :resources-not-map base-path ":resources must be a map")]
+    :else
+    (concat
+      (for [group (keys resources)
+            :when (not (contains? spec/resource-groups group))]
+        (warn :resource-unknown-group (conj base-path group)
+              (str "Unknown resource group " group "; expected one of :requires, :consumes, or :produces")))
+      (apply concat
+             (for [group spec/resource-groups
+                   :when (contains? resources group)]
+               (resource-group-checks base-path group (get resources group)))))))
+
+(defn workflow-resource-checks [wf]
+  (apply concat
+         (for [[id n] (:states wf)
+               :when (map? n)]
+           (resource-declaration-checks [:states id :resources] (:resources n)))))
+
 (defn path-contract-checks [wf id node]
   (apply concat
          (for [[out-key contract] (spec/output-contracts node)]
@@ -283,6 +362,7 @@
                                     (reachability-checks wf)
                                     (node-contract-checks wf opts)
                                     (duplicate-output-checks wf)
+                                    (workflow-resource-checks wf)
                                     (cycle-checks wf)
                                     (template-var-checks wf)
                                     (policy-checks wf))))
@@ -451,6 +531,11 @@
         (err :unknown-template-root [:templates]
              (str "Unknown template variable namespace in {{" v "}}"))))))
 
+(defn node-package-resource-checks [pkg]
+  (concat
+    (resource-declaration-checks [:requirements :resources] (get-in pkg [:requirements :resources]))
+    (resource-declaration-checks [:node :resources] (get-in pkg [:node :resources]))))
+
 (defn lint-node-package
   ([pkg] (lint-node-package pkg {}))
   ([pkg opts]
@@ -458,6 +543,7 @@
                                   (concat
                                     (node-package-top-level-checks pkg)
                                     (node-package-node-checks pkg opts)
+                                    (node-package-resource-checks pkg)
                                     (node-package-asset-checks pkg)
                                     (node-package-template-var-checks pkg))))
          strict? (:strict opts)

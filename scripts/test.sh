@@ -230,6 +230,38 @@ fi
 rm -f /tmp/tesseraft-invalid-lint.out
 
 set +e
+./bin/tesseraft lint test/fixtures/invalid/malformed-resources.workflow.edn >/tmp/tesseraft-invalid-resources-lint.out 2>&1
+invalid_resources_status=$?
+set -e
+if [[ "$invalid_resources_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-invalid-resources-lint.out >&2
+  echo "Expected invalid resource fixture lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "resource-group-not-vector\|resource-missing-name\|resource-unknown-field\|invalid-resource-path" /tmp/tesseraft-invalid-resources-lint.out; then
+  cat /tmp/tesseraft-invalid-resources-lint.out >&2
+  echo "Expected invalid resource fixture to report resource diagnostics" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-invalid-resources-lint.out
+
+set +e
+./bin/tesseraft lint test/fixtures/invalid/resource-warnings.workflow.edn --strict >/tmp/tesseraft-resource-warnings-lint.out 2>&1
+resource_warnings_status=$?
+set -e
+if [[ "$resource_warnings_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-resource-warnings-lint.out >&2
+  echo "Expected strict resource warning fixture lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "resource-unknown-mode" /tmp/tesseraft-resource-warnings-lint.out || ! grep -q "duplicate-resource-declaration" /tmp/tesseraft-resource-warnings-lint.out; then
+  cat /tmp/tesseraft-resource-warnings-lint.out >&2
+  echo "Expected resource warning fixture to report unknown mode and duplicate declaration" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-resource-warnings-lint.out
+
+set +e
 ./bin/tesseraft node lint test/fixtures/invalid/missing-node-asset/node.edn >/tmp/tesseraft-invalid-node-lint.out 2>&1
 invalid_node_status=$?
 set -e
@@ -244,5 +276,37 @@ if ! grep -q "asset-missing\|prompt-template-missing" /tmp/tesseraft-invalid-nod
   exit 1
 fi
 rm -f /tmp/tesseraft-invalid-node-lint.out
+
+set +e
+./bin/tesseraft node lint test/fixtures/invalid/malformed-resource-node/node.edn >/tmp/tesseraft-invalid-resource-node-lint.out 2>&1
+invalid_resource_node_status=$?
+set -e
+if [[ "$invalid_resource_node_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-invalid-resource-node-lint.out >&2
+  echo "Expected invalid resource node fixture lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "resource-not-map" /tmp/tesseraft-invalid-resource-node-lint.out; then
+  cat /tmp/tesseraft-invalid-resource-node-lint.out >&2
+  echo "Expected invalid resource node fixture to report resource-not-map" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-invalid-resource-node-lint.out
+
+set +e
+./bin/tesseraft node lint test/fixtures/invalid/resource-warning-node/node.edn --strict >/tmp/tesseraft-resource-warning-node-lint.out 2>&1
+resource_warning_node_status=$?
+set -e
+if [[ "$resource_warning_node_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-resource-warning-node-lint.out >&2
+  echo "Expected strict resource warning node fixture lint to fail" >&2
+  exit 1
+fi
+if ! grep -q "resource-unknown-mode" /tmp/tesseraft-resource-warning-node-lint.out || ! grep -q "duplicate-resource-declaration" /tmp/tesseraft-resource-warning-node-lint.out; then
+  cat /tmp/tesseraft-resource-warning-node-lint.out >&2
+  echo "Expected resource warning node fixture to report unknown mode and duplicate declaration" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-resource-warning-node-lint.out
 
 echo "Smoke checks passed."

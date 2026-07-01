@@ -129,12 +129,27 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const workflows = await workflowsResponse.json();
   assert.ok(workflows.workflows.some((workflow) => workflow.name === 'smoke-demo'));
 
+  const reviewLoopResponse = await fetch(`${base}/api/workflows/review-loop`);
+  assert.equal(reviewLoopResponse.status, 200);
+  const reviewLoopDetail = await reviewLoopResponse.json();
+  const executeState = reviewLoopDetail.workflow.normalized.states.execute;
+  assert.equal(executeState.resources.requires[0].kind, 'worktree');
+  assert.ok(executeState.resources.produces.some((resource) => resource.name === 'execution-status'));
+
   const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
   assert.equal(graphResponse.status, 200);
   const graph = await graphResponse.json();
   assert.equal(graph.workflow_name, 'smoke-demo');
   assert.ok(graph.nodes.some((node) => node.id === 'start'));
   assert.ok(graph.edges.some((edge) => edge.from === 'start' && edge.to === 'done'));
+
+  const reviewLoopGraphResponse = await fetch(`${base}/api/workflows/review-loop/graph`);
+  assert.equal(reviewLoopGraphResponse.status, 200);
+  const reviewLoopGraph = await reviewLoopGraphResponse.json();
+  const executeNode = reviewLoopGraph.nodes.find((node) => node.id === 'execute');
+  assert.ok(executeNode, 'expected review-loop execute graph node');
+  assert.equal(executeNode.resources.requires[0].kind, 'worktree');
+  assert.ok(executeNode.resources.produces.some((resource) => resource.name === 'execution-status'));
 
   const runsResponse = await fetch(`${base}/api/runs`);
   assert.equal(runsResponse.status, 200);
