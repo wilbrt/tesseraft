@@ -5,7 +5,7 @@
     [cheshire.core :as json]))
 
 (defn parse-args [args]
-  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :runs-root ".agent-runs"}]
+  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs"}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -13,6 +13,7 @@
         (case a
           "--workspace-root" (recur more (assoc acc :workspace-root (cli-args/require-value a b)))
           "--workflow-root" (recur more (update acc :workflow-roots conj (cli-args/require-value a b)))
+          "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
           "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
           (if (:command acc)
             (recur rest-xs (update acc :args conj a))
@@ -33,6 +34,7 @@
     (println "Options:")
     (println "  --workspace-root <dir>   Workspace root (default: .)")
     (println "  --workflow-root <dir>    Additional workflow root (default: examples)")
+    (println "  --tesseraft-home <dir>   Global Tesseraft directory (default: $TESSERAFT_HOME or ~/.tesseraft)")
     (println "  --runs-root <dir>        Runs root (default: .agent-runs)"))
   (System/exit 2))
 
@@ -54,7 +56,7 @@
   (try
     (let [opts (parse-args args)
           command (:command opts)
-          options (select-keys opts [:workspace-root :workflow-roots :runs-root])
+          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root])
           result (case command
                    "workflows" (control-plane/list-workflows options)
                    "workflow" (control-plane/get-workflow options (require-arg opts "workflow name"))

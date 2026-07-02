@@ -10,6 +10,7 @@
 (def default-options
   {:workspace-root "."
    :workflow-roots ["examples"]
+   :tesseraft-home nil
    :runs-root ".agent-runs"})
 
 (defn opts [options]
@@ -36,69 +37,133 @@
       (fs/normalize path)
       (fs/normalize (fs/path workspace-root path)))))
 
+(defn path-prefix? [parent child]
+  (let [parent* (str (fs/normalize parent))
+        child* (str (fs/normalize child))]
+    (or (= parent* child*)
+        (str/starts-with? child* (str parent* java.io.File/separator)))))
+
 (defn relative-path [workspace-root p]
   (try
-    (str (fs/relativize (abs-path workspace-root ".") (abs-path workspace-root p)))
+    (let [root (abs-path workspace-root ".")
+          path (abs-path workspace-root p)]
+      (if (path-prefix? root path)
+        (str (fs/relativize root path))
+        (str path)))
     (catch Throwable _
       (str p))))
 
+(defn tesseraft-home [options]
+  (or (:tesseraft-home (opts options))
+      (System/getenv "TESSERAFT_HOME")
+      (str (fs/path (System/getProperty "user.home") ".tesseraft"))))
+
+(defn discovery-roots [options kind]
+  (let [{:keys [workspace-root workflow-roots]} (opts options)
+        root-name (name kind)]
+    (vec
+      (concat
+        (map-indexed
+          (fn [idx root]
+            {:root (abs-path workspace-root root)
+             :source :configured
+             :precedence idx})
+          workflow-roots)
+        [{:root (fs/path (tesseraft-home options) root-name)
+          :source :global
+          :precedence 100}
+         {:root (abs-path workspace-root (fs/path ".tesseraft" root-name))
+          :source :project
+          :precedence 200}]))))
+
+(defn package-files [options kind file-name]
+  (->> (discovery-roots options kind)
+       (mapcat (fn [{:keys [root source precedence]}]
+                 (when (fs/exists? root)
+                   (for [p (file-seq (fs/file root))
+                         :when (and (.isFile p) (= file-name (.getName p)))]
+                     {:file (fs/path p)
+                      :source source
+                      :precedence precedence}))))
+       (remove nil?)
+       (sort-by (juxt :precedence (comp str :file)))
+       vec))
+
 (defn workflow-files [options]
-  (let [{:keys [workspace-root workflow-roots]} (opts options)]
-    (->> workflow-roots
-         (mapcat (fn [root]
-                   (let [dir (abs-path workspace-root root)]
-                     (when (fs/exists? dir)
-                       (for [p (file-seq (fs/file dir))
-                             :when (and (.isFile p) (= "workflow.edn" (.getName p)))]
-                         (fs/path p))))))
-         (remove nil?)
-         (sort-by str)
-         vec)))
+  (mapv :file (package-files options :workflows "workflow.edn")))
+
+(defn workflow-file-entries [options]
+  (package-files options :workflows "workflow.edn"))
 
 (defn lint-summary [lint-result]
   {:ok (:ok lint-result)
    :errors (count (:errors lint-result))
    :warnings (count (:warnings lint-result))})
 
-(defn read-workflow-entry [options workflow-file]
+(defn read-workflow-entry [options workflow-entry]
   (let [{:keys [workspace-root]} (opts options)
+        workflow-file (if (map? workflow-entry) (:file workflow-entry) workflow-entry)
+        source (if (map? workflow-entry) (:source workflow-entry) :configured)
         lint-result (lint/lint-file workflow-file)]
     (try
       (let [wf (spec/read-workflow workflow-file)]
         {:name (str (spec/workflow-name wf))
          :path (relative-path workspace-root workflow-file)
+         :source source
          :api_version (:api-version wf)
          :lint (lint-summary lint-result)})
       (catch Throwable t
         {:name nil
          :path (relative-path workspace-root workflow-file)
+         :source source
          :api_version nil
          :lint (lint-summary lint-result)
          :error {:code "parse_error" :message (.getMessage t)}}))))
+
+(defn entry-name [entry]
+  (try
+    (str (spec/workflow-name (spec/read-workflow (:file entry))))
+    (catch Throwable _ nil)))
+
+(defn select-visible-workflow-entries [entries]
+  (->> entries
+       (group-by entry-name)
+       (mapcat (fn [[name same-name]]
+                 (if (nil? name)
+                   same-name
+                   (let [max-precedence (apply max (map :precedence same-name))]
+                     (filter #(= max-precedence (:precedence %)) same-name)))))
+       (sort-by (juxt (comp str entry-name) (comp str :file)))
+       vec))
 
 (defn list-workflows
   ([] (list-workflows {}))
   ([options]
    {:workflows (mapv #(api-value (read-workflow-entry options %))
-                     (workflow-files options))}))
+                     (select-visible-workflow-entries (workflow-file-entries options)))}))
 
 (defn workflow-candidates [options name]
-  (->> (workflow-files options)
+  (->> (workflow-file-entries options)
        (keep (fn [p]
                (try
-                 (let [wf (spec/read-workflow p)]
+                 (let [wf (spec/read-workflow (:file p))]
                    (when (= (str name) (str (spec/workflow-name wf)))
-                     {:file p :workflow wf}))
+                     {:file (:file p)
+                      :source (:source p)
+                      :precedence (:precedence p)
+                      :workflow wf}))
                  (catch Throwable _ nil))))
        vec))
 
 (defn resolve-workflow [options name]
-  (let [matches (workflow-candidates options name)]
+  (let [matches (workflow-candidates options name)
+        max-precedence (when (seq matches) (apply max (map :precedence matches)))
+        visible-matches (filter #(= max-precedence (:precedence %)) matches)]
     (cond
-      (empty? matches) (error-response 404 "not_found" "Workflow not found" {:name name})
-      (> (count matches) 1) (error-response 409 "conflict" "Multiple workflows share this name"
-                                            {:name name :paths (mapv #(relative-path (:workspace-root (opts options)) (:file %)) matches)})
-      :else (first matches))))
+      (empty? visible-matches) (error-response 404 "not_found" "Workflow not found" {:name name})
+      (> (count visible-matches) 1) (error-response 409 "conflict" "Multiple workflows share this name"
+                                                    {:name name :paths (mapv #(relative-path (:workspace-root (opts options)) (:file %)) visible-matches)})
+      :else (first visible-matches))))
 
 (defn get-workflow
   ([] (get-workflow {} nil))
@@ -112,6 +177,7 @@
          (api-value
            {:workflow {:name (str (spec/workflow-name workflow))
                        :path (relative-path workspace-root file)
+                       :source (:source resolved)
                        :api_version (:api-version workflow)
                        :normalized (dissoc workflow :__file :__dir)
                        :lint lint-result}}))))))

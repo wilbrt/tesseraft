@@ -76,7 +76,9 @@ Suggested statuses:
 
 Purpose: list workflow packages available to the local control plane.
 
-Source data: configured workflow roots, `workflow.edn` files, parsed metadata, and optional linter summaries.
+Source data: configured workflow roots, project-local `.tesseraft/workflows`, global `~/.tesseraft/workflows`, `workflow.edn` files, parsed metadata, and optional linter summaries. `TESSERAFT_HOME` or `--tesseraft-home` may override the global directory.
+
+Default discovery order is examples, global workflows, then project workflows. If multiple workflows share the same metadata name, the highest-precedence source is visible; duplicate names at the same precedence are reported as conflicts when resolving a single workflow.
 
 Response sketch:
 
@@ -86,6 +88,7 @@ Response sketch:
     {
       "name": "review-loop",
       "path": "examples/review-loop/workflow.edn",
+      "source": "configured",
       "api_version": "tesseraft.workflow/v1",
       "lint": {"ok": true, "errors": 0, "warnings": 0}
     }
@@ -112,6 +115,7 @@ Response sketch:
   "workflow": {
     "name": "review-loop",
     "path": "examples/review-loop/workflow.edn",
+    "source": "configured",
     "api_version": "tesseraft.workflow/v1",
     "normalized": {},
     "lint": {"ok": true, "errors": [], "warnings": [], "diagnostics": []}

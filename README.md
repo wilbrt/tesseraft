@@ -67,6 +67,12 @@ This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr 
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ```
 
+## Local package locations
+
+Keep project-specific workflow packages under `.tesseraft/workflows/<name>/workflow.edn` in the repository root. Keep global workflow packages under `~/.tesseraft/workflows/<name>/workflow.edn`. The control-plane and Web UI discover examples first, then global workflows, then project workflows; project-local workflow names override matching global or example names.
+
+Keep reusable node packages beside them using the same scope convention: `.tesseraft/nodes/<name>/node.edn` for project nodes and `~/.tesseraft/nodes/<name>/node.edn` for global nodes. Node import/export commands still take explicit `node.edn` paths.
+
 ## Git branch and worktree modes
 
 Tesseraft keeps the existing branch mode via `:git/ensure-branch`, which checks out the selected branch in `{{inputs.repo-root}}`. For isolated agent edits, use `:git/ensure-worktree` instead. It creates or reuses a deterministic worktree under `.agent-worktrees/<workflow>-<run-id>-<branch>`, writes the path artifact (default `worktree/path.txt`), and stores the path in `{{run.worktree-dir}}` for later nodes.

@@ -136,6 +136,12 @@ node-repo/
 
 Repository commands should come after local package lint/import/export are stable.
 
+## Local package locations
+
+Project-specific node packages should live under `.tesseraft/nodes/<name>/node.edn` in the repository root. Global node packages should live under `~/.tesseraft/nodes/<name>/node.edn`; set `TESSERAFT_HOME` when a different global Tesseraft directory is needed for tests or isolated tooling.
+
+Workflow packages use the parallel convention `.tesseraft/workflows/<name>/workflow.edn` and `~/.tesseraft/workflows/<name>/workflow.edn`. The control-plane and Web UI discover workflows from examples, then global packages, then project packages, with project-local workflow names taking precedence.
+
 ## Local CLI
 
 Validate a node package:

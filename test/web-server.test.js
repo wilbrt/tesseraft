@@ -98,6 +98,43 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
+test('control-plane discovers project and global Tesseraft workflows', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-project-'));
+  const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-home-'));
+  const workflowEdn = (name, title) => [
+    '{:api-version "tesseraft.workflow/v1"',
+    ' :kind :workflow',
+    ` :metadata {:name "${name}" :title "${title}"}`,
+    ' :initial :done',
+    ' :states {:done {:type :terminal}}}'
+  ].join('\n');
+
+  try {
+    fs.mkdirSync(path.join(root, '.tesseraft', 'workflows', 'shared'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'workflows', 'shared'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'workflows', 'global-only'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tesseraft', 'workflows', 'shared', 'workflow.edn'), workflowEdn('shared-demo', 'Project Shared'));
+    fs.writeFileSync(path.join(home, 'workflows', 'shared', 'workflow.edn'), workflowEdn('shared-demo', 'Global Shared'));
+    fs.writeFileSync(path.join(home, 'workflows', 'global-only', 'workflow.edn'), workflowEdn('global-demo', 'Global Only'));
+
+    const workflows = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, 'workflows'], { encoding: 'utf8' }));
+    const shared = workflows.workflows.find((workflow) => workflow.name === 'shared-demo');
+    const globalOnly = workflows.workflows.find((workflow) => workflow.name === 'global-demo');
+    assert.equal(shared.source, 'project');
+    assert.equal(shared.path, path.join('.tesseraft', 'workflows', 'shared', 'workflow.edn'));
+    assert.equal(globalOnly.source, 'global');
+    assert.equal(globalOnly.path, path.join(home, 'workflows', 'global-only', 'workflow.edn'));
+    assert.equal(workflows.workflows.filter((workflow) => workflow.name === 'shared-demo').length, 1);
+
+    const detail = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, 'workflow', 'shared-demo'], { encoding: 'utf8' }));
+    assert.equal(detail.workflow.source, 'project');
+    assert.equal(detail.workflow.normalized.metadata.title, 'Project Shared');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('web server serves React index/assets and JSON API routes', async (t) => {
   removeRun('web-server-test');
   t.after(() => removeRun('web-server-test'));

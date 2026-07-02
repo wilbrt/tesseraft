@@ -1,4 +1,5 @@
 .pi/
+.tesseraft/
 .agent-runs/
 node_modules/
 
