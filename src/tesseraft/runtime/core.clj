@@ -286,19 +286,69 @@
             (assoc-in [:run :updated-at] (store/now))))
       ctx)))
 
+(defn read-run-events [ctx]
+  (let [p (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
+    (when (fs/exists? p)
+      (->> (str/split-lines (slurp (str p)))
+           (remove str/blank?)
+           (keep #(try (json/parse-string % true) (catch Throwable _ nil)))
+           vec))))
+
+(defn orphaned-current-attempt? [ctx state-id attempt]
+  "True if the events.jsonl shows a node.started for this state+attempt with no
+  matching node.finished/node.failed/node.orphaned, which means a prior step
+  started this node but never recorded a terminal event (the resume process was
+  killed/torn down mid-node). Used in step! to FAIL FAST with node.orphaned
+  instead of silently re-running and duplicating node.started."
+  (let [events (read-run-events ctx)
+        started? (some #(and (= "node.started" (:event %))
+                             (= (name state-id) (:state %))
+                             (= attempt (:attempt %)))
+                       events)
+        terminal? (some #(and (#{"node.finished" "node.failed" "node.orphaned"} (:event %))
+                               (= (name state-id) (:state %))
+                               (= attempt (:attempt %)))
+                        events)]
+    (and started? (not terminal?))))
+
+(defn orphan-run! [ctx state-id attempt]
+  (let [failed (-> ctx
+                   (assoc-in [:run :status] "failed")
+                   (assoc-in [:run :updated-at] (store/now)))]
+    (store/event! failed {:event "node.orphaned"
+                          :state (name state-id)
+                          :attempt attempt
+                          :status "error"
+                          :error "Node was started but never reached a terminal event; the run process was likely killed mid-execution."})
+    (store/save-context! failed)
+    failed))
+
 (defn step! [wf ctx]
   (if (= "done" (get-in ctx [:run :status]))
     ctx
     (let [state-id (get-in ctx [:run :state])
+          attempt (get-in ctx [:run :attempt])
           node (spec/node wf state-id)]
       (when-not node (throw (ex-info "Current state not found" {:state state-id})))
       (if (= :terminal (:type node))
         (finish-if-terminal wf ctx)
-        (let [result (or (recover-completed-agent-node ctx state-id node)
-                         (execute-node! wf ctx state-id node))
-              tr (choose-transition node result)]
-          (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
-          (finish-if-terminal wf (advance ctx tr result)))))))
+        ;; Recovery (existing path) handles a completed agent node whose status
+        ;; artifact exists. If recovery returns nil, check for an orphan: a
+        ;; prior node.started with no terminal event means the resume process
+        ;; was killed mid-node. Fail fast with node.orphaned instead of
+        ;; silently re-running and duplicating node.started.
+        (if-let [recovered (recover-completed-agent-node ctx state-id node)]
+          (let [tr (choose-transition node recovered)]
+            (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
+            (finish-if-terminal wf (advance ctx tr recovered)))
+          (if (orphaned-current-attempt? ctx state-id attempt)
+            (let [failed (orphan-run! ctx state-id attempt)]
+              (throw (ex-info "Orphaned node detected: started without a terminal event"
+                              {:state state-id :attempt attempt :tesseraft/already-failed true})))
+            (let [result (execute-node! wf ctx state-id node)
+                  tr (choose-transition node result)]
+              (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
+              (finish-if-terminal wf (advance ctx tr result)))))))))
 
 (defn assert-lint-ok! [workflow-file]
   (let [result (lint/lint-file workflow-file)]
@@ -314,7 +364,18 @@
 
 (defn run-until-done! [wf ctx max-steps]
   (loop [ctx (store/save-context! (store/ensure-run-dirs! ctx)) n 0]
+    ;; Hard invariant guard: never exceed the step budget. This should never
+    ;; fire in normal operation because the pre-check below stops the loop
+    ;; before starting a node the budget cannot let finish.
     (when (> n max-steps) (throw (ex-info "Exceeded max steps" {:max-steps max-steps})))
     (if (= "done" (get-in ctx [:run :status]))
       ctx
-      (recur (store/save-context! (step! wf ctx)) (inc n)))))
+      ;; Pre-check: stop cleanly (park) before starting a node we cannot let
+      ;; finish. max-steps is the number of steps we are allowed to start.
+      ;; n is the number of steps already started. If (= n max-steps) the
+      ;; budget is exhausted, so park instead of advancing. This prevents a
+      ;; bounded `resume --max-steps N` from starting a node and then being
+      ;; torn down mid-flight, which would orphan an in-flight node.
+      (if (>= n max-steps)
+        ctx
+        (recur (store/save-context! (step! wf ctx)) (inc n))))))

@@ -224,21 +224,80 @@
 (defn run-dir-from-state-file [state-file]
   (fs/parent state-file))
 
+(defn staleness-threshold-seconds
+  "Configurable staleness threshold (seconds). Default 120s. Override with the
+  TESSERAFT_STALE_THRESHOLD_SECONDS environment variable. Kept out of CLI
+  arg parsing to avoid breaking existing callers."
+  []
+  (or (some-> (System/getenv "TESSERAFT_STALE_THRESHOLD_SECONDS")
+              (parse-long)
+              (#(when (and % (pos? %)) %)))
+      120))
+
+(defn ^:private parse-instant
+  ^java.time.Instant [s]
+  (when (and s (string? s))
+    (try (java.time.Instant/parse s) (catch Throwable _ nil))))
+
+(defn seconds-since
+  "Whole seconds between an ISO-8601 timestamp and now, or nil if unparseable."
+  [s]
+  (when-let [t (parse-instant s)]
+    (.getSeconds (java.time.Duration/between t (java.time.Instant/now)))))
+
+(defn derive-liveness
+  "Additive, read-only heuristic liveness for a run. Returns a map with
+  :liveness (one of done/failed/orphaned/stale/executing/parked) and
+  :staleness_seconds. attempts may be empty for a cheap derivation; an empty
+  attempts seq means we cannot see an in-flight node, so a fresh running run is
+  reported as parked and a stale one as stale (acceptable for the Runs list).
+  The full get-run path supplies real attempts so orphaned/executing are
+  distinguished."
+  [summary attempts]
+  (let [status (:status summary)
+        state-name (when (:state summary) (name (:state summary)))
+        non-terminal (not (#{"done" "failed" "error"} (str status)))
+        staleness-s (when non-terminal (seconds-since (:updated_at summary)))
+        threshold (staleness-threshold-seconds)
+        stale? (and staleness-s (>= staleness-s threshold))
+        current-running (when (and non-terminal state-name (seq attempts))
+                          (->> attempts
+                               (filter #(and (= state-name (str (:state %)))
+                                             (= "running" (:status %))))
+                               first))]
+    {:liveness
+     (cond
+       (= "done" (str status)) "done"
+       (#{"failed" "error"} (str status)) "failed"
+       current-running (if stale? "orphaned" "executing")
+       stale? "stale"
+       :else "parked")
+     :staleness_seconds staleness-s}))
+
 (defn run-summary [options state-file]
   (let [{:keys [workspace-root]} (opts options)
         ctx (store/load-context (run-dir-from-state-file state-file))
         run (:run ctx)
-        workflow (:workflow ctx)]
-    {:run_id (or (:id run) (str (fs/file-name (run-dir-from-state-file state-file))))
-     :workflow_name (:name workflow)
-     :workflow_version (:version workflow)
-     :state (:state run)
-     :status (:status run)
-     :round (:round run)
-     :attempt (:attempt run)
-     :created_at (:created-at run)
-     :updated_at (:updated-at run)
-     :path (relative-path workspace-root (run-dir-from-state-file state-file))}))
+        workflow (:workflow ctx)
+        summary {:run_id (or (:id run) (str (fs/file-name (run-dir-from-state-file state-file))))
+                 :workflow_name (:name workflow)
+                 :workflow_version (:version workflow)
+                 :state (:state run)
+                 :status (:status run)
+                 :round (:round run)
+                 :attempt (:attempt run)
+                 :created_at (:created-at run)
+                 :updated_at (:updated-at run)
+                 :path (relative-path workspace-root (run-dir-from-state-file state-file))}
+        ;; Cheap liveness for the Runs list: no attempts are derived here
+        ;; (derive-attempts-from-events is defined later in this namespace and
+        ;; babashka resolves defn-body symbols eagerly, so a forward reference
+        ;; would fail). Empty attempts yields done/failed/stale/parked, which is
+        ;; enough to surface dead/stale runs in the list (ISSUE 4). The detail
+        ;; endpoint get-run recomputes liveness with real attempts to add
+        ;; orphaned/executing.
+        liveness (derive-liveness summary [])]
+    (merge summary liveness)))
 
 (defn list-runs
   ([] (list-runs {}))
@@ -359,6 +418,16 @@
                                        :result result)
                           (or (:error event) (result-error-summary result))
                           (assoc :error (or (:error event) (result-error-summary result))))]
+            (recur (rest events) (dissoc active state) (conj acc attempt)))
+          "node.orphaned"
+          (let [state (:state event)
+                current (or (get active state) {:attempt (or (:attempt event) (inc (count acc))) :node_id state :state state})
+                attempt (cond-> (assoc current
+                                       :finished_at (:at event)
+                                       :status "error"
+                                       :result (:result event))
+                          (or (:error event) "orphaned")
+                          (assoc :error (or (:error event) "orphaned")))]
             (recur (rest events) (dissoc active state) (conj acc attempt)))
           "transition.selected"
           (let [from (:from event)]
@@ -565,13 +634,18 @@
              run-id (:run_id summary)
              events (read-events-file (events-file run-dir))
              attempts (if (:error events) [] (attempts-from-context context events))
-             artifacts (if (:error events) [] (list-artifacts* context run-dir events))]
+             artifacts (if (:error events) [] (list-artifacts* context run-dir events))
+             ;; Recompute liveness with real attempts so the detail view can
+             ;; distinguish orphaned/executing from parked/stale (ISSUES 3, 5).
+             live (derive-liveness summary attempts)]
          (api-value
-           {:run (assoc summary
-                        :attempts attempts
-                        :failures (failures-from-run summary attempts artifacts)
-                        :links {:events (str "/runs/" run-id "/events")
-                                :artifacts (str "/runs/" run-id "/artifacts")})}))))))
+           {:run (-> summary
+                     (assoc :liveness (:liveness live)
+                            :staleness_seconds (:staleness_seconds live)
+                            :attempts attempts
+                            :failures (failures-from-run summary attempts artifacts)
+                            :links {:events (str "/runs/" run-id "/events")
+                                    :artifacts (str "/runs/" run-id "/artifacts")}))}))))))
 
 (defn get-run-events
   ([] (get-run-events {} nil))

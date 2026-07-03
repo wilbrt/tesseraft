@@ -1,16 +1,21 @@
 import type { Attempt, EventRecord, RunDetail, RunSummary } from '../types/runConsole';
-import { eventName, isActiveRun, nodeForEvent, snippet } from '../lib/runConsole';
+import { eventName, isActiveRun, isTerminalLiveness, livenessPillClass, nodeForEvent, snippet, stalenessLabel } from '../lib/runConsole';
 import { ArtifactBrowser } from './ArtifactBrowser';
 import { FieldList } from './FieldList';
 
 export const FailureSummary = ({ run }: { run: RunDetail | null }) => {
   const failures = run?.failures || [];
-  if (!run || (failures.length === 0 && !['failed', 'error'].includes(run.status || ''))) return null;
+  const statusFailed = ['failed', 'error'].includes(run?.status || '');
+  const liveness = run?.liveness;
+  const livenesstaleOrphan = liveness === 'orphaned' || liveness === 'stale';
+  if (!run || (failures.length === 0 && !statusFailed && !livenesstaleOrphan)) return null;
   return (
-    <div className="failure-summary" aria-label="Run failure summary">
+    <div className={`failure-summary ${livenesstaleOrphan ? 'warning strong' : ''}`} aria-label="Run failure summary">
       <strong>Issues to inspect</strong>
       <ul>
-        {['failed', 'error'].includes(run.status || '') && <li>Run status: {run.status}</li>}
+        {statusFailed && <li>Run status: {run.status}</li>}
+        {liveness === 'orphaned' && <li>Run node appears orphaned: started without finishing and no live progress.</li>}
+        {liveness === 'stale' && <li>Run appears stale: marked running but no recent activity.</li>}
         {failures.map((failure, index) => <li key={`${failure.source || 'failure'}-${index}`}>{failure.message || failure.path || failure.node_id}</li>)}
       </ul>
     </div>
@@ -63,10 +68,12 @@ export const RunsPanel = ({ runs, selectedRun, runDetail, events, artifacts, run
           {runs.data.length === 0 && <li className="muted">No runs found. Run a workflow locally to populate this list.</li>}
           {runs.data.map((run) => {
             const selected = run.run_id === selectedRun;
+            const liveness = run.liveness;
+            const staleBadge = liveness != null && !isTerminalLiveness(liveness) && liveness !== 'executing';
             return (
               <li key={run.run_id} className={selected ? 'selected-row' : undefined} aria-current={selected ? 'true' : undefined}>
                 <button type="button" onClick={() => onSelectRun(run.run_id)}>{run.run_id}</button>
-                <span>{run.workflow_name} — <span className={`status-pill ${run.status || 'unknown'}`}>{run.status}</span></span>
+                <span>{run.workflow_name} — <span className={`status-pill ${livenessPillClass(run)}`}>{liveness || run.status || 'unknown'}</span>{staleBadge && stalenessLabel(run.staleness_seconds) ? <span className={`status-pill ${liveness}`}>{stalenessLabel(run.staleness_seconds)}</span> : null}</span>
               </li>
             );
           })}
@@ -76,7 +83,7 @@ export const RunsPanel = ({ runs, selectedRun, runDetail, events, artifacts, run
         <h2>Run detail</h2>
         {runError && <div className="error">{runError}</div>}
         {!runDetail && !runError && <div className="empty">{selectedRun ? 'Loading run...' : 'Select a run.'}</div>}
-        {runDetail && <FieldList fields={[["Run ID", runDetail.run_id], ["Workflow", runDetail.workflow_name], ["Status", runDetail.status], ["State", runDetail.state], ["Round / attempt", `${runDetail.round ?? ''} / ${runDetail.attempt ?? ''}`], ["Path", runDetail.path], ["Event filter", selectedNodeId ? `Graph node: ${selectedNodeId}` : 'All events'], ["Auto-refresh", isActiveRun(runDetail) ? `Active, last refresh ${lastRunRefresh || 'pending'}` : 'Inactive']]} />}
+        {runDetail && <FieldList fields={[["Run ID", runDetail.run_id], ["Workflow", runDetail.workflow_name], ["Status", runDetail.status], ["Liveness", runDetail.liveness || 'unknown'], ["Last update", stalenessLabel(runDetail.staleness_seconds) || runDetail.updated_at || 'unknown'], ["State", runDetail.state], ["Round / attempt", `${runDetail.round ?? ''} / ${runDetail.attempt ?? ''}`], ["Path", runDetail.path], ["Event filter", selectedNodeId ? `Graph node: ${selectedNodeId}` : 'All events'], ["Auto-refresh", isActiveRun(runDetail) ? `Active, last refresh ${lastRunRefresh || 'pending'}` : 'Inactive']]} />}
         <FailureSummary run={runDetail} />
         <AttemptTimeline attempts={runDetail?.attempts || []} selectedNodeId={selectedNodeId} />
         <ArtifactBrowser runId={selectedRun} artifacts={artifacts} selectedNodeId={selectedNodeId} />
