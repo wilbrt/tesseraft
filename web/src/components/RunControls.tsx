@@ -47,8 +47,27 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
   const startRun = async (payload: StartPayload): Promise<MutationResult> => {
     setRunId(payload.run_id);
     setMaxSteps(payload.max_steps);
-    await mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: payload.workflow_name, run_id: payload.run_id, inputs: payload.inputs, max_steps: payload.max_steps, ...(payload.git_user ? { git_user: payload.git_user } : {}) }), payload.run_id);
-    return {} as MutationResult;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const data = await postJson<MutationResult>('/api/runs', { workflow_name: payload.workflow_name, run_id: payload.run_id, inputs: payload.inputs, max_steps: payload.max_steps, ...(payload.git_user ? { git_user: payload.git_user } : {}) });
+      setResult(data);
+      await onRefresh(payload.run_id);
+      // Surface non-success outcomes (e.g. a guarded start) to the wizard so it
+      // stays open and preserves the user's configured inputs instead of closing.
+      if (data.status === 'guarded') {
+        const message = (data.cli && typeof data.cli.stderr === 'string' && data.cli.stderr) || `Run start was guarded (${data.code || 'guarded'}).`;
+        throw new Error(message);
+      }
+      return data;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      throw err;
+    } finally {
+      setBusy(false);
+    }
   };
 
   const selectedRunContext = selectedRun ? `${selectedRun}${runDetail?.status ? ` · ${runDetail.status}` : ''}` : 'No run selected';

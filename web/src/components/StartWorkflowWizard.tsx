@@ -123,6 +123,11 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
   const [submitError, setSubmitError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // Keep the latest onClose without depending on its identity, so the focus/
+  // keydown listener mounts once per open transition instead of once per parent
+  // render (RunControls re-renders on every SSE tick via runDetail/selectedRun).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   const inputFields = useMemo<WorkflowInputField[]>(() => Object.entries(workflowDetail?.normalized?.inputs || {}).map(([name, definition]) => ({ name, definition })).sort((a, b) => Number(Boolean(b.definition.required)) - Number(Boolean(a.definition.required)) || a.name.localeCompare(b.name)), [workflowDetail]);
 
@@ -152,12 +157,12 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
       first?.focus();
     }, 0);
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); }
       if (event.key === 'Tab') trapTab(event, dialogRef.current);
     };
     document.addEventListener('keydown', onKey);
     return () => { clearTimeout(t); document.removeEventListener('keydown', onKey); triggerRef.current?.focus(); };
-  }, [open, onClose]);
+  }, [open]);
 
   const loadDetail = async (name: string): Promise<WorkflowDetail | null> => {
     setDetailLoading(true);

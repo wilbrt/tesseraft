@@ -176,6 +176,15 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(wizard, /role="dialog"/);
   assert.match(wizard, /aria-modal/);
   assert.match(api, /export const browsePath = async/);
+  // WW-1: focus/keydown handling must not re-mount on every parent render while
+  // the wizard is open during SSE-driven re-renders. onClose is read from a ref
+  // and the focus-management effect depends only on [open].
+  assert.match(wizard, /onCloseRef/);
+  assert.match(wizard, /\}, \[open\]\);/);
+  // WW-2: a guarded or failed POST /api/runs must reject onStart so the wizard
+  // stays open and preserves configured inputs, rather than closing silently.
+  assert.match(controls, /data\.status === 'guarded'/);
+  assert.match(controls, /Run start was guarded/);
 });
 
 test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
