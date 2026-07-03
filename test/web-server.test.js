@@ -95,6 +95,7 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/runs/smoke-test/events'), ['events', 'smoke-test']);
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifacts'), ['artifacts', 'smoke-test']);
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
+  assert.deepEqual(routeApi('/api/git-user'), ['git-user']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
@@ -473,6 +474,53 @@ test('web server reports not found and malformed API routes as JSON errors', asy
   assert.equal(unknown.status, 404);
   const unknownBody = await unknown.json();
   assert.equal(unknownBody.error.code, 'not_found');
+});
+
+test('web server exposes git-user read and write via the control plane', async (t) => {
+  const configFile = path.join(process.cwd(), '.tesseraft', 'git-user.json');
+  fs.rmSync(configFile, { force: true });
+  t.after(() => fs.rmSync(configFile, { force: true }));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const initial = await fetch(`${base}/api/git-user`);
+  assert.equal(initial.status, 200);
+  const initialBody = await initial.json();
+  assert.equal(initialBody.git_user.source, 'none');
+  assert.equal(initialBody.git_user.name, null);
+
+  const badWrite = await fetch(`${base}/api/git-user`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Bot', email: 'not-an-email' })
+  });
+  assert.equal(badWrite.status, 400);
+  assert.equal((await badWrite.json()).error.code, 'bad_request');
+  assert.equal(fs.existsSync(configFile), false);
+
+  const write = await fetch(`${base}/api/git-user`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Tess Bot', email: 'tess@example.com' })
+  });
+  assert.equal(write.status, 200);
+  const written = await write.json();
+  assert.equal(written.git_user.name, 'Tess Bot');
+  assert.equal(written.git_user.email, 'tess@example.com');
+  assert.equal(written.git_user.source, 'project');
+
+  const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  assert.equal(stored.name, 'Tess Bot');
+  assert.equal(stored.email, 'tess@example.com');
+
+  const refreshed = await fetch(`${base}/api/git-user`);
+  assert.equal(refreshed.status, 200);
+  const refreshedBody = await refreshed.json();
+  assert.equal(refreshedBody.git_user.source, 'project');
+  assert.equal(refreshedBody.git_user.name, 'Tess Bot');
 });
 
 test('control-plane derived attempts do not treat exit code zero as a failure', () => {

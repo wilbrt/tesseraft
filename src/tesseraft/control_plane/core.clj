@@ -657,3 +657,54 @@
          (if (:error events)
            events
            (api-value {:run_id run-id :events events :continuation nil})))))))
+
+(comment
+  ;; git-user config is also consumed by the runtime handlers in
+  ;; tesseraft.adapters.builtin via -c user.name/user.email overrides.
+  )
+
+;; ---- git user config (source of truth: .tesseraft/git-user.json) ----
+;; Defined here (after tesseraft-home) so sci analysis can resolve the
+;; forward reference to tesseraft-home, which discovery-roots also uses.
+
+(defn git-user-paths [options]
+  (let [{:keys [workspace-root]} (opts options)
+        home (tesseraft-home options)]
+    {:project (fs/path workspace-root ".tesseraft" "git-user.json")
+     :global (fs/path home "git-user.json")}))
+
+(defn read-git-user-file [p]
+  (when (fs/exists? p)
+    (try (store/read-json p) (catch Throwable _ nil))))
+
+(defn validate-git-user [name email]
+  (cond
+    (not (string? name)) "name must be a string"
+    (str/blank? (str/trim name)) "name must not be empty"
+    (> (count name) 200) "name must be at most 200 characters"
+    (re-find #"\n" name) "name must not contain newlines"
+    (not (string? email)) "email must be a string"
+    (str/blank? (str/trim email)) "email must not be empty"
+    (re-find #"[\s]" email) "email must not contain whitespace"
+    (not (re-matches #"^[^@]+@[^@]+\.[^@]+$" email)) "email is not a valid address"
+    :else nil))
+
+(defn get-git-user
+  ([] (get-git-user {}))
+  ([options]
+   (let [{:keys [project global]} (git-user-paths options)
+         project-user (read-git-user-file project)
+         global-user (read-git-user-file global)]
+     (cond
+       project-user {:git_user (assoc project-user :source "project")}
+       global-user {:git_user (assoc global-user :source "global")}
+       :else {:git_user {:name nil :email nil :source "none"}}))))
+
+(defn set-git-user [options name email global?]
+  (if-let [err (validate-git-user name email)]
+    (error-response 400 "bad_request" err)
+    (let [paths (git-user-paths options)
+          target (if global? (:global paths) (:project paths))]
+      (fs/create-dirs (fs/parent target))
+      (store/write-json! target {:name name :email email})
+      (get-git-user options))))

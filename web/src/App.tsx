@@ -3,12 +3,13 @@ import { WorkflowPanels } from './components/WorkflowPanels';
 import { RunsPanel } from './components/RunPanels';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
+import { GitUserPanel } from './components/GitUserPanel';
 import { getJson } from './lib/api';
 import { isActiveRun } from './lib/runConsole';
 import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowDetail, WorkflowGraphState, WorkflowSummary } from './types/runConsole';
 import './style.css';
 
-type ActiveTab = 'workflows' | 'runs' | 'pi-sessions';
+type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'git-user';
 type RunSnapshot = { run?: RunDetail; events?: EventRecord[]; artifacts?: Artifact[]; runs?: RunSummary[] };
 
 export const App = () => {
@@ -115,7 +116,8 @@ export const App = () => {
   const activeSectionLabel: Record<ActiveTab, string> = {
     workflows: 'Workflows',
     runs: 'Runs',
-    'pi-sessions': 'Pi Sessions'
+    'pi-sessions': 'Pi Sessions',
+    'git-user': 'Git user'
   };
   const runStatus = runDetail?.status || (selectedRun ? 'loading' : null);
   const streamFreshness = runDetail && isActiveRun(runDetail) ? `Streaming · ${lastRunRefresh || 'pending'}` : 'Stream idle';
@@ -137,6 +139,7 @@ export const App = () => {
           <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} aria-label="Workflows: inspect workflow graphs" onClick={() => setActiveTab('workflows')}>Workflows <span>inspect</span></button>
           <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} aria-label="Runs: operate and inspect run status" onClick={() => setActiveTab('runs')}>Runs <span>operate</span></button>
           <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} aria-label="Pi Sessions: chat with Pi sessions" onClick={() => setActiveTab('pi-sessions')}>Pi Sessions <span>chat</span></button>
+          <button type="button" className={activeTab === 'git-user' ? 'active' : ''} aria-pressed={activeTab === 'git-user'} aria-label="Git user: configure git identity for workflow runs" onClick={() => setActiveTab('git-user')}>Git user <span>config</span></button>
         </nav>
       </header>
       <main>
@@ -147,7 +150,8 @@ export const App = () => {
           <RunsPanel runs={runs} selectedRun={selectedRun} runDetail={runDetail} events={events} artifacts={artifacts} runError={runError} selectedNodeId={selectedNodeId} lastRunRefresh={lastRunRefresh} onSelectRun={selectRun} />
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
-        {activeTab !== 'pi-sessions' && <RunControls selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
+        {activeTab === 'git-user' && <GitUserPanel />}
+        {activeTab !== 'pi-sessions' && activeTab !== 'git-user' && <RunControls selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
       </main>
     </>
   );

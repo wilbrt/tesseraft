@@ -347,6 +347,7 @@ Constraints to preserve later:
 - append `approval.decided` with actor, decision, timestamp, and context supported by the auth model;
 - reject decisions that do not match the active approval request;
 - never store approval decisions only in browser state.
+- git user identity is local workspace config; the config file is authoritative and the browser/UI only round-trips it through the control plane.
 
 ## Security and locality constraints
 
@@ -367,3 +368,19 @@ The first slice is local and single-user, but it still needs safe file boundarie
 - What local authentication, if any, should protect a browser-accessible server bound to localhost?
 - What concurrency/idempotency model should deferred mutation endpoints use?
 - How will a later DB-backed control plane preserve this contract while replacing file-backed persistence?
+
+## Git user identity config
+
+The control plane exposes a local git-user identity (name + email) that Tesseraft workflow runs apply to git operations (branch, worktree, push). It is local workspace runtime config, not workflow behavior: the file is the source of truth and the browser never owns it.
+
+### Config file
+
+`.tesseraft/git-user.json` (project-local) takes precedence over `~/.tesseraft/git-user.json` (`TESSERAFT_HOME` overrides the global path). Shape: `{"name": "...", "email": "..."}`. A missing file means no configured user; handlers fall back to ambient git config (current behavior), so the feature is additive and non-breaking.
+
+### CLI
+
+`tesseraft control-plane git-user` (or `git-user get`) prints `{"git_user": {"name", "email", "source": "project|global|none"}}`. `tesseraft control-plane git-user set --name "..." --email "..." [--global]` validates and writes the file.
+
+### HTTP
+
+`GET /api/git-user` proxies to `git-user get`. `PUT /api/git-user` with body `{"name", "email"}` proxies to `git-user set` (project-local) and returns the refreshed `git_user` object. Validation mirrors the CLI (non-empty name, basic email shape).
