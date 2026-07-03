@@ -221,13 +221,13 @@ test('Artifact comments and approval UI sources expose annotation and decision s
   // Comments pane keyed by artifact path with line-range anchors.
   assert.match(artifactBrowser, /Comments on/);
   assert.match(artifactBrowser, /Add a comment anchored to this artifact/);
-  assert.match(artifactBrowser, /\/api\/runs\/\\$\{encodeURIComponent\(runId\)\}\/comments/);
-  assert.match(artifactBrowser, /postJson\(`\/api\/runs\/\\$\{encodeURIComponent\(runId\)\}\/comments`/);
+  assert.match(artifactBrowser, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments/);
+  assert.match(artifactBrowser, /postJson\(`\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments`/);
   assert.match(artifactBrowser, /start_line/);
   // Approval decision panel wired into Run Console.
   assert.match(approvalPanel, /Manual input · approval/);
   assert.match(approvalPanel, /run is paused at an approval node/);
-  assert.match(approvalPanel, /\/api\/runs\/\\$\{encodeURIComponent\(runId\)\}\/approvals/);
+  assert.match(approvalPanel, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/approvals/);
   assert.match(approvalPanel, /postJson<{/);
   // ApprovalPanel is rendered for the selected run in the runs tab.
   assert.match(app, /<ApprovalPanel runId=\{selectedRun\} onRefresh=\{refreshAfterMutation\}/);

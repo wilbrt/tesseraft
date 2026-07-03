@@ -187,19 +187,21 @@ export const App = () => {
           <WorkflowPanels workflows={workflows} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} graph={graph} selectedNodeId={selectedNodeId} workflowError={workflowError} onSelectWorkflow={selectWorkflow} onSelectNode={setSelectedNodeId} onOpenStudio={(name) => { setStudioWorkflowName(name); setActiveTab('studio'); }} onCreateWorkflow={() => { setStudioWorkflowName(null); setActiveTab('studio'); }} />
         )}
         {activeTab === 'runs' && (
-          <RunListTable
-            runs={runs}
-            expandedRunId={selectedRun}
-            runDetail={runDetail}
-            events={events}
-            artifacts={artifacts}
-            runError={runError}
-            selectedNodeId={selectedNodeId}
-            lastRunRefresh={lastRunRefresh}
-            onToggleRow={handleToggleRow}
-            onSelectNode={setSelectedNodeId}
-          />
-          <ApprovalPanel runId={selectedRun} onRefresh={refreshAfterMutation} />
+          <>
+            <RunListTable
+              runs={runs}
+              expandedRunId={selectedRun}
+              runDetail={runDetail}
+              events={events}
+              artifacts={artifacts}
+              runError={runError}
+              selectedNodeId={selectedNodeId}
+              lastRunRefresh={lastRunRefresh}
+              onToggleRow={handleToggleRow}
+              onSelectNode={setSelectedNodeId}
+            />
+            <ApprovalPanel runId={selectedRun} onRefresh={refreshAfterMutation} />
+          </>
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'settings' && <SettingsPanel />}

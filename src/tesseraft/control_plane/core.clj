@@ -761,7 +761,7 @@
               :run_id run-id
               :deleted true
               :liveness (:liveness live)
-              :path (relative-path (:workspace-root (opts options)) run-dir)}))))))))
+              :path (relative-path (:workspace-root (opts options)) run-dir)})))))))
 
 ;; ---- approvals (manual-input :approval pause/resume) ----
 ;; Run-relative read surfaces for the manual-input node feature. The runtime
@@ -846,9 +846,9 @@
 (defn add-run-comment
   ([] (add-run-comment {} nil nil nil))
   ([options run-id body]
-   (let [{:keys [workspace-root run-id-in-body] :or {workspace-root "."}} (opts options)
+   (let [{:keys [run-id-in-body]} (opts options)
          body (or body {})]
-     (let [resolved (resolve-run {:workspace-root workspace-root} (or run-id run-id-in-body))]
+     (let [resolved (resolve-run options (or run-id run-id-in-body))]
        (if (:error resolved)
          resolved
          (let [artifact-path (or (get body :path) (get body "path"))
@@ -862,7 +862,7 @@
              :else
              (let [cf (comments-file (:run-dir resolved) artifact-path)]
                (if (:error cf) cf
-                 (let [existing (when (fs/exists? cf) (store/read-json cf) [])
+                 (let [existing (if (fs/exists? cf) (store/read-json cf) [])
                        new-c {:id (random-id)
                               :path (str artifact-path)
                               :anchor (when (map? anchor) anchor)

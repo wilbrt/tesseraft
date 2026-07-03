@@ -507,6 +507,27 @@ test('web server exposes approval pause, decide, and resume via the control plan
   assert.equal(listed.comments.length, 1);
   assert.match(listed.comments[0].body, /Tighten scope/);
 
+  // Regression R2-1: appending a SECOND comment on the same artifact must
+  // preserve the first comment and return both, in order. Previously the
+  // append used `(when (fs/exists? cf) (read-json cf) [])`, which dropped the
+  // [] fallback so `existing` was nil on a missing file — masked for the
+  // first comment by `(vec nil)`, but never actually validated for append.
+  const secondCommentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'design/design.md', body: 'Second nit: timeout too short?' })
+  });
+  assert.equal(secondCommentResponse.status, 200);
+  const secondComment = await secondCommentResponse.json();
+  assert.equal(secondComment.comment.path, 'design/design.md');
+
+  const listAfterSecond = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
+  assert.equal(listAfterSecond.status, 200);
+  const listedAfterSecond = await listAfterSecond.json();
+  assert.equal(listedAfterSecond.comments.length, 2);
+  assert.match(listedAfterSecond.comments[0].body, /Tighten scope/);
+  assert.match(listedAfterSecond.comments[1].body, /Second nit/);
+
   // Unsafe path is rejected.
   const unsafeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
     method: 'POST',
@@ -915,4 +936,41 @@ test('POST /api/pi-sessions surfaces pi_settings_resolution failures as 400 {err
   assert.match(body.error.message, /pi auth/);
   assert.equal(typeof body.error.message, 'string');
   assert.ok(body.error.message.length > 0, 'actionable message text is exposed for the UI to render');
+});
+
+test('control-plane comment add appends a second comment to the same artifact (R2-1)', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'comment-append-'));
+  const runDir = path.join(root, 'wf', 'append-run');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "append-run" :status "blocked" :state :gate}}');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '');
+  fs.mkdirSync(path.join(runDir, 'design'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'design', 'design.md'), '# Design\n');
+  const artifact = 'design/design.md';
+
+  try {
+    const first = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'First comment on the artifact'], { encoding: 'utf8' }));
+    assert.equal(first.comment.path, artifact);
+    assert.match(first.comment.body, /First comment/);
+
+    const second = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'Second comment on the artifact'], { encoding: 'utf8' }));
+    assert.equal(second.comment.path, artifact);
+    assert.match(second.comment.body, /Second comment/);
+
+    const listed = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comments', 'append-run', '--path', artifact], { encoding: 'utf8' }));
+    assert.equal(listed.comments.length, 2);
+    assert.match(listed.comments[0].body, /First comment/);
+    assert.match(listed.comments[1].body, /Second comment/);
+
+    // The persisted comment file on disk holds both, in order. comments-file
+    // maps <run-dir>/comments/<safe-path>/.json (the safe path becomes a dir
+    // and .json the file name), so design/design.md -> comments/design/design.md/.json.
+    const persisted = JSON.parse(fs.readFileSync(path.join(runDir, 'comments', artifact, '.json'), 'utf8'));
+    assert.ok(Array.isArray(persisted));
+    assert.equal(persisted.length, 2);
+    assert.match(persisted[0].body, /First comment/);
+    assert.match(persisted[1].body, /Second comment/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
