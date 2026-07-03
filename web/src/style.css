@@ -189,6 +189,32 @@ pre {
 
 @media (max-width: 900px) { main, .artifact-grid, .control-grid, .context-strip { grid-template-columns: minmax(0, 1fr); } }
 
+/* Workflow run wizard */
+.wizard-backdrop { z-index: 50; }
+.wizard { width: min(52rem, 100%); max-height: 88vh; display: flex; flex-direction: column; }
+.wizard-steps { display: flex; gap: 0.5rem; list-style: none; padding: 0; margin: 0 0 0.75rem; }
+.wizard-steps li { font-size: 0.82rem; font-weight: 700; color: #667085; padding: 0.2rem 0.5rem; border-radius: 999px; background: #f1f5f9; }
+.wizard-steps li[aria-current="true"] { color: #1d4ed8; background: #dbeafe; }
+.wizard-step { display: grid; gap: 0.65rem; min-height: 0; overflow: auto; }
+.wizard-step input, .wizard-step textarea, .wizard-step select { font: inherit; border: 1px solid #cbd5e1; border-radius: 0.4rem; padding: 0.45rem; }
+.wizard-step textarea { min-height: 4.5rem; resize: vertical; }
+.wizard-step label { display: grid; gap: 0.25rem; font-weight: 700; }
+.wizard-step h3 { margin: 0; }
+.wizard-workflow-list { max-height: 22rem; overflow: auto; }
+.wizard-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem; }
+.wizard-actions button, .wizard-step .primary { cursor: pointer; border: 0; border-radius: 0.45rem; padding: 0.5rem 0.85rem; background: #1d4ed8; color: white; font-weight: 700; }
+.wizard-actions button:not(.primary) { background: #e2e8f0; color: #172033; }
+.wizard-actions button:disabled { cursor: not-allowed; background: #94a3b8; }
+.path-picker-row { display: flex; gap: 0.4rem; align-items: center; }
+.path-picker-row input { flex: 1; }
+.path-picker { position: relative; }
+.browse-popover { position: relative; margin-top: 0.35rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; background: #f8fafc; padding: 0.5rem; max-height: 16rem; overflow: auto; z-index: 5; }
+.browse-cwd { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.4rem; font-size: 0.82rem; }
+.browse-cwd code { overflow-wrap: anywhere; }
+.browse-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.1rem; }
+.browse-list li { padding: 0.15rem 0; }
+.browse-list button { text-align: left; font-weight: 600; }
+
 @media (max-width: 520px) {
   header { padding: 1rem; }
   main { padding: 0.75rem; }

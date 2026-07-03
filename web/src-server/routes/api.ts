@@ -1,7 +1,10 @@
 import type { Request, Response, Router } from 'express';
 import express from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 import { runControlPlane, runRuntime, startRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
 import { errorBody, jsonResponse, safeDecode } from '../lib/http.js';
+import { ROOT_DIR } from '../lib/paths.js';
 import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/piSessionAdapter.js';
 
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
@@ -11,6 +14,7 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
   const parts = pathname.split('/').filter(Boolean);
   if (parts[0] !== 'api') return null;
   if (parts.length === 2 && parts[1] === 'workflows') return ['workflows'];
+  if (parts.length === 2 && parts[1] === 'browse') return ['browse'];
   if (parts.length === 3 && parts[1] === 'workflows') {
     const name = safeDecode(parts[2]);
     return name === null ? { badRequest: 'Malformed workflow name' } : ['workflow', name];
@@ -93,6 +97,48 @@ const mutationResponse = async (operation: string, runId: string, cli: RuntimeRe
 
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
 const isBasicEmail = (value: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
+
+type BrowseEntry = { name: string; is_dir: boolean; is_file: boolean };
+
+const isUnderRoot = (resolved: string, root: string): boolean => resolved === root || resolved.startsWith(root + path.sep);
+
+const handleBrowse = async (req: Request, res: Response): Promise<void> => {
+  const root = ROOT_DIR;
+  const rawPath = typeof req.query.path === 'string' && req.query.path.trim() !== '' ? req.query.path : '.';
+  const resolved = path.resolve(root, rawPath);
+  if (!isUnderRoot(resolved, root)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Path is outside the allowed root', { root, requested: rawPath }));
+  let real: string;
+  let stat: fs.Stats;
+  try {
+    real = await fs.promises.realpath(resolved);
+    stat = await fs.promises.stat(real);
+  } catch {
+    return jsonResponse(res, 404, errorBody(404, 'not_found', 'Path not found', { path: rawPath }));
+  }
+  if (!isUnderRoot(real, root)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Resolved path is outside the allowed root', { root }));
+  if (!stat.isDirectory()) {
+    return jsonResponse(res, 200, { root, path: real, is_file: true, is_dir: false, entries: [] });
+  }
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(real);
+  } catch {
+    return jsonResponse(res, 200, { root, path: real, is_file: false, is_dir: true, entries: [] });
+  }
+  const entries: BrowseEntry[] = [];
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    let entryStat: fs.Stats;
+    try {
+      entryStat = await fs.promises.stat(path.join(real, name));
+    } catch {
+      continue;
+    }
+    entries.push({ name, is_dir: entryStat.isDirectory(), is_file: entryStat.isFile() });
+  }
+  entries.sort((a, b) => (Number(b.is_dir) - Number(a.is_dir)) || a.name.localeCompare(b.name));
+  return jsonResponse(res, 200, { root, path: real, is_file: false, is_dir: true, entries });
+};
 
 const handleGetGitUser = async (res: Response): Promise<void> => {
   const result = await runControlPlane(['git-user']);
@@ -347,6 +393,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     return void handlePiSessionStream(req, res, piSessionAdapter, sessionId).catch(next);
   });
 
+  router.get('/browse', (req, res, next) => { void handleBrowse(req, res).catch(next); });
   router.get('/git-user', (_req, res, next) => { void handleGetGitUser(res).catch(next); });
   router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
 

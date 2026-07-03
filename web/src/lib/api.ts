@@ -36,6 +36,19 @@ export const putJson = async <T,>(url: string, body: unknown): Promise<T> => {
   return data;
 };
 
+export type BrowseEntry = { name: string; is_dir: boolean; is_file: boolean };
+export type BrowseResult = { root: string; path: string; is_file?: boolean; is_dir?: boolean; entries: BrowseEntry[] };
+
+export const browsePath = async (url: string): Promise<BrowseResult> => {
+  const response = await fetch(url);
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    const message = data.error?.message || `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return data as BrowseResult;
+};
+
 export const deleteJson = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url, { method: 'DELETE' });
   const data = await response.json();

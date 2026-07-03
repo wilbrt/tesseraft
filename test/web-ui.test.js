@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import fs from 'node:fs';
 import { WorkflowGraph, formatCondition } from '../web/src/components/WorkflowGraph.tsx';
 import { layoutGraph } from '../web/src/lib/graphLayout.ts';
+import { StartWorkflowWizard } from '../web/src/components/StartWorkflowWizard.tsx';
 
 test('layoutGraph produces deterministic visual positions and preserves node resources', () => {
   const layout = layoutGraph([
@@ -113,9 +114,11 @@ test('Pi sessions UI source exposes tab, chat UI, SSE stream, prompt form, refre
   assert.match(panel, /Send prompt/);
 });
 
-test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', () => {
+test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST routes', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const controls = fs.readFileSync('web/src/components/RunControls.tsx', 'utf8');
+  const wizard = fs.readFileSync('web/src/components/StartWorkflowWizard.tsx', 'utf8');
+  const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
   const workflowPanels = fs.readFileSync('web/src/components/WorkflowPanels.tsx', 'utf8');
   const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
   assert.match(app, /Run Console sections/);
@@ -127,6 +130,8 @@ test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', 
   assert.match(app, />Workflows <span>inspect<\/span><\/button>/);
   assert.match(app, />Runs <span>operate<\/span><\/button>/);
   assert.match(app, />Pi Sessions <span>chat<\/span><\/button>/);
+  // App passes the discovered workflows list into RunControls for the wizard picker.
+  assert.match(app, /workflows=\{workflows\.data\}/);
   assert.match(controls, /Run controls/);
   assert.match(controls, /Run control context/);
   assert.match(controls, /Start the selected workflow, or operate the selected run/);
@@ -137,12 +142,9 @@ test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', 
   assert.doesNotMatch(app, /window\.setInterval/);
   assert.match(controls, /Non-smoke workflows may run agents, processes, or other side effects/);
   assert.match(controls, /Not smoke-demo/);
-  assert.match(controls, /I understand this may execute local side effects automatically/);
-  assert.match(controls, /Workflow inputs/);
-  assert.match(controls, /workflowDetail\?\.normalized\?\.inputs/);
-  assert.match(controls, /type === 'boolean'/);
-  assert.match(controls, /type=\"number\"/);
-  assert.match(controls, /Required inputs missing/);
+  // The guided wizard (not the inline card) now owns input rendering.
+  assert.match(controls, /StartWorkflowWizard/);
+  assert.match(controls, />Start workflow<\/button>/);
   assert.doesNotMatch(controls, /key=value, one per line/);
   assert.doesNotMatch(controls, /parseInputs/);
   assert.match(controls, /Delete selected run/);
@@ -154,8 +156,41 @@ test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', 
   assert.match(workflowPanels, /aria-current=\{selected \? 'true' : undefined\}/);
   assert.match(runPanels, /aria-current=\{selected \? 'true' : undefined\}/);
   assert.match(runPanels, /status-pill/);
+  // Start still goes through POST /api/runs from RunControls' onStart callback.
   assert.match(controls, /postJson<MutationResult>\('\/api\/runs'/);
   assert.match(controls, /max_steps: maxSteps/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
+  // Wizard owns the guided start flow and type-correct inputs.
+  assert.match(wizard, /Start workflow/);
+  assert.match(wizard, /Workflow inputs/);
+  assert.match(wizard, /workflowDetail\?\.normalized\?\.inputs/);
+  assert.match(wizard, /type === 'boolean'/);
+  assert.match(wizard, /type === 'integer'/);
+  assert.match(wizard, /type === 'path'/);
+  assert.match(wizard, /PathPicker/);
+  assert.match(wizard, /browsePath/);
+  assert.match(wizard, /\/api\/browse/);
+  assert.match(wizard, /Required inputs missing/);
+  assert.match(wizard, /I understand this may execute local side effects automatically/);
+  assert.match(wizard, /role="dialog"/);
+  assert.match(wizard, /aria-modal/);
+  assert.match(api, /export const browsePath = async/);
+});
+
+test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
+  const onStart = async () => ({ operation: 'start' });
+  const markup = renderToStaticMarkup(React.createElement(StartWorkflowWizard, {
+    open: true,
+    workflows: [{ name: 'smoke-demo', path: 'examples/smoke/workflow.edn' }],
+    initialWorkflow: 'smoke-demo',
+    onClose: () => {},
+    onStart
+  }));
+  assert.match(markup, /Start workflow/);
+  assert.match(markup, /Pick workflow/);
+  assert.match(markup, /Configure run/);
+  assert.match(markup, /smoke-demo/);
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /aria-modal="true"/);
 });
