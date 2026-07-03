@@ -75,6 +75,23 @@ test('Run component sources expose attempt, artifact, failure, and resource insp
   assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
 });
 
+test('Git user UI source exposes a config tab reading and writing the git user identity', () => {
+  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
+  const panel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
+  const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
+  assert.match(app, /'git-user'/);
+  assert.match(app, />Git user <span>config<\/span><\/button>/);
+  assert.match(app, /<GitUserPanel \/>/);
+  assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'git-user'/);
+  assert.match(panel, /Git user settings/);
+  assert.match(panel, /\.tesseraft\/git-user\.json/);
+  assert.match(panel, /\/api\/git-user/);
+  assert.match(panel, /putJson<GitUserResponse>\('\/api\/git-user'/);
+  assert.match(panel, /Save git user/);
+  assert.match(panel, /Source/);
+  assert.match(api, /export const putJson = async <T,>/);
+});
+
 test('Pi sessions UI source exposes tab, chat UI, SSE stream, prompt form, refresh, and diagnostics', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const panel = fs.readFileSync('web/src/components/PiSessionsPanel.tsx', 'utf8');

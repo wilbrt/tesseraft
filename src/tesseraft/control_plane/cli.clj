@@ -42,6 +42,32 @@
   (or (first (:args opts))
       (throw (ex-info (str "Missing " label) {:label label}))))
 
+(def ^:private git-user-missing ::missing)
+
+(defn parse-git-user-set-args [args]
+  (loop [xs args acc {:name git-user-missing :email git-user-missing :global false}]
+    (if (empty? xs)
+      acc
+      (let [a (first xs)]
+        (condp = a
+          "--name" (recur (drop 2 xs) (assoc acc :name (second xs)))
+          "--email" (recur (drop 2 xs) (assoc acc :email (second xs)))
+          "--global" (recur (rest xs) (assoc acc :global true))
+          (recur (rest xs) acc))))))
+
+(defn git-user-command [options args]
+  (let [[sub & rest] (if (empty? args) ["get"] args)]
+    (case sub
+      "get" (control-plane/get-git-user options)
+      "set" (let [p (parse-git-user-set-args rest)]
+             (if (or (= git-user-missing (:name p))
+                     (= git-user-missing (:email p))
+                     (nil? (:name p))
+                     (nil? (:email p)))
+               (control-plane/error-response 400 "bad_request" "git-user set requires --name and --email")
+             (control-plane/set-git-user options (:name p) (:email p) (:global p))))
+      (control-plane/error-response 400 "bad_request" (str "Unknown git-user subcommand: " sub)))))
+
 (defn require-nth-arg [opts idx label]
   (or (nth (:args opts) idx nil)
       (throw (ex-info (str "Missing " label) {:label label}))))
@@ -66,6 +92,7 @@
                    "events" (control-plane/get-run-events options (require-arg opts "run id"))
                    "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id"))
                    "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path"))
+                   "git-user" (git-user-command options (:args opts))
                    (usage!))]
       (print-json! result)
       (when (not= 0 (exit-status result))

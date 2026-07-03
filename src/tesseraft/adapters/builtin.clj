@@ -56,6 +56,29 @@
       (git-ref-exists? repo base) base
       :else remote-ref)))
 
+;; Git user identity overrides.
+;; Reads the configured git user from the project-local
+;; .tesseraft/git-user.json (or global ~/.tesseraft/git-user.json when the
+;; project file is absent). Returns a vector of `git -c` override args that
+;; handlers thread into mutating git invocations, so attribution is explicit
+;; without polluting the repo's persistent git config. Returns [] when no user
+;; is configured, preserving the previous ambient-git-config behavior.
+(defn git-user-config []
+  (let [home (or (System/getenv "TESSERAFT_HOME")
+                 (str (fs/path (System/getProperty "user.home") ".tesseraft")))
+        project-path (fs/path "." ".tesseraft" "git-user.json")
+        global-path (fs/path home "git-user.json")
+        read-file (fn [p] (when (fs/exists? p)
+                            (try (store/read-json p) (catch Throwable _ nil))))]
+    (or (read-file project-path) (read-file global-path))))
+
+(defn git-user-args []
+  (let [user (not-empty (git-user-config))]
+    (if-not (and (map? user) (:name user) (:email user))
+      []
+      ["-c" (str "user.name=" (:name user))
+       "-c" (str "user.email=" (:email user))])))
+
 (defn jira-fetch-ticket! [_wf ctx _state-id node]
   (let [ticket (get-in ctx [:inputs :ticket])
         command (or (System/getenv "JIRA_FETCH_CMD") "acli jira workitem view {{inputs.ticket}} --json")
@@ -67,13 +90,14 @@
 (defn git-ensure-branch! [_wf ctx _state-id node]
   (let [branch (branch-name ctx node)
         base (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")
-        repo (repo-dir ctx node)]
-    (shell! {:dir repo} "git" "fetch" "origin")
+        repo (repo-dir ctx node)
+        ua (git-user-args)]
+    (apply shell! {:dir repo} "git" (concat ua ["fetch" "origin"]))
     (let [exists? (git-ref-exists? repo branch)
           start-point (base-ref (assoc-in ctx [:inputs :repo-root] repo) base)]
       (if exists?
-        (shell! {:dir repo} "git" "checkout" branch)
-        (shell! {:dir repo} "git" "checkout" "-b" branch start-point))
+        (apply shell! {:dir repo} "git" (concat ua ["checkout" branch]))
+        (apply shell! {:dir repo} "git" (concat ua ["checkout" "-b" branch start-point])))
       {:status "ok" :branch branch :base-branch base :start-point start-point})))
 
 (defn safe-path-component [s]
@@ -146,18 +170,29 @@
         path (worktree-dir ctx node branch)
         out-path (artifact-path ctx (or (get-in node [:outputs :worktree-path :path])
                                         (get-in node [:inputs :path-output])
-                                        "worktree/path.txt"))]
-    (shell! {:dir repo} "git" "fetch" "origin")
+                                        "worktree/path.txt"))
+        ua (git-user-args)]
+    (apply shell! {:dir repo} "git" (concat ua ["fetch" "origin"]))
     (let [start-point (base-ref (assoc-in ctx [:inputs :repo-root] repo) base)]
       (fs/create-dirs (fs/parent path))
       (ensure-worktree-path! repo branch path start-point)
+      ;; Apply the configured git identity to the worktree via `git config --local`
+      ;; so commits made by agent nodes inside the worktree are attributed to the
+      ;; configured user. Worktrees share the repo's .git/config, so this is a
+      ;; local single-user workspace affordance (see docs/design). Never writes
+      ;; global git config.
+      (when (seq ua)
+        (let [user (git-user-config)]
+          (shell! {:dir path} "git" "config" "--local" "user.name" (:name user))
+          (shell! {:dir path} "git" "config" "--local" "user.email" (:email user))))
       (fs/create-dirs (fs/parent out-path))
       (spit out-path path)
       {:status "ok" :branch branch :base-branch base :start-point start-point :worktree-dir path :worktree-file out-path})))
 
 (defn git-push! [_wf ctx _state-id node]
-  (let [branch (branch-name ctx node)]
-    (shell! {:dir (repo-dir ctx node)} "git" "push" "origin" branch)
+  (let [branch (branch-name ctx node)
+        ua (git-user-args)]
+    (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "origin" branch]))
     {:status "ok" :branch branch}))
 
 (defn github-repo! [ctx node]
@@ -225,7 +260,8 @@
         title-file (artifact-path ctx (or (get-in node [:inputs :title-file]) "pr/pr-title.txt"))
         body-file (artifact-path ctx (or (get-in node [:inputs :body-file]) "pr/pr-body.md"))
         pr-file (artifact-path ctx (or (get-in node [:outputs :pr-json :path]) "pr/pr.json"))
-        _ (shell! {:dir (repo-dir ctx node)} "git" "push" "-u" "origin" branch)
+        ua (git-user-args)
+        _ (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "-u" "origin" branch]))
         pr (or (github-existing-pr ctx node branch)
                (let [payload-file (artifact-path ctx "pr/create-payload.json")]
                  (store/write-json! payload-file {:title (str/trim (slurp title-file))

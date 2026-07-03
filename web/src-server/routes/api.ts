@@ -19,6 +19,7 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
     const name = safeDecode(parts[2]);
     return name === null ? { badRequest: 'Malformed workflow name' } : ['graph', name];
   }
+  if (parts.length === 2 && parts[1] === 'git-user') return ['git-user'];
   if (parts.length === 2 && parts[1] === 'runs') return ['runs'];
   if (parts.length === 3 && parts[1] === 'runs') {
     const runId = safeDecode(parts[2]);
@@ -88,6 +89,26 @@ const runSnapshot = async (runId: string): Promise<unknown> => {
 const mutationResponse = async (operation: string, runId: string, cli: RuntimeResult, runDir?: string): Promise<{ status: number; body: unknown }> => {
   const detail = await refreshedRun(runId);
   return { status: cli.status, body: { operation, status: cli.status === 200 ? 'ok' : 'error', run_id: runId, cli: { exit_code: cli.exitCode, stderr: cli.stderr || undefined, result: cli.body }, latest_runtime: runDir ? await inspectRuntime(runDir) : null, run_detail: detail.status === 200 ? detail.body : null } };
+};
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+const isBasicEmail = (value: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
+
+const handleGetGitUser = async (res: Response): Promise<void> => {
+  const result = await runControlPlane(['git-user']);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleSetGitUser = async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as JsonRecord;
+  const name = body.name;
+  const email = body.email;
+  if (!isNonEmptyString(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name is required and must be a non-empty string'));
+  if (name.length > 200) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must be at most 200 characters'));
+  if (/\n/.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must not contain newlines'));
+  if (!isNonEmptyString(email) || !isBasicEmail(email)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'email is required and must be a valid address'));
+  const result = await runControlPlane(['git-user', 'set', '--name', name, '--email', email]);
+  return jsonResponse(res, result.status, result.body);
 };
 
 const readMaxSteps = (value: unknown, fallback: number): number | null => {
@@ -295,6 +316,9 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     if (sessionId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed Pi session id'));
     return void handlePiSessionStream(req, res, piSessionAdapter, sessionId).catch(next);
   });
+
+  router.get('/git-user', (_req, res, next) => { void handleGetGitUser(res).catch(next); });
+  router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });
   router.get('/runs/:runId/stream', (req, res, next) => {
