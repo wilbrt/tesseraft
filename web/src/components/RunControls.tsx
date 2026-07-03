@@ -29,6 +29,9 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
   const [runId, setRunId] = useState(`run-${Date.now()}`);
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [maxSteps, setMaxSteps] = useState(10);
+  const [gitUserName, setGitUserName] = useState('');
+  const [gitUserEmail, setGitUserEmail] = useState('');
+  const [showGitUser, setShowGitUser] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmStep, setConfirmStep] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
@@ -47,6 +50,17 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
   const setInputValue = (name: string, value: string): void => setInputValues((current) => ({ ...current, [name]: value }));
   const buildInputs = (): Record<string, string> => Object.fromEntries(Object.entries(inputValues).filter(([, value]) => value.trim() !== ''));
   const missingRequired = inputFields.filter((field) => field.definition.required && !inputValues[field.name]?.trim()).map((field) => field.name);
+  const EMAIL_RE = /^\S+@\S+\.\S+$/;
+  const gitUserNameTrim = gitUserName.trim();
+  const gitUserEmailTrim = gitUserEmail.trim();
+  const gitUserPartial = (gitUserNameTrim !== '') !== (gitUserEmailTrim !== '');
+  const gitUserBadEmail = gitUserEmailTrim !== '' && !EMAIL_RE.test(gitUserEmailTrim);
+  const gitUserValid = !gitUserPartial && !gitUserBadEmail;
+  const buildGitUser = (): { name: string; email: string } | undefined => {
+    if (gitUserNameTrim === '' && gitUserEmailTrim === '') return undefined;
+    if (!gitUserValid) return undefined;
+    return { name: gitUserNameTrim, email: gitUserEmailTrim };
+  };
 
   const mutate = async (label: string, action: () => Promise<MutationResult>, refreshRunId?: string): Promise<void> => {
     setBusy(true);
@@ -116,9 +130,20 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
             ))}
           </div>
           {missingRequired.length > 0 && <p className="error inline">Required inputs missing: {missingRequired.map(humanizeInputName).join(', ')}</p>}
+          <div className="git-user-section" aria-label="Git user (commit identity)">
+            <button type="button" className="toggle" aria-expanded={showGitUser} onClick={() => setShowGitUser((v) => !v)}>Git user (commit identity) {showGitUser ? '▾' : '▸'}</button>
+            {showGitUser && (
+              <div className="git-user-fields">
+                <small className="muted">When set, agent commits in this run use this Git author. Leave blank to use this machine's git config.</small>
+                <label>Name <input type="text" value={gitUserName} onChange={(event) => setGitUserName(event.target.value)} placeholder="Git author name" /></label>
+                <label>Email <input type="email" value={gitUserEmail} onChange={(event) => setGitUserEmail(event.target.value)} placeholder="git@example.com" /></label>
+                {(gitUserPartial || gitUserBadEmail) && <p className="error inline">{gitUserPartial ? 'Both name and email are required when either is set.' : 'Enter a valid email address.'}</p>}
+              </div>
+            )}
+          </div>
           <label>Max automated steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects automatically.</label>
-          <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps }), runId)}>Start and run</button>
+          <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !gitUserValid || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps, ...(buildGitUser() ? { git_user: buildGitUser() } : {}) }), runId)}>Start and run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>

@@ -25,6 +25,8 @@
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
           "--max-steps" (recur more (assoc acc :max-steps (parse-long (cli-args/require-value a b))))
+          "--git-user-name" (recur more (assoc-in acc [:git-user :name] (cli-args/require-value a b)))
+          "--git-user-email" (recur more (assoc-in acc [:git-user :email] (cli-args/require-value a b)))
           "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
           (if (:workflow acc)
             (recur rest-xs acc)
@@ -49,9 +51,21 @@
     (println "  tesseraft-run inspect --run-dir .agent-runs/name/run-id --format json"))
   (System/exit 2))
 
+(defn validate-git-user! [opts]
+  (let [name (get-in opts [:git-user :name])
+        email (get-in opts [:git-user :email])
+        has-name (and name (not (str/blank? name)))
+        has-email (and email (not (str/blank? email)))]
+    (cond
+      (and has-name (not has-email))
+      (throw (ex-info "--git-user-name requires --git-user-email" {:flag "--git-user-email"}))
+      (and has-email (not has-name))
+      (throw (ex-info "--git-user-email requires --git-user-name" {:flag "--git-user-name"})))
+    opts))
+
 (defn -main [& args]
   (try
-    (let [opts (parse-args args)]
+    (let [opts (validate-git-user! (parse-args args))]
       (case (:command opts)
         "start"
         (do (when (str/blank? (:workflow opts)) (usage!))

@@ -26,22 +26,27 @@
         inputs (merge {:repo-root "."
                        :base-branch (get-in wf [:defaults :base-branch] "main")}
                       (:inputs opts))
-        inputs (if (:branch inputs) inputs (assoc inputs :branch (default-branch inputs)))]
+        inputs (if (:branch inputs) inputs (assoc inputs :branch (default-branch inputs)))
+        git-user-name (some-> (get-in opts [:git-user :name]) str/trim not-empty)
+        git-user-email (some-> (get-in opts [:git-user :email]) str/trim not-empty)
+        git-user (when (and git-user-name git-user-email)
+                   {:name git-user-name :email git-user-email})]
     {:workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
                 :defaults (:defaults wf {})}
      :inputs inputs
-     :run {:id run-id
-           :dir run-dir
-           :state (:initial wf)
-           :status "running"
-           :round 1
-           :attempt 1
+     :run (cond-> {:id run-id
+                  :dir run-dir
+                  :state (:initial wf)
+                  :status "running"
+                  :round 1
+                  :attempt 1
            :feedback-cycle 1
            :issues-file (str (fs/path run-dir "issues.json"))
            :created-at (store/now)
-           :updated-at (store/now)}}))
+           :updated-at (store/now)}
+         git-user (assoc :git-user git-user))}))
 
 (defn artifact-path [ctx p]
   (let [rendered (spec/render-template-string p ctx)]

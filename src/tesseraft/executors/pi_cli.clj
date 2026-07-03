@@ -108,11 +108,20 @@
                    "MODEL: " (or model "<default>") "\n\n"
                    "PROMPT_FILE: " prompt-file "\n\n"
                    "STATUS: running\n\n"))
-        (let [result (apply p/shell {:dir repo-root
+        (let [git-user (get-in ctx [:run :git-user])
+              git-env (when git-user
+                        {"GIT_AUTHOR_NAME" (:name git-user)
+                         "GIT_AUTHOR_EMAIL" (:email git-user)
+                         "GIT_COMMITTER_NAME" (:name git-user)
+                         "GIT_COMMITTER_EMAIL" (:email git-user)
+                         "GIT_USER_NAME" (:name git-user)
+                         "GIT_USER_EMAIL" (:email git-user)})
+              result (apply p/shell {:dir repo-root
                                      :out :string :err :string :continue true
-                                     :extra-env {"AGENT_RUN_DIR" run-dir
-                                                 "AGENT_STATE" (name state-id)
-                                                 "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}}
+                                     :extra-env (merge {"AGENT_RUN_DIR" run-dir
+                                                        "AGENT_STATE" (name state-id)
+                                                        "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}
+                                                       git-env)}
                             args)]
           (spit log-file
                 (str "STATUS: exited " (:exit result) "\n\n"
