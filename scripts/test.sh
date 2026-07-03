@@ -168,6 +168,81 @@ if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   exit 1
 fi
 
+printf '\nChecking git-user identity plumbing...\n'
+GIT_USER_RUN_ID="git-user-test"
+GIT_USER_RUN_DIR=".agent-runs/git-user-fixture/$GIT_USER_RUN_ID"
+GIT_USER_WORKFLOW="$TMP_DIR/git-user.workflow.edn"
+GIT_USER_PROMPT="$TMP_DIR/git-user-prompt.md.tmpl"
+GIT_USER_STUB="$TMP_DIR/pi-git-user-stub.sh"
+GIT_USER_ENV="$TMP_DIR/pi-git-user-env.txt"
+cat >"$GIT_USER_PROMPT" <<'EOF'
+Git user fixture prompt.
+EOF
+cat >"$GIT_USER_WORKFLOW" <<EOF
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "git-user-fixture"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :agent
+ :states
+ {:agent
+  {:type :agent
+   :executor :pi-cli
+   :prompt-template "git-user-prompt.md.tmpl"
+   :runtime {:timeout "1m"}
+   :outputs {:status {:path "agent/status.json" :required true}}
+   :next :done}
+  :done {:type :terminal :status :success}}}
+EOF
+cat >"$GIT_USER_STUB" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'GIT_AUTHOR_NAME=%s\n' "\$GIT_AUTHOR_NAME"
+  printf 'GIT_AUTHOR_EMAIL=%s\n' "\$GIT_AUTHOR_EMAIL"
+  printf 'GIT_COMMITTER_NAME=%s\n' "\$GIT_COMMITTER_NAME"
+  printf 'GIT_COMMITTER_EMAIL=%s\n' "\$GIT_COMMITTER_EMAIL"
+  printf 'GIT_USER_NAME=%s\n' "\$GIT_USER_NAME"
+  printf 'GIT_USER_EMAIL=%s\n' "\$GIT_USER_EMAIL"
+} >"$GIT_USER_ENV"
+mkdir -p "\$AGENT_RUN_DIR/agent"
+printf '{"status":"pass","summary":"stubbed git-user pi","issues_file":null}\n' >"\$AGENT_RUN_DIR/agent/status.json"
+EOF
+chmod +x "$GIT_USER_STUB"
+rm -rf "$GIT_USER_RUN_DIR"
+PI_BIN="$GIT_USER_STUB" ./bin/tesseraft run "$GIT_USER_WORKFLOW" --run-id "$GIT_USER_RUN_ID" --git-user-name "Ada Lovelace" --git-user-email "ada@example.com" --format json >/tmp/tesseraft-git-user-run.json
+python3 - <<PY
+import re
+from pathlib import Path
+state = Path('$GIT_USER_RUN_DIR/state.edn').read_text()
+assert re.search(r':git-user\s*\{[^}]*:name\s*"Ada Lovelace"[^}]*:email\s*"ada@example.com"', state), state
+env = Path('$GIT_USER_ENV').read_text()
+assert 'GIT_AUTHOR_NAME=Ada Lovelace' in env, env
+assert 'GIT_AUTHOR_EMAIL=ada@example.com' in env, env
+assert 'GIT_COMMITTER_NAME=Ada Lovelace' in env, env
+assert 'GIT_COMMITTER_EMAIL=ada@example.com' in env, env
+assert 'GIT_USER_NAME=Ada Lovelace' in env, env
+assert 'GIT_USER_EMAIL=ada@example.com' in env, env
+PY
+rm -rf "$GIT_USER_RUN_DIR"
+# Mutual validation: providing only one of name/email must fail.
+set +e
+./bin/tesseraft run start "$GIT_USER_WORKFLOW" --run-id git-user-partial --git-user-name "Only" --format json >/tmp/tesseraft-git-user-partial.out 2>&1
+partial_status=$?
+set -e
+if [[ "$partial_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-git-user-partial.out >&2
+  echo "Expected partial git-user start to fail" >&2
+  exit 1
+fi
+if ! grep -q "requires --git-user-email" /tmp/tesseraft-git-user-partial.out; then
+  cat /tmp/tesseraft-git-user-partial.out >&2
+  echo "Expected missing-value message for partial git-user" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-git-user-run.json /tmp/tesseraft-git-user-partial.out
+
 printf '\nChecking interrupted agent recovery...\n'
 RECOVERY_RUN_DIR=".agent-runs/recovery-fixture/recovery-test"
 RECOVERY_WORKFLOW="$TMP_DIR/recovery.workflow.edn"

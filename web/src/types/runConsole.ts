@@ -12,5 +12,9 @@ export type RunSummary = { run_id: string; workflow_name?: string; status?: stri
 export type RunDetail = RunSummary & { state?: string; round?: number; attempt?: number; path?: string; attempts?: Attempt[]; failures?: Failure[] };
 export type EventRecord = { event?: string; type?: string; state?: string; from?: string; attempt?: number; [key: string]: unknown };
 export type MutationResult = { operation?: string; status?: string; code?: string; run_id?: string; cli?: unknown; latest_runtime?: unknown; run_detail?: unknown };
+
+/** Git author identity for a run's agent commits. Both fields present or both absent. */
+export type GitUser = { name: string; email: string };
+export type StartRunPayload = { workflow_name: string | null; run_id: string; inputs: Record<string, string>; max_steps: number; git_user?: GitUser };
 export type LoadState<T> = { data: T; error: string | null };
 export type WorkflowGraphState = { nodes: GraphNode[]; edges: GraphEdge[] };

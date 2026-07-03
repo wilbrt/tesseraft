@@ -95,16 +95,31 @@ const readMaxSteps = (value: unknown, fallback: number): number | null => {
   return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 1000 ? value as number : null;
 };
 
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+const readGitUser = (value: unknown): { name: string; email: string } | undefined | 'invalid' => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) return 'invalid';
+  const obj = value as Record<string, unknown>;
+  const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+  const email = typeof obj.email === 'string' ? obj.email.trim() : '';
+  if (name === '' && email === '') return undefined;
+  if (name !== '' && email !== '' && EMAIL_RE.test(email)) return { name, email };
+  return 'invalid';
+};
+
 const handleStartRun = async (req: Request, res: Response): Promise<void> => {
   const body = req.body as JsonRecord;
   const workflowName = body.workflow_name;
   const runId = body.run_id;
   const inputs = body.inputs ?? {};
   const maxSteps = readMaxSteps(body.max_steps, 100);
+  const gitUser = readGitUser(body.git_user);
   if (typeof workflowName !== 'string' || workflowName.trim() === '') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'workflow_name is required'));
   if (typeof runId !== 'string' || !/^[A-Za-z0-9._-]+$/.test(runId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'run_id is required and may contain only letters, numbers, dot, underscore, and dash'));
   if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || Object.values(inputs).some((value) => typeof value !== 'string')) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'inputs must be an object of string values'));
   if (maxSteps === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
+  if (gitUser === 'invalid') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'git_user requires both name and a valid email, or neither'));
 
   const existing = await refreshedRun(runId);
   if (existing.status === 200) return jsonResponse(res, 409, errorBody(409, 'conflict', 'Run id already exists', { run_id: runId }));
@@ -116,6 +131,7 @@ const handleStartRun = async (req: Request, res: Response): Promise<void> => {
 
   const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json'];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);
+  if (gitUser) { startArgs.push('--git-user-name', gitUser.name, '--git-user-email', gitUser.email); }
   const started = await runRuntime(startArgs);
   const runDir = started.body && typeof started.body === 'object' ? (started.body as { run?: { dir?: unknown } }).run?.dir : undefined;
   if (started.status !== 200 || typeof runDir !== 'string') {
