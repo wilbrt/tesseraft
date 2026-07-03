@@ -1,5 +1,12 @@
 # Tesseraft Standalone Linter
 
+## Quick start
+
+```bash
+tesseraft lint workflow.edn
+tesseraft lint workflow.edn --format json
+```
+
 The linter is a standalone product surface.
 
 It must not depend on:
