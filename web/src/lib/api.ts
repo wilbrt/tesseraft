@@ -35,3 +35,13 @@ export const putJson = async <T,>(url: string, body: unknown): Promise<T> => {
   }
   return data;
 };
+
+export const deleteJson = async <T,>(url: string): Promise<T> => {
+  const response = await fetch(url, { method: 'DELETE' });
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    const message = data.error?.message || `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+};

@@ -22,6 +22,10 @@ const removeRun = (runId) => {
   fs.rmSync(path.join(process.cwd(), '.agent-runs', 'smoke-demo', runId), { recursive: true, force: true });
 };
 
+const removeRunUnder = (runsRoot, runId) => {
+  fs.rmSync(path.join(process.cwd(), runsRoot, runId), { recursive: true, force: true });
+};
+
 const waitForRunStatus = async (base, runId, status, attempts = 50) => {
   for (let i = 0; i < attempts; i += 1) {
     const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
@@ -452,6 +456,88 @@ test('web server reports mutation validation errors as JSON', async (t) => {
     body: JSON.stringify({ max_steps: 0 })
   });
   assert.ok([400, 404].includes(badResume.status));
+});
+
+test('control-plane delete-run removes done runs and refuses executing runs', async (t) => {
+  const runsRoot = path.join('.agent-runs', `delete-fixtures-${Date.now()}`);
+  const doneRunDir = path.join(process.cwd(), runsRoot, 'wf', 'done-run');
+  const executingRunDir = path.join(process.cwd(), runsRoot, 'wf', 'executing-run');
+  t.after(() => fs.rmSync(path.join(process.cwd(), runsRoot), { recursive: true, force: true }));
+
+  fs.mkdirSync(doneRunDir, { recursive: true });
+  fs.writeFileSync(path.join(doneRunDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "done-run" :status "done" :state :done}}');
+  fs.writeFileSync(path.join(doneRunDir, 'events.jsonl'), '');
+
+  fs.mkdirSync(executingRunDir, { recursive: true });
+  fs.writeFileSync(path.join(executingRunDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "executing-run" :status "running" :state :work :updated-at "2999-01-01T00:00:00Z"}}');
+  fs.writeFileSync(path.join(executingRunDir, 'events.jsonl'), JSON.stringify({ event: 'node.started', state: 'work', attempt: 1, at: '2999-01-01T00:00:00Z' }));
+
+  const doneDelete = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'done-run'], { encoding: 'utf8' }));
+  assert.equal(doneDelete.status, 200);
+  assert.equal(doneDelete.deleted, true);
+  assert.equal(doneDelete.run_id, 'done-run');
+  assert.equal(fs.existsSync(doneRunDir), false);
+
+  let conflictStatus = 0;
+  let conflictBody;
+  try {
+    execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'executing-run'], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    conflictStatus = error.status ?? null;
+    conflictBody = JSON.parse(error.stdout);
+  }
+  assert.ok(conflictStatus === 1, `expected nonzero exit for executing delete, got ${conflictStatus}`);
+  assert.equal(conflictBody.error.code, 'conflict');
+  assert.equal(conflictBody.error.details.liveness, 'executing');
+  assert.equal(fs.existsSync(executingRunDir), true);
+
+  let missingStatus = 0;
+  let missingBody;
+  try {
+    execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'no-such-run'], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    missingStatus = error.status ?? null;
+    missingBody = JSON.parse(error.stdout);
+  }
+  assert.ok(missingStatus === 1, `expected nonzero exit for missing delete, got ${missingStatus}`);
+  assert.equal(missingBody.status, 404);
+  assert.equal(missingBody.error.code, 'not_found');
+});
+
+test('web server deletes done runs via DELETE /api/runs/:runId and refuses executing runs', async (t) => {
+  const runsRoot = path.join('.agent-runs', `delete-web-${Date.now()}`);
+  t.after(() => fs.rmSync(path.join(process.cwd(), runsRoot), { recursive: true, force: true }));
+
+  const make = (runId, status, state, events) => {
+    const dir = path.join(process.cwd(), runsRoot, 'wf', runId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'state.edn'), `{:workflow {:name "wf" :version "v1"} :run {:id "${runId}" :status "${status}" :state ${state}${status === 'running' ? ' :updated-at "2999-01-01T00:00:00Z"' : ''}}}`);
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), events || '');
+    return dir;
+  };
+  const doneDir = make('web-delete-done', 'done', ':done');
+  const executingDir = make('web-delete-exec', 'running', ':work', JSON.stringify({ event: 'node.started', state: 'work', attempt: 1, at: '2999-01-01T00:00:00Z' }));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const doneResponse = await fetch(`${base}/api/runs/web-delete-done`, { method: 'DELETE' });
+  assert.equal(doneResponse.status, 200);
+  const doneBody = await doneResponse.json();
+  assert.equal(doneBody.operation, 'delete');
+  assert.equal(doneBody.status, 'ok');
+  assert.equal(doneBody.run_id, 'web-delete-done');
+  assert.equal(doneBody.deleted, true);
+  assert.equal(fs.existsSync(doneDir), false);
+
+  const executingResponse = await fetch(`${base}/api/runs/web-delete-exec`, { method: 'DELETE' });
+  assert.equal(executingResponse.status, 409);
+  const executingBody = await executingResponse.json();
+  assert.equal(executingBody.error.code, 'conflict');
+  assert.equal(executingBody.error.details.liveness, 'executing');
+  assert.equal(fs.existsSync(executingDir), true);
 });
 
 test('web server reports not found and malformed API routes as JSON errors', async (t) => {

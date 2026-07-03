@@ -8,6 +8,11 @@ export type Failure = { source?: string; message?: string; path?: string; node_i
 export type Artifact = { path: string; name?: string; source?: string; node_id?: string; attempt?: number; kind?: string; exists?: boolean; size?: number; content_type?: string; read_url?: string };
 export type ArtifactRead = { artifact: Artifact; previewable?: boolean; content?: string; reason?: string };
 export type Liveness = 'executing' | 'parked' | 'orphaned' | 'stale' | 'done' | 'failed';
+
+/** Liveness values that are safe to delete (never `executing`). */
+export const DELETABLE_LIVENESS: Liveness[] = ['done', 'failed', 'orphaned', 'stale', 'parked'];
+export const isDeletableLiveness = (liveness: Liveness | null | undefined): boolean =>
+  liveness != null && DELETABLE_LIVENESS.includes(liveness);
 export type RunSummary = { run_id: string; workflow_name?: string; status?: string; liveness?: Liveness; staleness_seconds?: number | null };
 export type RunDetail = RunSummary & { state?: string; round?: number; attempt?: number; path?: string; attempts?: Attempt[]; failures?: Failure[] };
 export type EventRecord = { event?: string; type?: string; state?: string; from?: string; attempt?: number; [key: string]: unknown };
