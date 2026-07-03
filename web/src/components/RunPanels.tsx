@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { Attempt, EventRecord, RunDetail, RunSummary } from '../types/runConsole';
+import { isDeletableLiveness } from '../types/runConsole';
 import { eventName, isActiveRun, isTerminalLiveness, livenessPillClass, nodeForEvent, snippet, stalenessLabel } from '../lib/runConsole';
 import { ArtifactBrowser } from './ArtifactBrowser';
 import { FieldList } from './FieldList';
@@ -58,15 +60,18 @@ export const RunsPanel = ({ runs, selectedRun, runDetail, events, artifacts, run
   lastRunRefresh: string | null;
   onSelectRun: (runId: string) => Promise<void>;
 }) => {
+  const [onlyDeletable, setOnlyDeletable] = useState(false);
   const visibleEvents = selectedNodeId ? events.filter((event) => nodeForEvent(event) === selectedNodeId || !nodeForEvent(event)) : events;
+  const visibleRuns = onlyDeletable ? runs.data.filter((run) => isDeletableLiveness(run.liveness)) : runs.data;
   return (
     <>
       <section className="panel">
         <h2>Runs</h2>
         {runs.error && <div className="error">{runs.error}</div>}
+        <label className="check"><input type="checkbox" checked={onlyDeletable} onChange={(event) => setOnlyDeletable(event.target.checked)} /> Show only deletable runs (done/failed/stale/orphaned/parked)</label>
         <ul className="item-list">
           {runs.data.length === 0 && <li className="muted">No runs found. Run a workflow locally to populate this list.</li>}
-          {runs.data.map((run) => {
+          {visibleRuns.map((run) => {
             const selected = run.run_id === selectedRun;
             const liveness = run.liveness;
             const staleBadge = liveness != null && !isTerminalLiveness(liveness) && liveness !== 'executing';

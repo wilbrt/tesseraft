@@ -145,6 +145,11 @@ test('App and RunControls expose tabs, warnings, SSE updates, and POST routes', 
   assert.match(controls, /Required inputs missing/);
   assert.doesNotMatch(controls, /key=value, one per line/);
   assert.doesNotMatch(controls, /parseInputs/);
+  assert.match(controls, /Delete selected run/);
+  assert.match(controls, /Confirm permanent deletion of this run's directory/);
+  assert.match(controls, /deleteJson<MutationResult>\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
+  assert.match(controls, /isDeletableLiveness/);
+  assert.match(runPanels, /Show only deletable runs/);
   assert.match(controls, /Confirm one local node execution/);
   assert.match(workflowPanels, /aria-current=\{selected \? 'true' : undefined\}/);
   assert.match(runPanels, /aria-current=\{selected \? 'true' : undefined\}/);

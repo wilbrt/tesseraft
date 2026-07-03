@@ -277,6 +277,20 @@ const handleRunStream = async (req: Request, res: Response, runId: string): Prom
   req.on('close', closeStream);
 };
 
+const handleDeleteRun = async (res: Response, runId: string): Promise<void> => {
+  const result = await runControlPlane(['delete-run', runId]);
+  if (result.status !== 200) return jsonResponse(res, result.status, result.body);
+  const body = result.body as { run_id?: string; deleted?: boolean; liveness?: string; path?: string } | undefined;
+  return jsonResponse(res, 200, {
+    operation: 'delete',
+    status: 'ok',
+    run_id: body?.run_id ?? runId,
+    deleted: body?.deleted ?? true,
+    liveness: body?.liveness,
+    path: body?.path
+  });
+};
+
 const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume'): Promise<void> => {
   const body = req.body as JsonRecord;
   const detail = await refreshedRun(runId);
@@ -342,6 +356,12 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     return void handleRunStream(req, res, runId).catch(next);
   });
+  router.delete('/runs/:runId', (req, res, next) => {
+    const runId = safeDecode(req.params.runId);
+    if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleDeleteRun(res, runId).catch(next);
+  });
+
   router.post('/runs/:runId/:operation', (req, res, next) => {
     const runId = safeDecode(req.params.runId);
     const operation = req.params.operation;
@@ -351,7 +371,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   });
 
   router.use((req, res, next) => {
-    if (req.method !== 'GET') return jsonResponse(res, 405, errorBody(405, 'method_not_allowed', 'Only GET and POST are supported for API routes'));
+    if (req.method !== 'GET') return jsonResponse(res, 405, errorBody(405, 'method_not_allowed', 'Only GET, POST, PUT, and DELETE are supported for API routes'));
     const routed = routeApi(`/api${req.path}`, new URLSearchParams(req.url.split('?')[1] || ''));
     if (routed === null) return next();
     if ('badRequest' in routed) return jsonResponse(res, 400, errorBody(400, 'bad_request', routed.badRequest));

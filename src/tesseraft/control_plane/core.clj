@@ -658,6 +658,32 @@
            events
            (api-value {:run_id run-id :events events :continuation nil})))))))
 
+(defn delete-run
+  "Delete a run directory. Refuses to delete a run whose recomputed liveness is
+  `executing` (returns 409 conflict). Only deletes the run directory returned by
+  `resolve-run`, which is confined to the configured `runs-root` tree, so there
+  is no arbitrary-path delete surface."
+  ([] (delete-run {} nil))
+  ([options run-id]
+   (let [resolved (resolve-run options run-id)]
+     (if (:error resolved)
+       resolved
+       (let [{:keys [state-file run-dir context]} resolved
+             summary (run-summary options state-file)
+             events (read-events-file (events-file run-dir))
+             attempts (if (:error events) [] (attempts-from-context context events))
+             live (derive-liveness summary attempts)]
+         (if (= "executing" (:liveness live))
+           (error-response 409 "conflict" "Run is still executing"
+                           {:run_id run-id :liveness (:liveness live)})
+           (do
+             (fs/delete-tree run-dir)
+             {:status 200
+              :run_id run-id
+              :deleted true
+              :liveness (:liveness live)
+              :path (relative-path (:workspace-root (opts options)) run-dir)})))))))
+
 (comment
   ;; git-user config is also consumed by the runtime handlers in
   ;; tesseraft.adapters.builtin via -c user.name/user.email overrides.

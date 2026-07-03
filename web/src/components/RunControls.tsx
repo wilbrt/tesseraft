@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { postJson } from '../lib/api';
+import { deleteJson, postJson } from '../lib/api';
 import { snippet } from '../lib/runConsole';
 import type { MutationResult, RunDetail, WorkflowDetail, WorkflowInputDefinition } from '../types/runConsole';
+import { isDeletableLiveness } from '../types/runConsole';
 
 type Props = {
   selectedWorkflow: string | null;
@@ -35,6 +36,7 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmStep, setConfirmStep] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<MutationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +79,7 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
       if (label === 'start') setConfirmStart(false);
       if (label === 'step') setConfirmStep(false);
       if (label === 'resume') setConfirmResume(false);
+      if (label === 'delete') setConfirmDelete(false);
     }
   };
 
@@ -144,6 +147,12 @@ export const RunControls = ({ selectedWorkflow, workflowDetail, selectedRun, run
           <label>Max automated steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={confirmStart} onChange={(event) => setConfirmStart(event.target.checked)} /> I understand this may execute local side effects automatically.</label>
           <button type="button" disabled={!selectedWorkflow || !workflowDetail || missingRequired.length > 0 || !gitUserValid || !confirmStart || busy} onClick={() => mutate('start', () => postJson<MutationResult>('/api/runs', { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps, ...(buildGitUser() ? { git_user: buildGitUser() } : {}) }), runId)}>Start and run</button>
+        </div>
+        <div className="control-card">
+          <h3>Delete selected run</h3>
+          <p className="muted">Removes the run directory from <code>.agent-runs/</code>. Local and irreversible. Disabled while a run is executing.</p>
+          <label className="check"><input type="checkbox" checked={confirmDelete} onChange={(event) => setConfirmDelete(event.target.checked)} /> Confirm permanent deletion of this run's directory.</label>
+          <button type="button" disabled={!selectedRun || !isDeletableLiveness(runDetail?.liveness) || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}`), undefined)}>Delete run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>
