@@ -2,7 +2,8 @@
   (:require
     [tesseraft.cli-args :as cli-args]
     [tesseraft.control-plane.core :as control-plane]
-    [cheshire.core :as json]))
+    [cheshire.core :as json]
+    [clojure.string :as str]))
 
 (defn parse-args [args]
   (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs"}]
@@ -31,6 +32,10 @@
     (println "  tesseraft control-plane events <run-id>")
     (println "  tesseraft control-plane artifacts <run-id>")
     (println "  tesseraft control-plane artifact <run-id> <path>")
+    (println "  tesseraft control-plane approvals <run-id>")
+    (println "  tesseraft control-plane approval <run-id> <approval-id>")
+    (println "  tesseraft control-plane comments <run-id> --path <artifact>")
+    (println "  tesseraft control-plane comment add <run-id> --path <artifact> --body <text> [--start-line N --end-line M]")
     (println)
     (println "Options:")
     (println "  --workspace-root <dir>   Workspace root (default: .)")
@@ -115,6 +120,18 @@
   (or (nth (:args opts) idx nil)
       (throw (ex-info (str "Missing " label) {:label label}))))
 
+(defn parse-comment-add-args [args]
+  (loop [xs args acc {:path nil :body nil :start-line nil :end-line nil}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--path" (recur more (assoc acc :path b))
+          "--body" (recur more (assoc acc :body b))
+          "--start-line" (recur more (assoc acc :start-line (parse-long b)))
+          "--end-line" (recur more (assoc acc :end-line (parse-long b)))
+          (recur (rest xs) acc))))))
+
 (defn exit-status [result]
   (if (:error result) 1 0))
 
@@ -136,9 +153,27 @@
                    "events" (control-plane/get-run-events options (require-arg opts "run id"))
                    "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id"))
                    "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path"))
+                   "approvals" (control-plane/get-run-approvals options (require-arg opts "run id"))
+                   "approval" (control-plane/get-run-approval options (require-arg opts "run id") (require-nth-arg opts 1 "approval id"))
+                   "comments" (let [run-id (require-arg opts "run id")
+                                     path (some #(when (re-find #"^--path$" (first %)) (second %))
+                                               (partition 2 1 (:args opts)))]
+                               (control-plane/get-run-comments (assoc options :query {:path (or path "")}) run-id))
+                   "comment" (let [[sub & rest-args] (:args opts)]
+                              (if (not= "add" sub)
+                                (control-plane/error-response 400 "bad_request" (str "Unknown comment subcommand: " sub))
+                                (let [run-id (first rest-args)
+                                      p (parse-comment-add-args (rest rest-args))
+                                      anchor (when (and (:start-line p) (:end-line p))
+                                              {:start_line (:start-line p) :end_line (:end-line p)})
+                                      body {:path (:path p) :body (:body p) :anchor anchor}]
+                                  (if (or (str/blank? run-id) (str/blank? (:path p)) (str/blank? (:body p)))
+                                    (control-plane/error-response 400 "bad_request" "comment add requires <run-id> --path <artifact> --body <text>")
+                                    (control-plane/add-run-comment options run-id body)))))
                    "git-user" (git-user-command options (:args opts))
                    "settings" (settings-command options (:args opts))
                    (usage!))]
+
       (print-json! result)
       (when (not= 0 (exit-status result))
         (System/exit (exit-status result))))

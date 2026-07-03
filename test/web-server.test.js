@@ -436,6 +436,108 @@ test('web server supports local smoke start-and-run, step, and resume mutations'
   assert.equal(run.run.run_id, runId);
 });
 
+test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {
+  const runId = `web-approval-${Date.now()}`;
+  const approvalRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
+  fs.rmSync(approvalRunDir, { recursive: true, force: true });
+  const workflowRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
+  t.after(() => fs.rmSync(approvalRunDir, { recursive: true, force: true }));
+
+  // A throwaway approval workflow written to the project-local discovery
+  // root (.tesseraft/workflows, gitignored) so the control-plane resolves it
+  // by name without editing any committed workflow definition file.
+  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', 'approval-smoke');
+  fs.rmSync(workflowDir, { recursive: true, force: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
+  const workflowFile = path.join(workflowDir, 'workflow.edn');
+  fs.writeFileSync(workflowFile, [
+    '{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "approval-smoke"}',
+    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :start',
+    ' :states {:start {:type :timer :duration "1ms" :next :gate}',
+    '          :gate {:type :approval :title "Gate" :message "Approve." :timeout "1m"',
+    '                 :artifact {:path "design/design.md" :kind "design-doc"}',
+    '                 :transitions [{:when {:decision "approve"} :next :done}',
+    '                                {:when {:decision "changes-requested"} :next :revise}]}',
+    '          :revise {:type :timer :duration "1ms" :next :failed}',
+    '          :done {:type :terminal :status :success}',
+    '          :failed {:type :terminal :status :failure}}}'
+  ].join('\n'));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  // Start the workflow; the background resume loops until it parks at the
+  // :gate approval node (blocked stops run-until-done!). Poll for blocked.
+  const startResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: 'approval-smoke', run_id: runId, inputs: {} })
+  });
+  assert.equal(startResponse.status, 202);
+  const parked = await waitForRunStatus(base, runId, 'blocked');
+  assert.equal(parked.state, 'gate');
+
+  // Approvals list exposes the pending request.
+  const approvalsResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals`);
+  assert.equal(approvalsResponse.status, 200);
+  const approvals = await approvalsResponse.json();
+  assert.ok(approvals.approvals.length >= 1);
+  const approvalId = approvals.approvals[0].approval_id;
+
+  // Add a line-anchored comment on the referenced artifact.
+  const commentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'design/design.md', body: 'Tighten scope?', anchor: { start_line: 3, end_line: 5 } })
+  });
+  assert.equal(commentResponse.status, 200);
+  const comment = await commentResponse.json();
+  assert.equal(comment.comment.path, 'design/design.md');
+  assert.deepEqual(comment.comment.anchor, { start_line: 3, end_line: 5 });
+
+  // List comments.
+  const listResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  assert.equal(listed.comments.length, 1);
+  assert.match(listed.comments[0].body, /Tighten scope/);
+
+  // Unsafe path is rejected.
+  const unsafeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../../etc/passwd', body: 'x' })
+  });
+  assert.ok(unsafeResponse.status >= 400);
+
+  // Decide approve -> run advances to :done.
+  const decideResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve', summary: 'LGTM' })
+  });
+  assert.equal(decideResponse.status, 200);
+  const decided = await decideResponse.json();
+  assert.equal(decided.operation, 'decide');
+  assert.equal(decided.decision, 'approve');
+
+  const doneRun = await waitForRunStatus(base, runId, 'done');
+  assert.equal(doneRun.state, 'done');
+
+  // A second decide on the same approval is rejected (idempotent-ish).
+  const replay = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve' })
+  });
+  assert.ok(replay.status >= 400);
+});
+
 test('web server reports mutation validation errors as JSON', async (t) => {
   const server = createServer();
   const port = await listen(server);

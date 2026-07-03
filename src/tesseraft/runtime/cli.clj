@@ -11,7 +11,7 @@
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
 
 (defn parse-args [args]
-  (loop [xs args acc {:inputs {} :max-steps 100 :command "run"}]
+  (loop [xs args acc {:inputs {} :max-steps 100 :command "run" :decision nil :summary nil :author-name nil :author-email nil}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -21,6 +21,7 @@
           "step" (recur rest-xs (assoc acc :command "step"))
           "resume" (recur rest-xs (assoc acc :command "resume"))
           "inspect" (recur rest-xs (assoc acc :command "inspect"))
+          "decide" (recur rest-xs (assoc acc :command "decide"))
           "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
@@ -29,6 +30,11 @@
           "--max-steps" (recur more (assoc acc :max-steps (parse-long (cli-args/require-value a b))))
           "--git-user-name" (recur more (assoc-in acc [:git-user :name] (cli-args/require-value a b)))
           "--git-user-email" (recur more (assoc-in acc [:git-user :email] (cli-args/require-value a b)))
+          "--approval-id" (recur more (assoc acc :approval-id (cli-args/require-value a b)))
+          "--decision" (recur more (assoc acc :decision (cli-args/require-value a b)))
+          "--summary" (recur more (assoc acc :summary (cli-args/require-value a b)))
+          "--author-name" (recur more (assoc acc :author-name (cli-args/require-value a b)))
+          "--author-email" (recur more (assoc acc :author-email (cli-args/require-value a b)))
           "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
           (if (:workflow acc)
             (recur rest-xs acc)
@@ -61,7 +67,8 @@
     (println "  tesseraft-run start <workflow.edn> --input ticket=PROJ-123")
     (println "  tesseraft-run step --run-dir .agent-runs/name/run-id")
     (println "  tesseraft-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
-    (println "  tesseraft-run inspect --run-dir .agent-runs/name/run-id --format json"))
+    (println "  tesseraft-run inspect --run-dir .agent-runs/name/run-id --format json")
+    (println "  tesseraft-run decide --run-dir .agent-runs/name/run-id --approval-id <id> --decision <label> [--summary text] [--author-name x --author-email y]"))
   (System/exit 2))
 
 (defn validate-git-user! [opts]
@@ -102,6 +109,20 @@
         "inspect"
         (do (when (str/blank? (:run-dir opts)) (usage!))
             (print-result opts (store/load-context (:run-dir opts))))
+
+        "decide"
+        (do (when (str/blank? (:run-dir opts)) (usage!))
+            (let [approval-id (:approval-id opts)
+                  decision (:decision opts)
+                  summary (:summary opts)
+                  author (when (and (:author-name opts) (:author-email opts))
+                           {:name (:author-name opts) :email (:author-email opts)})
+                  result (runtime/decide! (:run-dir opts) approval-id decision summary author)]
+              (if (:error result)
+                (let [err (:error result)]
+                  (println (json/generate-string result {:pretty true}))
+                  (System/exit 1))
+                (print-result opts result))))
 
         "run"
         (do (when (str/blank? (:workflow opts)) (usage!))

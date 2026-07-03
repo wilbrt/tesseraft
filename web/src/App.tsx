@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
 import { WorkflowStudio } from './components/WorkflowStudio';
 import { RunListTable } from './components/RunListTable';
+import { ApprovalPanel } from './components/ApprovalPanel';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -198,6 +199,7 @@ export const App = () => {
             onToggleRow={handleToggleRow}
             onSelectNode={setSelectedNodeId}
           />
+          <ApprovalPanel runId={selectedRun} onRefresh={refreshAfterMutation} />
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'settings' && <SettingsPanel />}
