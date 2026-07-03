@@ -540,6 +540,40 @@ test('web server deletes done runs via DELETE /api/runs/:runId and refuses execu
   assert.equal(fs.existsSync(executingDir), true);
 });
 
+test('GET /api/browse lists repo-rooted directory entries and rejects path escapes', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const root = await fetch(`${base}/api/browse?path=.`);
+  assert.equal(root.status, 200);
+  const rootBody = await root.json();
+  assert.ok(Array.isArray(rootBody.entries));
+  assert.ok(rootBody.entries.some((entry) => entry.name === 'web' && entry.is_dir === true));
+  assert.ok(rootBody.entries.some((entry) => entry.name === 'package.json' && entry.is_file === true));
+  // Hidden files are omitted.
+  assert.ok(!rootBody.entries.some((entry) => entry.name === '.git'));
+
+  const sub = await fetch(`${base}/api/browse?path=web`);
+  assert.equal(sub.status, 200);
+  const subBody = await sub.json();
+  assert.ok(subBody.is_dir === true);
+  assert.ok(subBody.entries.some((entry) => entry.name === 'src' && entry.is_dir === true));
+
+  const escape = await fetch(`${base}/api/browse?path=${encodeURIComponent('../')}`);
+  assert.equal(escape.status, 400);
+  const escapeBody = await escape.json();
+  assert.equal(escapeBody.error.code, 'bad_request');
+
+  const missing = await fetch(`${base}/api/browse?path=does-not-exist-xyz`);
+  assert.equal(missing.status, 404);
+});
+
+test('routeApi maps the browse route', () => {
+  assert.deepEqual(routeApi('/api/browse'), ['browse']);
+});
+
 test('web server reports not found and malformed API routes as JSON errors', async (t) => {
   const server = createServer();
   const port = await listen(server);

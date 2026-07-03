@@ -151,7 +151,7 @@ export const App = () => {
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'git-user' && <GitUserPanel />}
-        {activeTab !== 'pi-sessions' && activeTab !== 'git-user' && <RunControls selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
+        {activeTab !== 'pi-sessions' && activeTab !== 'git-user' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
       </main>
     </>
   );
