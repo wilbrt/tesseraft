@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GraphEdge, GraphNode } from '../lib/graphLayout';
 import { createStudioWorkflow, getStudioWorkflow, lintStudioWorkflow, saveStudioWorkflow, writeWorkflowAsset, type SaveStudioResult } from '../lib/studio';
 import { postJson } from '../lib/api';
-import type { PiChatMessage } from '../types/piSessions';
+import type { PiChatMessage, PiSessionStatus } from '../types/piSessions';
 import { KNOWN_HANDLERS, CUSTOM_HANDLER_SENTINEL, NODE_TYPES, emptyDraft, type LintReport, type NodeTypeId, type StudioNode, type StudioPositions, type StudioWorkflow, type Transition, type WhenMap } from '../types/studio';
 
 const NODE_W = 150;
@@ -790,6 +790,7 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
   const [messages, setMessages] = useState<PiChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [streamStatus, setStreamStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+  const [sessionStatus, setSessionStatus] = useState<PiSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [draftContent, setDraftContent] = useState<string | null>(null);
@@ -825,8 +826,9 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
     setStreamStatus('connected');
     source.addEventListener('snapshot', (event) => {
       try {
-        const snap = JSON.parse((event as MessageEvent).data) as { messages?: PiChatMessage[] };
+        const snap = JSON.parse((event as MessageEvent).data) as { messages?: PiChatMessage[]; session?: { status?: PiSessionStatus } };
         setMessages(snap.messages || []);
+        if (snap.session?.status) setSessionStatus(snap.session.status);
         setStreamStatus('connected');
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -849,7 +851,13 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
     const err = messages.find((m) => m.status === 'error');
     return err ? err.text : null;
   }, [messages]);
-  const hasNoDraft = !busy && messages.length > 0 && !lastAssistant && !piError;
+  // When the session reached 'done' with no assistant draft and no error,
+  // the adapter completed but produced nothing — usually a misconfigured
+  // provider/model (e.g. real SDK without TESSERAFT_PI_ADAPTER=fake). This
+  // is distinct from a hard 'error' status and from a still-running session,
+  // so it gets a specific diagnostic instead of the generic nudge hint.
+  const completedNoDraft = !busy && sessionStatus === 'done' && messages.length > 0 && !lastAssistant && !piError;
+  const hasNoDraft = !busy && sessionStatus !== 'done' && messages.length > 0 && !lastAssistant && !piError;
 
   const sendPrompt = async (): Promise<void> => {
     if (!sessionId || !prompt.trim()) return;
@@ -890,6 +898,7 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
       </dl>
       {error && <div className="error">{error}</div>}
       {piError && <div className="error">Pi returned an error: {piError}. Refine the prompt and send again to retry.</div>}
+      {completedNoDraft && <div className="error">Pi completed without generating a response. The Pi adapter may not be configured with a provider/model. Set TESSERAFT_PI_ADAPTER=fake on the server for local testing, or configure a default provider/model in Settings. Refine the prompt and send again to retry.</div>}
       {streamStatus === 'error' && <div className="error">Live stream disconnected. Reopen the composer to reconnect.</div>}
       {busy && <div className="muted">Working…</div>}
       {hasNoDraft && <div className="muted">No assistant draft yet. Send a follow-up prompt to nudge Pi.</div>}
