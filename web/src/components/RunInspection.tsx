@@ -173,19 +173,22 @@ export const RunInspection = ({ runSummary, runDetail, events, artifacts, runErr
         ) : null}
       </div>
 
-      {runDetail && <AttemptTimeline attempts={runDetail.attempts || []} selectedNodeId={selectedNodeId} />}
-      <ArtifactBrowser runId={runSummary.run_id} artifacts={artifacts} selectedNodeId={selectedNodeId} />
+      <details className="run-detail-more">
+        <summary>Show attempts, artifacts, and events</summary>
+        {runDetail && <AttemptTimeline attempts={runDetail.attempts || []} selectedNodeId={selectedNodeId} />}
+        <ArtifactBrowser runId={runSummary.run_id} artifacts={artifacts} selectedNodeId={selectedNodeId} />
 
-      <h3>Events</h3>
-      <ol className="event-list">
-        {visibleEvents.length === 0 && <li className="muted">No events found.</li>}
-        {visibleEvents.map((event, index) => (
-          <li key={`${eventName(event)}-${index}`} className={selectedNodeId && nodeForEvent(event) === selectedNodeId ? 'related' : ''}>
-            <code>{eventName(event)}</code>
-            <pre>{JSON.stringify(event, null, 2)}</pre>
-          </li>
-        ))}
-      </ol>
+        <h3>Events</h3>
+        <ol className="event-list">
+          {visibleEvents.length === 0 && <li className="muted">No events found.</li>}
+          {visibleEvents.map((event, index) => (
+            <li key={`${eventName(event)}-${index}`} className={selectedNodeId && nodeForEvent(event) === selectedNodeId ? 'related' : ''}>
+              <code>{eventName(event)}</code>
+              <pre>{JSON.stringify(event, null, 2)}</pre>
+            </li>
+          ))}
+        </ol>
+      </details>
     </section>
   );
 };
