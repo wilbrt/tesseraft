@@ -404,6 +404,28 @@ bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
          (spit (str malformed "/events.jsonl") "{bad json}\n")
          (assert (= "parse_error" (get-in (cp/get-run-events {:workspace-root base :runs-root "malformed"} "bad-events") [:error :code]))))'
 
+printf '\nChecking issues.json spurious-failure suppression and heart-aware liveness...\n'
+bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
+       (let [dir (java.nio.file.Files/createTempDirectory "tesseraft-issues-liveness" (make-array java.nio.file.attribute.FileAttribute 0))
+             base (str dir)
+             run-dir (str base "/wf/issues-run")]
+         (.mkdirs (java.io.File. run-dir))
+         (spit (str run-dir "/issues.json") "[]")
+         (assert (false? (cp/issues-artifact-has-issues? run-dir "issues.json")) "empty issues.json should not be a failure")
+         (spit (str run-dir "/issues-real.json") "[{\"title\":\"x\"}]")
+         (assert (true? (cp/issues-artifact-has-issues? run-dir "issues-real.json")) "non-empty issues.json should be a failure")
+         (spit (str run-dir "/issues-map.json") "{\"issues\":[{\"title\":\"x\"}]}")
+         (assert (true? (cp/issues-artifact-has-issues? run-dir "issues-map.json")) "non-empty issues map should be a failure")
+         (let [old "2000-01-01T00:00:00Z"
+               recent (str (java.time.Instant/now))
+               summary {:status "running" :state :work :updated_at old}
+               attempts [{:state "work" :status "running" :attempt 1}]]
+           (assert (= "orphaned" (:liveness (cp/derive-liveness summary attempts {:last-activity-at old}))) "old heartbeat => orphaned")
+           (assert (= "executing" (:liveness (cp/derive-liveness summary attempts {:last-activity-at recent}))) "recent heartbeat => executing"))
+         (let [summary {:status "running" :state :work :updated_at "2999-01-01T00:00:00Z"}
+               attempts [{:state "work" :status "running" :attempt 1}]]
+           (assert (= "executing" (:liveness (cp/derive-liveness summary attempts))) "future updated_at => executing")))'
+
 echo "Checking GitHub PR URL normalization..."
 bb -e '(require (quote tesseraft.adapters.builtin))
        (let [u tesseraft.adapters.builtin/github-pr-url]

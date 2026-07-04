@@ -245,6 +245,31 @@
   (when-let [t (parse-instant s)]
     (.getSeconds (java.time.Duration/between t (java.time.Instant/now)))))
 
+(defn latest-event-at
+  "Return the :at timestamp of the last event in the append-only events list, or
+  nil when there are no events. Events are written by the runtime on every
+  transition (node.started/finished/failed/orphaned, transition.selected,
+  effect.applied, run.*) with an :at timestamp, so the newest event is a fresh
+  heartbeat of run activity independent of state.edn's :updated-at (which is
+  only bumped on transitions, not while a subprocess is executing)."
+  [events]
+  (when (seq events)
+    (:at (last events))))
+
+(defn- newest-timestamp
+  "Given a collection of ISO-8601 timestamp strings, return the one that
+  parses to the latest java.time.Instant (the original string is preserved so
+  downstream string-consuming helpers like seconds-since still work). Returns
+  nil if none parse."
+  [ts]
+  (let [pairs (keep (fn [s] (when-let [i (parse-instant s)] [i s])) ts)]
+    (when (seq pairs)
+      (->> pairs
+           (reduce (fn [[best-i best-s] [i s]]
+                     (if (or (nil? best-i) (.isAfter i best-i)) [i s] [best-i best-s]))
+                   [nil nil])
+           second))))
+
 (defn derive-liveness
   "Additive, read-only heuristic liveness for a run. Returns a map with
   :liveness (one of done/failed/orphaned/stale/executing/parked) and
@@ -252,27 +277,42 @@
   attempts seq means we cannot see an in-flight node, so a fresh running run is
   reported as parked and a stale one as stale (acceptable for the Runs list).
   The full get-run path supplies real attempts so orphaned/executing are
-  distinguished."
-  [summary attempts]
-  (let [status (:status summary)
-        state-name (when (:state summary) (name (:state summary)))
-        non-terminal (not (#{"done" "failed" "error"} (str status)))
-        staleness-s (when non-terminal (seconds-since (:updated_at summary)))
-        threshold (staleness-threshold-seconds)
-        stale? (and staleness-s (>= staleness-s threshold))
-        current-running (when (and non-terminal state-name (seq attempts))
+  distinguished.
+
+  Optional :last-activity-at (an ISO-8601 timestamp) overrides/augments the
+  summary's :updated_at for staleness. The detail path (get-run/delete-run)
+  passes max(:updated_at, latest-event-at) here so a long-running node that is
+  actively emitting events is not marked stale/orphaned merely because
+  state.edn's :updated-at (bumped only on node transitions) is older than the
+  threshold. This preserves the fail-fast orphan intent: a wedged node stops
+  emitting events and still trips the threshold → orphaned."
+  ([summary attempts] (derive-liveness summary attempts nil))
+  ([summary attempts opts]
+   (let [status (:status summary)
+         state-name (when (:state summary) (name (:state summary)))
+         non-terminal (not (#{"done" "failed" "error"} (str status)))
+         last-activity (:last-activity-at opts)
+         activity-ts (when non-terminal
+                      (if last-activity
+                        (or (newest-timestamp [(:updated_at summary) last-activity])
+                            (:updated_at summary))
+                        (:updated_at summary)))
+         staleness-s (when non-terminal (seconds-since activity-ts))
+         threshold (staleness-threshold-seconds)
+         stale? (and staleness-s (>= staleness-s threshold))
+         current-running (when (and non-terminal state-name (seq attempts))
                           (->> attempts
                                (filter #(and (= state-name (str (:state %)))
                                              (= "running" (:status %))))
                                first))]
-    {:liveness
-     (cond
-       (= "done" (str status)) "done"
-       (#{"failed" "error"} (str status)) "failed"
-       current-running (if stale? "orphaned" "executing")
-       stale? "stale"
-       :else "parked")
-     :staleness_seconds staleness-s}))
+     {:liveness
+      (cond
+        (= "done" (str status)) "done"
+        (#{"failed" "error"} (str status)) "failed"
+        current-running (if stale? "orphaned" "executing")
+        stale? "stale"
+        :else "parked")
+      :staleness_seconds staleness-s})))
 
 (defn run-summary [options state-file]
   (let [{:keys [workspace-root]} (opts options)
@@ -615,12 +655,46 @@
                      (not (previewable? meta)) (api-value {:artifact meta :previewable false :reason "binary or unsupported content type"})
                      :else (api-value {:artifact meta :previewable true :content (slurp (str (:path safe)))})))))))))
 
-(defn failures-from-run [summary attempts artifacts]
+(defn issues-artifact-has-issues?
+  "True if the issues JSON artifact at `rel-path` under `run-dir` actually
+  contains issues, false otherwise. The initial issues.json is an empty array
+  `[]` written at run start by runtime.store/ensure-run-dirs!; its existence
+  therefore does NOT indicate a problem during a healthy run. Only flag a failure
+  here when the parsed content indicates real issues: a non-empty sequence, or a
+  map whose :issues (or top-level) field is a non-empty sequence. Empty arrays,
+  empty maps, null/missing, unparseable, or oversized files are NOT failures.
+  Bounded by max-read-size to avoid reading huge artifacts in this hot path."
+  [run-dir rel-path]
+  (when (and run-dir rel-path (not (str/blank? (str rel-path))))
+    (try
+      (let [safe (existing-safe-file run-dir rel-path)]
+        (when (and (not (:error safe)) (:exists safe))
+          ;; existing-safe-file already rejects directories/traversal/symlink
+          ;; escapes; reuse its path resolution and existence check.
+          (let [p (:path safe)]
+            (when (and p (<= (java.nio.file.Files/size p) max-read-size))
+              (let [content (try
+                             (json/parse-string (slurp (str p)) true)
+                             (catch Throwable _ ::unparseable))]
+                (boolean
+                  (cond
+                    (= content ::unparseable) false
+                    (nil? content) false
+                    (map? content)
+                    (let [issues (or (:issues content) (:items content) (:list content))]
+                      (and (sequential? issues) (seq issues)))
+                    (sequential? content) (seq content)
+                    :else (some? content))))))))
+      (catch Throwable _ false))))
+
+(defn failures-from-run [summary attempts artifacts run-dir]
   (vec (concat
          (when (#{"failed" "error"} (:status summary)) [{:source "run" :message (str "Run status: " (:status summary))}])
          (for [attempt attempts :when (#{"failed" "error"} (:status attempt))]
            {:source "attempt" :node_id (:node_id attempt) :message (or (:error attempt) "Attempt failed")})
-         (for [artifact artifacts :when (and (:exists artifact) (re-find #"(?i)issues.*\.json$" (:path artifact)))]
+         (for [artifact artifacts
+               :when (and (:exists artifact) (re-find #"(?i)issues.*\.json$" (:path artifact)))
+               :when (issues-artifact-has-issues? run-dir (:path artifact))]
            {:source "artifact" :path (:path artifact) :message "Issues artifact present"}))))
 
 (defn get-run
@@ -635,15 +709,19 @@
              events (read-events-file (events-file run-dir))
              attempts (if (:error events) [] (attempts-from-context context events))
              artifacts (if (:error events) [] (list-artifacts* context run-dir events))
-             ;; Recompute liveness with real attempts so the detail view can
-             ;; distinguish orphaned/executing from parked/stale (ISSUES 3, 5).
-             live (derive-liveness summary attempts)]
+             ;; Heart-aware liveness: use the newest event :at as a fresh
+             ;; activity signal in addition to state.edn's :updated_at, so a
+             ;; node that is actively executing (emitting events) is not
+             ;; wrongly marked stale/orphaned merely because :updated_at is
+             ;; only bumped on node transitions. (DESIGN Change 2)
+             last-activity (when-not (:error events) (latest-event-at events))
+             live (derive-liveness summary attempts (when last-activity {:last-activity-at last-activity}))]
          (api-value
            {:run (-> summary
                      (assoc :liveness (:liveness live)
                             :staleness_seconds (:staleness_seconds live)
                             :attempts attempts
-                            :failures (failures-from-run summary attempts artifacts)
+                            :failures (failures-from-run summary attempts artifacts run-dir)
                             :links {:events (str "/runs/" run-id "/events")
                                     :artifacts (str "/runs/" run-id "/artifacts")}))}))))))
 
@@ -672,7 +750,8 @@
              summary (run-summary options state-file)
              events (read-events-file (events-file run-dir))
              attempts (if (:error events) [] (attempts-from-context context events))
-             live (derive-liveness summary attempts)]
+             last-activity (when-not (:error events) (latest-event-at events))
+             live (derive-liveness summary attempts (when last-activity {:last-activity-at last-activity}))]
          (if (= "executing" (:liveness live))
            (error-response 409 "conflict" "Run is still executing"
                            {:run_id run-id :liveness (:liveness live)})
