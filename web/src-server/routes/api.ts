@@ -229,6 +229,20 @@ const WORKFLOW_NAME_RE = /^[a-z][a-z0-9-]{0,62}$/;
 const projectWorkflowsRoot = (): string => path.join(WORKSPACE_ROOT, '.tesseraft', 'workflows');
 const workflowFilePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'workflow.edn');
 const workflowStatePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'studio-state.json');
+// Bundled example workflows live under examples/<name>/ (the control-plane's
+// default :workflow-roots). Studio reads resolve the project workflow file
+// first, then fall back to the example so example workflows are loadable in
+// the Studio (read-only view). Writes (PUT) always target the project path
+// under .tesseraft/workflows/ so examples are never mutated; saving an
+// example creates a project copy that shadows it on later loads.
+const exampleWorkflowFilePath = (name: string): string => path.join(ROOT_DIR, 'examples', name, 'workflow.edn');
+const resolveReadableWorkflowFile = (name: string): string | null => {
+  const primary = workflowFilePath(name);
+  if (fs.existsSync(primary)) return primary;
+  const example = exampleWorkflowFilePath(name);
+  if (fs.existsSync(example)) return example;
+  return null;
+};
 
 // Workflow package asset files (e.g. prompt templates) live alongside
 // workflow.edn under `.tesseraft/workflows/<name>/`. The composer (see design
@@ -349,8 +363,9 @@ const handleCreateStudioWorkflow = async (req: Request, res: Response): Promise<
 };
 
 const handleGetStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
-  const filePath = workflowFilePath(name);
-  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  void req;
+  const filePath = resolveReadableWorkflowFile(name);
+  if (!filePath) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
   let edn: string;
   try {
     edn = await fs.promises.readFile(filePath, 'utf8');
@@ -358,7 +373,8 @@ const handleGetStudioWorkflow = async (req: Request, res: Response, name: string
     return jsonResponse(res, 500, errorBody(500, 'internal_error', error instanceof Error ? error.message : 'Failed to read workflow'));
   }
   const state = await readStudioState(name);
-  jsonResponse(res, 200, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn'), edn }, state });
+  const relPath = path.relative(ROOT_DIR, filePath);
+  jsonResponse(res, 200, { workflow: { name, path: relPath, edn }, state });
 };
 
 const handlePutStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
@@ -413,8 +429,8 @@ const handlePutStudioWorkflow = async (req: Request, res: Response, name: string
 
 const handleLintStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
   void req;
-  const filePath = workflowFilePath(name);
-  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  const filePath = resolveReadableWorkflowFile(name);
+  if (!filePath) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
   const lint = await runLint(filePath);
   jsonResponse(res, 200, { ok: lint.ok, errors: lint.errors, warnings: lint.warnings, diagnostics: lint.diagnostics });
 };

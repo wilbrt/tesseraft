@@ -841,6 +841,16 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
     return asst.length > 0 ? asst[asst.length - 1] : null;
   }, [messages]);
 
+  // Surface Pi/SDK failures prominently. The real adapter can emit a
+  // session.error event (status='error') with empty assistant content when
+  // the upstream model errors (e.g. usage limit). Without this, the modal
+  // shows a 'connected' stream, no draft, and no indication that Pi failed.
+  const piError = useMemo(() => {
+    const err = messages.find((m) => m.status === 'error');
+    return err ? err.text : null;
+  }, [messages]);
+  const hasNoDraft = !busy && messages.length > 0 && !lastAssistant && !piError;
+
   const sendPrompt = async (): Promise<void> => {
     if (!sessionId || !prompt.trim()) return;
     const toSend = prompt;
@@ -879,7 +889,10 @@ const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onS
         <dt>Stream</dt><dd><span className={`status-pill ${streamStatus}`}>{streamStatus}</span></dd>
       </dl>
       {error && <div className="error">{error}</div>}
+      {piError && <div className="error">Pi returned an error: {piError}. Refine the prompt and send again to retry.</div>}
+      {streamStatus === 'error' && <div className="error">Live stream disconnected. Reopen the composer to reconnect.</div>}
       {busy && <div className="muted">Working…</div>}
+      {hasNoDraft && <div className="muted">No assistant draft yet. Send a follow-up prompt to nudge Pi.</div>}
       <div className="pi-chat-transcript" aria-label="Prompt composer transcript">
         {messages.length === 0 && <div className="empty">Seeding the draft with Pi…</div>}
         {messages.map((m) => (

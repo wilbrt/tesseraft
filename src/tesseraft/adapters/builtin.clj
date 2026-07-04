@@ -327,7 +327,12 @@
         out-path (artifact-path ctx (or (get-in node [:outputs :test-server :path]) "manual-testing/test-server.json"))]
     (when build-command
       (apply shell! {:dir cwd} (map str build-command)))
-    (let [proc (p/process command {:dir cwd :out :pipe :err :pipe})
+    (let [;; Default the manual test server to the fake Pi adapter so the
+          ;; compose -> preview -> save flow is deterministic without real
+          ;; API spend. Respect an explicitly inherited TESSERAFT_PI_ADAPTER
+          ;; so real-SDK manual testing remains opt-in via the parent env.
+          pi-env {"TESSERAFT_PI_ADAPTER" (or (System/getenv "TESSERAFT_PI_ADAPTER") "fake")}
+          proc (p/process command {:dir cwd :out :pipe :err :pipe :extra-env pi-env})
           java-proc (:proc proc)
           pid (java-pid java-proc)
           stdout-reader (java.io.BufferedReader. (java.io.InputStreamReader. (:out proc)))

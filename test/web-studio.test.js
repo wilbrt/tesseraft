@@ -201,6 +201,23 @@ test('POST /api/studio/workflows/:name/lint returns the linter report', async (t
   assert.ok(typeof body.ok === 'boolean');
 });
 
+test('GET /api/studio/workflows/:name falls back to bundled example workflows', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  // Example workflows ship under examples/<name>/ and are not copied into
+  // .tesseraft/workflows/ in a fresh workspace. The Studio must still load
+  // them so the composer can target example agent nodes (read-only view).
+  const res = await fetch(`${base}/api/studio/workflows/smoke`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.workflow.name, 'smoke');
+  assert.match(body.workflow.edn, /:workflow/);
+  assert.match(body.workflow.path, /examples\/smoke\/workflow\.edn$/);
+});
+
 test('GET /api/studio/workflows/:name/assets/* 404s for a missing asset', async (t) => {
   const server = createServer();
   const port = await listen(server);
