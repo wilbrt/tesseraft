@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphEdge, GraphNode } from '../lib/graphLayout';
 import { createStudioWorkflow, getStudioWorkflow, lintStudioWorkflow, saveStudioWorkflow, type SaveStudioResult } from '../lib/studio';
-import { NODE_TYPES, emptyDraft, type LintReport, type NodeTypeId, type StudioNode, type StudioPositions, type StudioWorkflow, type Transition, type WhenMap } from '../types/studio';
+import { KNOWN_HANDLERS, CUSTOM_HANDLER_SENTINEL, NODE_TYPES, emptyDraft, type LintReport, type NodeTypeId, type StudioNode, type StudioPositions, type StudioWorkflow, type Transition, type WhenMap } from '../types/studio';
 
 const NODE_W = 150;
 const NODE_H = 56;
@@ -45,6 +45,32 @@ const toGraphEdges = (draft: StudioWorkflow): GraphEdge[] => {
 };
 
 const makeNodeKeyword = (id: string): string => `:${id}`;
+
+// Sensible default values derived from a node id. Applied only to fields that
+// are still empty/still hold a previous auto-derived value, so user edits are
+// never clobbered. The linter remains the final authority.
+const defaultPathsFor = (id: string, type: NodeTypeId): Partial<Record<keyof NodeFormState, string>> => {
+  if (!id) return {};
+  switch (type) {
+    case ':agent':
+      return {
+        agentPromptTemplate: `prompts/${id}.md.tmpl`,
+        agentPromptOutput: `prompts/generated/${id}.md`,
+        agentStatusPath: `status/${id}-status.json`
+      };
+    case ':process':
+      return { processCommand: `node scripts/${id}.js` };
+    case ':approval':
+      return { approvalMessage: `Approve ${id}?` };
+    default:
+      return {};
+  }
+};
+
+const titleFromId = (id: string): string => {
+  if (!id) return '';
+  return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+};
 
 const buildNodeFields = (form: NodeFormState): Partial<StudioNode> => {
   const node: Partial<StudioNode> = { id: form.id, type: form.type, title: form.title || undefined };
@@ -112,6 +138,14 @@ type NodeFormState = {
   transitions: Transition[] | undefined;
 };
 
+// Keys on NodeFormState that `defaultPathsFor` may auto-fill. Tracked so that
+// editing the id only overwrites a field when it still equals a prior
+// auto-derived value (not a user edit).
+const AUTO_FIELDS: Array<keyof NodeFormState> = [
+  'agentPromptTemplate', 'agentPromptOutput', 'agentStatusPath',
+  'processCommand', 'approvalMessage', 'title'
+];
+
 const emptyForm = (type: NodeTypeId): NodeFormState => ({
   id: '',
   type,
@@ -132,6 +166,15 @@ const emptyForm = (type: NodeTypeId): NodeFormState => ({
   terminalStatus: ':success',
   transitions: undefined
 });
+
+// Snapshot of the auto-derived values for the current id/type, used to detect
+// whether a field still holds an auto value (and can be safely replaced when
+// the id changes) versus a user edit (must be preserved).
+const autoSnapshot = (id: string, type: NodeTypeId): Partial<NodeFormState> => {
+  const snap: Partial<NodeFormState> = { title: titleFromId(id) };
+  Object.assign(snap, defaultPathsFor(id, type));
+  return snap;
+};
 
 const formFromNode = (node: StudioNode): NodeFormState => {
   const base = emptyForm(node.type);
@@ -198,7 +241,16 @@ const NodeForm = ({ form, setForm, draft, excludeId }: { form: NodeFormState; se
       )}
       {form.type === ':deterministic' && (
         <>
-          <div className="row"><label>Handler</label><input type="text" value={form.deterministicHandler} onChange={(e) => set({ deterministicHandler: e.target.value })} placeholder=":git/ensure-worktree" /></div>
+          <div className="row"><label>Handler</label>
+            <select value={KNOWN_HANDLERS.includes(form.deterministicHandler) ? form.deterministicHandler : CUSTOM_HANDLER_SENTINEL}
+              onChange={(e) => set({ deterministicHandler: e.target.value === CUSTOM_HANDLER_SENTINEL ? '' : e.target.value })}>
+              {KNOWN_HANDLERS.map((h) => <option key={h} value={h}>{h}</option>)}
+              <option value={CUSTOM_HANDLER_SENTINEL}>Custom…</option>
+            </select>
+            {!KNOWN_HANDLERS.includes(form.deterministicHandler) && (
+              <input type="text" className="mt" value={form.deterministicHandler} onChange={(e) => set({ deterministicHandler: e.target.value })} placeholder=":my-org/my-handler" />
+            )}
+          </div>
           <div className="row"><label>Next state</label><select value={form.deterministicNext} onChange={(e) => set({ deterministicNext: e.target.value })}><option value="">(none)</option>{otherNodeIds.map((id) => <option key={id} value={id}>{id}</option>)}</select></div>
         </>
       )}
@@ -301,6 +353,7 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [whenForConnect, setWhenForConnect] = useState<WhenMap>({});
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [connectTarget, setConnectTarget] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(initialWorkflowName);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
@@ -570,23 +623,20 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
 
   const handleCanvasClick = (e: React.MouseEvent): void => {
     if (!connectFrom) return;
-    void e;
-    // target detection happens on node hitbox; this is a backdrop click = cancel
+    // Only treat a click on the SVG background itself as a backdrop cancel.
+    // A click on a node hitbox button bubbles here too; node handler stops
+    // propagation, so this guard is a secondary safeguard.
+    if (e.target !== e.currentTarget) return;
     setConnectFrom(null);
   };
 
   const onNodeClickDuringConnect = (nodeId: string): void => {
     if (!connectFrom) return;
     if (connectFrom === nodeId) { setConnectFrom(null); return; }
-    // existing workflow loaded? Use draft in state.
-    setConnectFrom(connectFrom);
-    // open when-modal
     setWhenForConnect({});
+    setConnectTarget(nodeId);
     setShowConnectModal(true);
-    // store target via a ref-ish closure
-    pendingConnectTarget.current = nodeId;
   };
-  const pendingConnectTarget = useRef<string | null>(null);
 
   if (!draft) {
     return (
@@ -649,7 +699,7 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
               <foreignObject x="0" y="0" width={NODE_W} height={NODE_H}>
                 <button className="node-hitbox" type="button" aria-label={`Node ${node.id}`}
                   onPointerDown={(e) => onNodePointerDown(e, node.id)}
-                  onClick={() => { if (connectFrom) onNodeClickDuringConnect(node.id); }}
+                  onClick={(e) => { if (connectFrom) { e.stopPropagation(); onNodeClickDuringConnect(node.id); } }}
                 />
               </foreignObject>
             </g>
@@ -681,13 +731,13 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
       )}
 
       {/* Connect: when editor modal */}
-      {showConnectModal && connectFrom && pendingConnectTarget.current && (
-        <ModalShell title={`Connect ${connectFrom} → ${pendingConnectTarget.current}`} onClose={() => setShowConnectModal(false)}>
+      {showConnectModal && connectFrom && connectTarget && (
+        <ModalShell title={`Connect ${connectFrom} → ${connectTarget}`} onClose={() => { setShowConnectModal(false); setConnectFrom(null); setConnectTarget(null); }}>
           <p>Set the <code>:when</code> condition for this transition.</p>
           <WhenEditor value={whenForConnect} onChange={setWhenForConnect} />
           <div className="modal-actions">
-            <button type="button" onClick={() => { addTransition(connectFrom, pendingConnectTarget.current!, whenForConnect); setShowConnectModal(false); setConnectFrom(null); pendingConnectTarget.current = null; }}>Connect</button>
-            <button type="button" onClick={() => { setShowConnectModal(false); setConnectFrom(null); pendingConnectTarget.current = null; }}>Cancel</button>
+            <button type="button" onClick={() => { addTransition(connectFrom, connectTarget, whenForConnect); setShowConnectModal(false); setConnectFrom(null); setConnectTarget(null); }}>Connect</button>
+            <button type="button" onClick={() => { setShowConnectModal(false); setConnectFrom(null); setConnectTarget(null); }}>Cancel</button>
           </div>
         </ModalShell>
       )}
@@ -699,18 +749,73 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
 };
 
 const NodeFormModal = ({ title, draft, initial, excludeId, onClose, onSubmit }: { title: string; draft: StudioWorkflow; initial: NodeFormState; excludeId?: string; onClose: () => void; onSubmit: (form: NodeFormState) => string | null }) => {
-  const [type, setType] = useState<NodeTypeId>(initial.type);
   const [form, setForm] = useState<NodeFormState>(initial);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setForm((prev) => ({ ...emptyForm(type), id: prev.id, title: prev.title })); }, [type]);
+
+  // Tracks the auto-derived values last applied for the current id/type, so
+  // that changing the id re-derives defaults only for fields whose value still
+  // equals the previous auto value (untouched by the user). A user edit that
+  // differs from the prior auto value is never clobbered.
+  const autoRef = useRef<{ id: string; type: NodeTypeId; values: Partial<NodeFormState> }>({ id: initial.id, type: initial.type, values: initial.id ? autoSnapshot(initial.id, initial.type) : {} });
+
+  // Re-derive auto defaults for `id`/`t`. Called on first mount (fill empties
+  // only) and whenever the id input changes (refresh fields still at their
+  // prior auto value). `force` fills even non-empty fields on first mount for
+  // an empty form (e.g. Add node), but never overwrites user edits on edit.
+  const rederive = (id: string, t: NodeTypeId, force: boolean): void => {
+    const prev = autoRef.current;
+    const next = id ? autoSnapshot(id, t) : {} as Partial<NodeFormState>;
+    setForm((cur) => {
+      const patch: Partial<NodeFormState> = {};
+      for (const key of AUTO_FIELDS) {
+        const oldAuto = prev.values[key];
+        const curVal = cur[key] as string;
+        if (force && curVal === '') {
+          (patch as Record<string, unknown>)[key] = (next as Record<string, unknown>)[key] ?? '';
+        } else if (!force && (curVal === '' || (oldAuto !== undefined && curVal === oldAuto))) {
+          (patch as Record<string, unknown>)[key] = (next as Record<string, unknown>)[key] ?? '';
+        }
+      }
+      return { ...cur, ...patch };
+    });
+    autoRef.current = { id, type: t, values: next };
+  };
+
+  // First mount: derive once. For an empty form (Add node) with no id yet,
+  // there's nothing to derive; id-input changes will fill as the user types.
+  // For an Edit-node form with an existing id and real values, only empties
+  // are filled (force=true targets empties only).
+  useEffect(() => { if (initial.id) rederive(initial.id, initial.type, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // Intercept setForm: when the id changes, re-derive defaults for the new
+  // id and apply both the new id and rederived values in a single render.
+  const setFormTracked: React.Dispatch<React.SetStateAction<NodeFormState>> = (updater) => {
+    setForm((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next.id === prev.id) return next;
+      // id changed: rederive against the new id/type.
+      const prevAuto = autoRef.current.values;
+      const snap = next.id ? autoSnapshot(next.id, next.type) : {} as Partial<NodeFormState>;
+      for (const key of AUTO_FIELDS) {
+        const oldAuto = prevAuto[key];
+        const curVal = (next as Record<string, unknown>)[key] as string;
+        if (curVal === '' || (oldAuto !== undefined && curVal === oldAuto)) {
+          (next as Record<string, unknown>)[key] = (snap as Record<string, unknown>)[key] ?? '';
+        }
+      }
+      autoRef.current = { id: next.id, type: next.type, values: snap };
+      return next;
+    });
+  };
+
   return (
     <ModalShell title={title} onClose={onClose} wide>
       <div className="row"><label>Node type</label>
-        <select value={form.type} onChange={(e) => { const t = e.target.value as NodeTypeId; setType(t); setForm((prev) => ({ ...emptyForm(t), id: prev.id, title: prev.title })); }}>
+        <select value={form.type} onChange={(e) => { const t = e.target.value as NodeTypeId; setForm((prev) => ({ ...emptyForm(t), id: prev.id, title: prev.id ? titleFromId(prev.id) : '' })); rederive(form.id, t, true); }}>
           {NODE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
-      <NodeForm form={form} setForm={setForm} draft={draft} excludeId={excludeId} />
+      <NodeForm form={form} setForm={setFormTracked} draft={draft} excludeId={excludeId} />
       {error && <div className="error">{error}</div>}
       <div className="modal-actions">
         <button type="button" onClick={() => { const err = onSubmit(form); if (err) setError(err); }}>Save node</button>

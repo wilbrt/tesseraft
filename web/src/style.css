@@ -297,13 +297,15 @@ pre {
 }
 
 /* Workflow Studio */
+.studio { grid-column: 1 / -1; display: flex; flex-direction: column; min-height: 0; height: calc(100vh - 14rem); min-height: 30rem; }
 .studio .studio-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; align-items: center; }
 .studio-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .studio-toolbar button { cursor: pointer; border: 1px solid #2563eb; border-radius: 0.4rem; padding: 0.35rem 0.7rem; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
 .studio-toolbar button:hover:not(:disabled) { background: #dbeafe; }
 .studio-toolbar button:disabled { opacity: 0.55; cursor: not-allowed; }
 .studio-banner { background: #fef9c3; border: 1px solid #fde68a; color: #713f12; padding: 0.5rem 0.75rem; border-radius: 0.5rem; margin: 0.5rem 0; }
-.studio-canvas { user-select: none; min-height: 18rem; }
+.studio-canvas { user-select: none; flex: 1 1 auto; min-height: 0; height: 100%; }
+.studio-canvas svg { width: 100%; height: 100%; }
 .studio-node { cursor: grab; }
 .studio-node:active { cursor: grabbing; }
 .studio-edge { cursor: context-menu; }
@@ -327,6 +329,7 @@ button.link { background: transparent; border: 0; color: #1d4ed8; text-decoratio
 .node-form .row, .transition-row { display: grid; gap: 0.35rem; }
 .node-form label { font-weight: 600; color: #475569; font-size: 0.85rem; }
 .node-form input[type="text"], .node-form select, .node-form input { width: 100%; }
+.node-form .mt { margin-top: 0.4rem; }
 .node-form fieldset { border: 1px solid #d9dee8; border-radius: 0.5rem; padding: 0.65rem; display: grid; gap: 0.5rem; }
 .node-form legend { font-weight: 700; color: #1d4ed8; padding: 0 0.35rem; }
 

@@ -10,6 +10,27 @@ export type NodeTypeId = ':agent' | ':deterministic' | ':process' | ':timer' | '
 
 export const NODE_TYPES: NodeTypeId[] = [':agent', ':deterministic', ':process', ':timer', ':approval', ':router', ':terminal'];
 
+// Known deterministic handlers. Source of truth: `default-known-handlers` in
+// `src/tesseraft/spec.clj`. The web UI is a thin authoring shell with no
+// Clojure dependency, so the small static list is duplicated here; the linter
+// remains the final authority and accepts unknown handlers via the
+// "Custom…" option. Update this when the Clojure registry changes.
+export const KNOWN_HANDLERS: string[] = [
+  ':jira/fetch-ticket',
+  ':git/ensure-branch',
+  ':git/ensure-worktree',
+  ':git/push',
+  ':github/create-pr',
+  ':github/fetch-pr-feedback',
+  ':web/start-test-server',
+  ':notify/pinga',
+  ':noop/succeed'
+];
+
+// Sentinel value used by the deterministic-node handler <select> to indicate
+// the user wants to type a custom handler keyword not in KNOWN_HANDLERS.
+export const CUSTOM_HANDLER_SENTINEL = '__custom__';
+
 export type WhenMap = Record<string, string>;
 
 export type Transition = {
