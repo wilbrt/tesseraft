@@ -228,11 +228,11 @@ pre {
 }
 
 /* Run view overhaul: centered runs table with search + in-place expansion */
-.run-list-table { display: grid; gap: 0.75rem; }
+.run-list-table { display: grid; gap: 0.75rem; min-width: 0; }
 .run-list-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
 .run-list-toolbar h2 { margin: 0; }
 .run-list-search { flex: 1 1 18rem; font: inherit; border: 1px solid #cbd5e1; border-radius: 0.45rem; padding: 0.4rem 0.6rem; }
-.runs-table { width: 100%; border-collapse: collapse; }
+.runs-table { width: 100%; border-collapse: collapse; min-width: 0; }
 .runs-table caption { caption-side: top; text-align: left; padding: 0.25rem 0; }
 .runs-table th, .runs-table td { text-align: left; padding: 0.55rem 0.6rem; border-top: 1px solid #edf0f5; vertical-align: top; }
 .runs-table thead th { border-top: 0; border-bottom: 2px solid #d9dee8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: #667085; }
@@ -241,6 +241,17 @@ pre {
 .runs-table-row:hover { background: #f8fafc; }
 .runs-table-row.expanded { background: #eef2ff; }
 .runs-table-inspection-row td { padding: 0; border-top: 1px solid #d9dee8; background: #f8fafc; }
+
+/* Mobile responsiveness: prevent the runs table from forcing horizontal overflow.
+   Tables default to min-content width; clamp to the container with fixed layout
+   and let cell content wrap at narrow viewports. */
+@media (max-width: 480px) {
+  .run-list-table { max-width: 100%; }
+  .runs-table { table-layout: fixed; }
+  .runs-table th, .runs-table td { overflow-wrap: anywhere; word-break: break-word; }
+  .runs-table code { overflow-wrap: anywhere; }
+  .runs-table-inspection-row td { min-width: 0; }
+}
 .run-inspection { padding: 1rem; display: grid; gap: 0.85rem; }
 .run-inspection-header { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: center; }
 .run-inspection-header .status-pill { margin-left: 0.35rem; }
