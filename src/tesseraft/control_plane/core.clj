@@ -927,6 +927,15 @@
                                   ;; Set/replace.
                                   :else (assoc acc k v)))
                               current updates)]
-               (fs/create-dirs (fs/parent target))
-               (store/write-json! target merged)
-               (get-settings options)))))))))
+               ;; Cross-field consistency: a default model without a default
+               ;; provider is an inconsistent state. Reject it here so the
+               ;; store never holds model-without-provider (this also defends
+               ;; the CLI and direct API callers, not just the web UI).
+               (if (and (contains? merged :pi_default_model)
+                        (not (contains? merged :pi_default_provider)))
+                 (error-response 400 "bad_request"
+                                 "pi_default_provider is required when pi_default_model is set")
+                 (do
+                   (fs/create-dirs (fs/parent target))
+                   (store/write-json! target merged)
+                   (get-settings options)))))))))))

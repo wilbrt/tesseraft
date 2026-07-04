@@ -61,6 +61,17 @@ export const SettingsPanel = () => {
   const save = async (): Promise<void> => {
     setError(null);
     setInfo(null);
+    // Cross-field consistency: a default model without a default provider is
+    // an inconsistent state. Validate inline before submitting so the user
+    // gets a clear error and the save does not go through. The check uses the
+    // *resulting* values: an empty field clears the stored value (the updates
+    // object below sends null when a value was stored), so empty => null.
+    const effectiveProvider = provider.trim() !== '' ? provider.trim() : null;
+    const effectiveModel = model.trim() !== '' ? model.trim() : null;
+    if (effectiveModel && !effectiveProvider) {
+      setError('Default provider is required when a default model is set. Clear the model first, or set a provider.');
+      return;
+    }
     const updates: Record<string, unknown> = {};
     if (provider.trim() !== '') updates.pi_default_provider = provider.trim();
     else if (settings?.pi_default_provider) updates.pi_default_provider = null;

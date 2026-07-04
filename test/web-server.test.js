@@ -712,14 +712,37 @@ test('web server exposes settings read and write via the control plane with mask
   // And the stored value is unchanged.
   assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).github_token, 'ghp_secretvalue1234');
 
-  // Clearing a non-token field with an empty value removes it.
-  const cleared = await fetch(`${base}/api/settings`, {
+  // Clearing the provider while a model is still set is an inconsistent
+  // state and must be rejected (cross-field validation).
+  const inconsistent = await fetch(`${base}/api/settings`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ pi_default_provider: null })
   });
+  assert.equal(inconsistent.status, 400);
+  assert.equal((await inconsistent.json()).error.code, 'bad_request');
+  // The stored file is unchanged: provider still 'anthropic'.
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).pi_default_provider, 'anthropic');
+
+  // Clearing both provider and model removes them and is allowed.
+  const cleared = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_provider: null, pi_default_model: null })
+  });
   assert.equal(cleared.status, 200);
-  assert.equal((await cleared.json()).settings.pi_default_provider, null);
+  const clearedBody = await cleared.json();
+  assert.equal(clearedBody.settings.pi_default_provider, null);
+  assert.equal(clearedBody.settings.pi_default_model, null);
+
+  // Setting a model without a provider is also rejected.
+  const modelOnly = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_model: 'gpt-4o-mini' })
+  });
+  assert.equal(modelOnly.status, 400);
+  assert.equal((await modelOnly.json()).error.code, 'bad_request');
 });
 
 test('control-plane derived attempts do not treat exit code zero as a failure', () => {
