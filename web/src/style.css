@@ -20,6 +20,9 @@ header {
 header h1 { margin: 0; font-size: clamp(1.45rem, 4vw, 2rem); }
 header p { margin: 0; color: #cbd5e1; }
 .header-topline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.header-topline .status-pill { margin-right: auto; }
+.header-start-button { cursor: pointer; border: 0; border-radius: 999px; padding: 0.45rem 0.95rem; background: #1d4ed8; color: white; font-weight: 700; font-size: 0.9rem; }
+.header-start-button:hover { background: #1e40af; }
 .context-strip { display: grid; grid-template-columns: repeat(4, minmax(10rem, 1fr)); gap: 0.5rem; margin-top: 0.85rem; }
 .context-chip, .context-mini span { display: grid; gap: 0.1rem; min-width: 0; overflow-wrap: anywhere; border: 1px solid rgba(203, 213, 225, 0.35); border-radius: 0.65rem; padding: 0.5rem 0.65rem; background: rgba(15, 23, 42, 0.26); color: #e2e8f0; }
 .context-chip strong, .context-mini strong { color: #cbd5e1; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -227,14 +230,17 @@ pre {
   .event-head { display: grid; }
 }
 
-/* Run view overhaul: centered runs table with search + in-place expansion */
-.run-list-table { display: grid; gap: 0.75rem; min-width: 0; }
+/* Run view overhaul: centered runs table with search + in-place expansion.
+   The Runs tab renders only this panel, so span both grid columns to give
+   the table the full main width instead of being trapped in the narrow right
+   column (which left the left gutter empty and squeezed the table). */
+.run-list-table { display: grid; gap: 0.75rem; min-width: 0; grid-column: 1 / -1; }
 .run-list-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
 .run-list-toolbar h2 { margin: 0; }
 .run-list-search { flex: 1 1 18rem; font: inherit; border: 1px solid #cbd5e1; border-radius: 0.45rem; padding: 0.4rem 0.6rem; }
-.runs-table { width: 100%; border-collapse: collapse; min-width: 0; }
+.runs-table { width: 100%; border-collapse: collapse; min-width: 0; table-layout: fixed; }
 .runs-table caption { caption-side: top; text-align: left; padding: 0.25rem 0; }
-.runs-table th, .runs-table td { text-align: left; padding: 0.55rem 0.6rem; border-top: 1px solid #edf0f5; vertical-align: top; }
+.runs-table th, .runs-table td { text-align: left; padding: 0.55rem 0.6rem; border-top: 1px solid #edf0f5; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
 .runs-table thead th { border-top: 0; border-bottom: 2px solid #d9dee8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: #667085; }
 .runs-table-row { cursor: pointer; }
 .runs-table-row:focus { outline: 2px solid #2563eb; outline-offset: -2px; }
@@ -243,13 +249,10 @@ pre {
 .runs-table-inspection-row td { padding: 0; border-top: 1px solid #d9dee8; background: #f8fafc; }
 
 /* Mobile responsiveness: prevent the runs table from forcing horizontal overflow.
-   Tables default to min-content width; clamp to the container with fixed layout
-   and let cell content wrap at narrow viewports. */
+   The wrap rules above are now applied at all viewports; this block retains
+   the explicit narrow-viewport clamp for safety. */
 @media (max-width: 480px) {
   .run-list-table { max-width: 100%; }
-  .runs-table { table-layout: fixed; }
-  .runs-table th, .runs-table td { overflow-wrap: anywhere; word-break: break-word; }
-  .runs-table code { overflow-wrap: anywhere; }
   .runs-table-inspection-row td { min-width: 0; }
 }
 .run-inspection { padding: 1rem; display: grid; gap: 0.85rem; }
