@@ -295,3 +295,47 @@ pre {
   .node-title { fill: #f8fafc; }
   .node-type, .graph-edge text { fill: #cbd5e1; }
 }
+
+/* Workflow Studio */
+.studio .studio-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; align-items: center; }
+.studio-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.studio-toolbar button { cursor: pointer; border: 1px solid #2563eb; border-radius: 0.4rem; padding: 0.35rem 0.7rem; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.studio-toolbar button:hover:not(:disabled) { background: #dbeafe; }
+.studio-toolbar button:disabled { opacity: 0.55; cursor: not-allowed; }
+.studio-banner { background: #fef9c3; border: 1px solid #fde68a; color: #713f12; padding: 0.5rem 0.75rem; border-radius: 0.5rem; margin: 0.5rem 0; }
+.studio-canvas { user-select: none; min-height: 18rem; }
+.studio-node { cursor: grab; }
+.studio-node:active { cursor: grabbing; }
+.studio-edge { cursor: context-menu; }
+.studio-edge line { stroke-width: 2.5; }
+.toast { background: #dcfce7; border: 1px solid #86efac; color: #14532d; padding: 0.5rem 0.75rem; border-radius: 0.5rem; margin: 0.5rem 0; }
+
+.context-menu { position: fixed; z-index: 50; min-width: 9rem; background: white; border: 1px solid #d9dee8; border-radius: 0.5rem; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18); padding: 0.35rem; display: grid; gap: 0.15rem; }
+.context-menu button { cursor: pointer; border: 0; background: transparent; text-align: left; padding: 0.35rem 0.5rem; border-radius: 0.35rem; font-weight: 600; color: #172033; }
+.context-menu button:hover { background: #eff6ff; color: #1d4ed8; }
+.edge-when-popup { display: grid; gap: 0.5rem; min-width: 16rem; }
+
+button.link { background: transparent; border: 0; color: #1d4ed8; text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
+.label.check, label.check { display: inline-flex; gap: 0.35rem; align-items: center; }
+
+.when-editor { display: grid; gap: 0.4rem; }
+.when-editor .row { display: flex; gap: 0.35rem; align-items: center; }
+.when-editor .row input[type="text"] { flex: 1; min-width: 0; }
+.when-editor .row span { color: #64748b; }
+
+.node-form { display: grid; gap: 0.5rem; }
+.node-form .row, .transition-row { display: grid; gap: 0.35rem; }
+.node-form label { font-weight: 600; color: #475569; font-size: 0.85rem; }
+.node-form input[type="text"], .node-form select, .node-form input { width: 100%; }
+.node-form fieldset { border: 1px solid #d9dee8; border-radius: 0.5rem; padding: 0.65rem; display: grid; gap: 0.5rem; }
+.node-form legend { font-weight: 700; color: #1d4ed8; padding: 0 0.35rem; }
+
+.lint-list { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.25rem; }
+.lint-list li { border-left: 3px solid #f59e0b; padding: 0.3rem 0.5rem; background: #fffbeb; border-radius: 0.25rem; font-size: 0.92rem; }
+.lint-list li.lint-error { border-left-color: #dc2626; background: #fef2f2; }
+.lint-list li.lint-warning { border-left-color: #f59e0b; }
+
+.modal.wide { max-width: 38rem; }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.75rem; }
+.modal-actions button { cursor: pointer; border: 1px solid #2563eb; border-radius: 0.4rem; padding: 0.4rem 0.8rem; background: #1d4ed8; color: white; font-weight: 700; }
+.modal-actions button:nth-child(2) { background: transparent; color: #1d4ed8; }

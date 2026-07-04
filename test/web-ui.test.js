@@ -278,6 +278,47 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /Run start was guarded/);
 });
 
+test('Workflow Studio UI source exposes canvas, toolbar, context menus, and save modes (design doc)', () => {
+  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
+  const studio = fs.readFileSync('web/src/components/WorkflowStudio.tsx', 'utf8');
+  const panels = fs.readFileSync('web/src/components/WorkflowPanels.tsx', 'utf8');
+  const studioLib = fs.readFileSync('web/src/lib/studio.ts', 'utf8');
+  const types = fs.readFileSync('web/src/types/studio.ts', 'utf8');
+  // App exposes a Studio tab and renders WorkflowStudio.
+  assert.match(app, /'studio'/);
+  assert.match(app, /<WorkflowStudio /);
+  assert.match(app, />Studio <span>author<\/span>/);
+  // WorkflowPanels offers the create-workflow entry point and per-row Studio edit.
+  assert.match(panels, /Create workflow/);
+  assert.match(panels, /Edit .* in Studio/);
+  // Studio component implements the toolbar with the three save/clear actions.
+  assert.match(studio, /Add node/);
+  assert.match(studio, /Save draft/);
+  assert.match(studio, /Save completed/);
+  assert.match(studio, /Clear canvas/);
+  // Drag-to-move via pointer handlers.
+  assert.match(studio, /onNodePointerDown/);
+  assert.match(studio, /onSvgPointerMove/);
+  // Node right-click context menu with Edit/Delete/Connect.
+  assert.match(studio, /onNodeContextMenu/);
+  assert.match(studio, /Connect/);
+  assert.match(studio, /Delete/);
+  // Edge right-click context menu with Edit when / Delete.
+  assert.match(studio, /onEdgeContextMenu/);
+  assert.match(studio, /Edit when/);
+  // Save completed runs the linter and blocks on failure.
+  assert.match(studio, /doSave\('completed'\)/);
+  assert.match(studioLib, /saveStudioWorkflow/);
+  assert.match(studioLib, /lintStudioWorkflow/);
+  assert.match(studioLib, /\/api\/studio\/workflows/);
+  assert.match(studioLib, /save_mode/);
+  assert.match(studioLib, /'completed'/);
+  // Node types per SPEC §5 are offered.
+  assert.match(types, /:agent/);
+  assert.match(types, /:terminal/);
+  assert.match(types, /:router/);
+});
+
 test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
   const onStart = async () => ({ operation: 'start' });
   const markup = renderToStaticMarkup(React.createElement(StartWorkflowWizard, {
