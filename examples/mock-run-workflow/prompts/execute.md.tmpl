@@ -1,0 +1,49 @@
+Fresh Pi session: SIMULATED EXECUTION (read-only).
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Issues file: {{run.issues-file}}
+- Repository root: {{inputs.repo-root}}
+
+Goal:
+Simulate the implementation described by the design, or address all
+outstanding issues from prior review/manual-testing attempts — *without
+mutating the repository*. Do not run the real implementation; produce a
+precise description of what would be changed instead.
+
+Rules (strict — this workflow forbids source mutation):
+- Do not edit source files. You do not have the `edit` tool, and you must
+  not use `bash` (redirects, `tee`, `sed -i`, `patch`, etc.) to write to
+  any tracked or untracked file under the worktree.
+- Do not run `git commit`, `git add`, or any mutation command.
+- Do not run package install, build, codegen, migration, or any step that
+  writes to the worktree (e.g. `npm install`, `npm run build`, codegen
+  scripts, database migrations).
+- `write` may only target files under the `{{run.dir}}/execution/`
+  artifact directory. Never `write` to source paths.
+- Leave the worktree working tree clean. The review node may run
+  `git status --porcelain` and fail if the tree is dirty.
+- Keep the simulated change focused on the prompt and design.
+
+What to produce instead of real edits:
+- Describe the precise edits you *would* make, file by file, with intended
+  diffs in fenced code blocks (prose diffs are fine). For each file,
+  explain the location, the old/new text, and the rationale.
+- Describe the validation commands you *would* run and the expected
+  outcome; do not run commands that mutate the worktree. Read-only checks
+  (`git diff`, `grep`, `ls`, reading files) are fine.
+- If prior issues exist, address each one in the simulated plan and note
+  how the would-be edits resolve it.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- If failing: {{run.dir}}/execution/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"simulated implementation described; no source mutation","issues_file":null}
+{"status":"fail","summary":"blocked: design is internally contradictory","issues_file":"execution/issues-{{run.round}}.json"}
+
+The summary must explicitly state that no source files were modified and
+that the worktree working tree was left clean.

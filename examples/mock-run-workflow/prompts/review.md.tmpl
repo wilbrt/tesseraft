@@ -1,0 +1,48 @@
+Fresh Pi session: CODE REVIEW (simulated implementation).
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design doc: {{run.dir}}/design/design.md
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Manual-testing report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+- Worktree root: {{run.worktree-dir}}
+
+Goal:
+Review the *simulated* implementation against the prompt and design, then
+explicitly emit a pass/fail status artifact that controls the workflow
+route. This workflow has no PR step: on pass, the run terminates
+successfully at `:done`; there is no PR-draft or PR-creation node.
+
+What to review:
+- The design doc and the execution summary (the would-be edit plan), not a
+  real diff. There are no PR artifacts to assess and no code changes
+  expected.
+- The manual-testing report, when present.
+- Correctness, completeness, and risks of the *described* changes, as if
+  they were about to be applied. Flag any gap between the simulated plan
+  and the design/prompt.
+
+Rules:
+- Do not edit source code.
+- The worktree working tree must be clean (this workflow forbids source
+  mutation). Run `git -C {{run.worktree-dir}} status --porcelain`; if it
+  reports any tracked-source change, that is an actionable issue — fail
+  and write it up. (Untracked agent-artifact files under the run dir are
+  expected and not a failure.)
+- Check for correctness, regressions, missing tests, security issues, and overbroad changes in the *simulated* plan.
+- Produce actionable issues only.
+- If the simulated implementation is acceptable, pass so the workflow can terminate successfully.
+- If the simulated implementation is not acceptable, fail and write issues so the workflow can merge them, increment the round, and return to execution.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- If failing: {{run.dir}}/review/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"review passed (simulated)","issues_file":null}
+{"status":"fail","summary":"review found issues with the simulated plan","issues_file":"review/issues-{{run.round}}.json"}
+
+Failure issues should be JSON matching the issues schema and should contain only actionable review findings for the next execution round.
