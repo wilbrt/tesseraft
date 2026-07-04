@@ -124,7 +124,7 @@ export const SettingsPanel = () => {
   return (
     <section className="panel settings-panel" aria-label="Settings">
       <h2>Settings</h2>
-      <p className="muted">Configure default provider/model for Pi sessions, GitHub and Jira tokens, and the default repo root for workflows. The existing Git user identity (name + email) is also managed here. Values are stored in the project-local <code>.tesseraft/settings.json</code> and <code>.tesseraft/git-user.json</code> files; the browser never owns these values.</p>
+      <p className="muted">Configure default provider/model for Pi sessions, GitHub and Jira tokens, and the default repo root for workflows. The existing Git user identity (name + email) is also managed here. Values are stored in the project-local <code>.tesseraft/settings.json</code> and <code>.tesseraft/git-user.json</code> files; the browser never owns these values. <strong>Note:</strong> token fields and the default repo root are <em>stored only</em> — their runtime consumers are pending wiring (see field notes). Only Pi default provider/model currently affect created Pi sessions.</p>
       <p className="warning">Tokens are stored as plaintext in local config files (single-user localhost-only server). Leave a token field blank to keep its current value; clear the field text and save to remove it.</p>
       {error && <div className="error">{error}</div>}
       {info && <div className="success">{info}</div>}
@@ -145,7 +145,8 @@ export const SettingsPanel = () => {
         </label>
 
         <h3>Tokens</h3>
-        <p className="muted">Stored for future use by gh-operations and Jira adapters. Current values are masked.</p>
+        <p className="muted">Persisted locally for gh-operations and Jira adapters. <strong>Stored only</strong>: runtime consumers are not yet wired — tokens are saved here but workflow runs do not currently read them. Current values are masked.</p>
+        <span className="warning inline">Pending consumer wiring (stored only).</span>
         <label>
           GitHub token
           <input type="password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} placeholder="Leave blank to keep current" />
@@ -161,7 +162,7 @@ export const SettingsPanel = () => {
         <label>
           Default repo root
           <input value={repoRoot} onChange={(event) => setRepoRoot(event.target.value)} placeholder="/Users/me/projects/my-repo" />
-          <small>Default repository root for new workflow runs.</small>
+          <small>Default repository root for new workflow runs. <strong>Stored only</strong>: this value is saved to <code>.tesseraft/settings.json</code> but the Start-workflow wizard does not yet pre-seed a repo-root field from it (pending consumer wiring).</small>
         </label>
 
         <h3>Git identity</h3>

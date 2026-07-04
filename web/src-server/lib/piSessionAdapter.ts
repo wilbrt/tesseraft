@@ -202,6 +202,34 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
     }
   };
 
+  // Resolve a stored `pi_default_provider`/`pi_default_model` pair into a
+  // real `Model<any>` the Pi SDK actually understands. The SDK's
+  // `createAgentSession` options accept `model?: Model<any>` (a constructed
+  // Model object, NOT a string) and `modelRegistry?`/`authStorage?` for
+  // discovery. Passing string-valued `provider`/`modelId` keys is silently
+  // ignored (see CreateAgentSessionOptions in the installed
+  // @earendil-works/pi-coding-agent/dist/core/sdk.d.ts), so we must resolve
+  // the catalog Model ourselves via ModelRegistry.find(provider, modelId).
+  // Both ModelRegistry and AuthStorage are re-exported by the same dynamic
+  // `@earendil-works/pi-coding-agent` import used below; we do NOT import
+  // `@earendil-works/pi-ai` directly because it is not hoisted into this
+  // project's node_modules (it is only a transitive dep of pi-coding-agent).
+  const resolveSettingsModel = async (sdk: Record<string, unknown>, defaults: { provider?: string; model?: string }): Promise<unknown | undefined> => {
+    if (!defaults.provider || !defaults.model) return undefined;
+    const ModelRegistryCtor = sdk.ModelRegistry as (new () => unknown) & { create?: (authStorage: unknown, modelsJsonPath?: string) => { find: (provider: string, modelId: string) => unknown | undefined } } | undefined;
+    const AuthStorageCtor = sdk.AuthStorage as (new () => unknown) & { create?: (authPath?: string) => unknown } | undefined;
+    if (!ModelRegistryCtor || typeof ModelRegistryCtor.create !== 'function') return undefined;
+    if (!AuthStorageCtor || typeof AuthStorageCtor.create !== 'function') return undefined;
+    try {
+      const authStorage = AuthStorageCtor.create();
+      const registry = ModelRegistryCtor.create(authStorage);
+      const model = typeof registry.find === 'function' ? registry.find(defaults.provider, defaults.model) : undefined;
+      return model;
+    } catch {
+      return undefined;
+    }
+  };
+
   const sessions = new Map<string, RealSession>();
   let nextSession = 1;
   let nextEvent = 1;
@@ -250,14 +278,17 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
       }
       const sessionManager = (sessionManagerFactory as { inMemory: () => unknown }).inMemory();
       const defaults = await readPiDefaults();
+      // Resolve the stored provider/model into a real `Model<any>` via the
+      // SDK's ModelRegistry. createAgentSession only honors `options.model`
+      // (a constructed Model object); string provider/modelId keys are
+      // silently ignored, so resolution must happen here. If the configured
+      // provider/model is not findable in the catalog (unknown provider, typo,
+      // or no models.json entry), fall through to the SDK's own default model
+      // discovery rather than blocking session creation.
+      const resolvedModel = await resolveSettingsModel(sdk, defaults);
       const baseOptions: Record<string, unknown> = { sessionManager };
-      // Pass default provider/model into the SDK when configured. The exact
-      // option key shape varies by SDK version; pass a small set of candidate
-      // keys and fall back to the plain sessionManager call if the SDK rejects
-      // them, so a settings default never blocks session creation.
       const withDefaults: Record<string, unknown> = { ...baseOptions };
-      if (defaults.provider) { withDefaults.provider = defaults.provider; withDefaults.modelProvider = defaults.provider; }
-      if (defaults.model) { withDefaults.model = defaults.model; withDefaults.modelId = defaults.model; }
+      if (resolvedModel !== undefined) withDefaults.model = resolvedModel;
       let result: { session: SdkSession };
       try {
         result = await (createAgentSession as (options: unknown) => Promise<{ session: SdkSession }>)(withDefaults);
