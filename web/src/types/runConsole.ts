@@ -13,8 +13,20 @@ export type Liveness = 'executing' | 'parked' | 'orphaned' | 'stale' | 'done' | 
 export const DELETABLE_LIVENESS: Liveness[] = ['done', 'failed', 'orphaned', 'stale', 'parked'];
 export const isDeletableLiveness = (liveness: Liveness | null | undefined): boolean =>
   liveness != null && DELETABLE_LIVENESS.includes(liveness);
-export type RunSummary = { run_id: string; workflow_name?: string; status?: string; liveness?: Liveness; staleness_seconds?: number | null };
-export type RunDetail = RunSummary & { state?: string; round?: number; attempt?: number; path?: string; attempts?: Attempt[]; failures?: Failure[] };
+export type RunSummary = {
+  run_id: string;
+  workflow_name?: string;
+  status?: string;
+  liveness?: Liveness;
+  staleness_seconds?: number | null;
+  /** ISO timestamp the run was first created (emitted by the control plane). */
+  created_at?: string | null;
+  /** ISO timestamp of the last run update (emitted by the control plane). */
+  updated_at?: string | null;
+  /** Current workflow state id for the run (emitted by the control plane/run detail). */
+  state?: string | null;
+};
+export type RunDetail = RunSummary & { round?: number; attempt?: number; path?: string; attempts?: Attempt[]; failures?: Failure[] };
 export type EventRecord = { event?: string; type?: string; state?: string; from?: string; attempt?: number; [key: string]: unknown };
 export type MutationResult = { operation?: string; status?: string; code?: string; run_id?: string; cli?: unknown; latest_runtime?: unknown; run_detail?: unknown };
 

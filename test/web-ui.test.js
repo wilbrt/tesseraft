@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import { WorkflowGraph, formatCondition } from '../web/src/components/WorkflowGraph.tsx';
 import { layoutGraph } from '../web/src/lib/graphLayout.ts';
 import { StartWorkflowWizard } from '../web/src/components/StartWorkflowWizard.tsx';
+import { RunListTable } from '../web/src/components/RunListTable.tsx';
+import { runDurationLabel, isFinishedRun } from '../web/src/lib/runConsole.ts';
 
 test('layoutGraph produces deterministic visual positions and preserves node resources', () => {
   const layout = layoutGraph([
@@ -62,11 +64,77 @@ test('WorkflowGraph marks selected nodes for run correlation', () => {
   assert.match(markup, /graph-node selected/);
 });
 
+test('WorkflowGraph marks the run active node with a distinct active class', () => {
+  const markup = renderToStaticMarkup(React.createElement(WorkflowGraph, {
+    selectedNodeId: 'done',
+    activeNodeId: 'start',
+    nodes: [
+      { id: 'start', type: 'prompt', title: 'Start' },
+      { id: 'done', type: 'terminal', title: 'Done' }
+    ],
+    edges: [{ from: 'start', to: 'done' }]
+  }));
+  // Active and selected are independent highlights; both classes appear.
+  assert.match(markup, /graph-node active/);
+  assert.match(markup, /graph-node selected/);
+
+  // When a node is both active and selected, both classes apply on the same node.
+  const both = renderToStaticMarkup(React.createElement(WorkflowGraph, {
+    selectedNodeId: 'start',
+    activeNodeId: 'start',
+    nodes: [{ id: 'start', type: 'prompt', title: 'Start' }],
+    edges: []
+  }));
+  assert.match(both, /graph-node selected active/);
+});
+
+test('runDurationLabel and isFinishedRun derive run view fields null-safely', () => {
+  assert.equal(runDurationLabel({}), '—');
+  assert.equal(runDurationLabel({ created_at: 'not-a-date' }), '—');
+  assert.equal(isFinishedRun({ liveness: 'done' }), true);
+  assert.equal(isFinishedRun({ liveness: 'executing' }), false);
+  assert.equal(isFinishedRun({ liveness: null, status: 'error' }), true);
+  assert.equal(isFinishedRun({ status: 'running' }), false);
+});
+
+test('RunListTable renders a centered table with search, show-finished toggle, and expandable rows', () => {
+  const runs = {
+    data: [
+      { run_id: 'r1', workflow_name: 'smoke-demo', status: 'running', liveness: 'executing', state: 'start', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:02:13Z', staleness_seconds: null },
+      { run_id: 'r2', workflow_name: 'smoke-demo', status: 'done', liveness: 'done', state: 'done', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:01:00Z', staleness_seconds: null }
+    ],
+    error: null
+  };
+  const markup = renderToStaticMarkup(React.createElement(RunListTable, {
+    runs,
+    expandedRunId: null,
+    runDetail: null,
+    events: [],
+    artifacts: [],
+    runError: null,
+    selectedNodeId: null,
+    lastRunRefresh: null,
+    onToggleRow: () => {},
+    onSelectNode: () => {}
+  }));
+  assert.match(markup, /<table/);
+  assert.match(markup, /<th scope="col">Run<\/th>/);
+  assert.match(markup, /Search runs/);
+  assert.match(markup, /Show finished runs/);
+  // Default hides finished runs; only r1 should be rendered as data row.
+  assert.match(markup, /r1/);
+  assert.doesNotMatch(markup, /<code>r2<\/code>/);
+  assert.match(markup, /2m13s/);
+});
+
 test('Run component sources expose attempt, artifact, failure, and resource inspection surfaces', () => {
   const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
+  const runListTable = fs.readFileSync('web/src/components/RunListTable.tsx', 'utf8');
+  const runInspection = fs.readFileSync('web/src/components/RunInspection.tsx', 'utf8');
   const artifactBrowser = fs.readFileSync('web/src/components/ArtifactBrowser.tsx', 'utf8');
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const workflowGraph = fs.readFileSync('web/src/components/WorkflowGraph.tsx', 'utf8');
+  // WorkflowGraph still ships its default JSON detail view for Workflow Studio.
   assert.match(workflowGraph, /JSON\.stringify\(node, null, 2\)/);
   assert.match(workflowGraph, />Resources</);
   assert.match(workflowGraph, /JSON\.stringify\(node\.resources, null, 2\)/);
@@ -74,6 +142,16 @@ test('Run component sources expose attempt, artifact, failure, and resource insp
   assert.match(artifactBrowser, /Artifact browser/);
   assert.match(runPanels, /Issues to inspect/);
   assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
+  // Run view overhaul: in-place expandable table, search, show-finished, active node.
+  assert.match(runListTable, /Show finished runs/);
+  assert.match(runListTable, /Show only deletable runs/);
+  assert.match(runListTable, /aria-current=\{expanded \? 'true' : undefined\}/);
+  assert.match(runListTable, /status-pill/);
+  assert.match(runListTable, /aria-expanded=\{expanded\}/);
+  assert.match(runInspection, /activeNodeId/);
+  assert.match(runInspection, /renderNodeDetail/);
+  assert.match(runInspection, /Latest attempt/);
+  assert.match(runInspection, /Related events/);
 });
 
 test('Git user UI source exposes a config tab reading and writing the git user identity', () => {
@@ -121,6 +199,7 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
   const workflowPanels = fs.readFileSync('web/src/components/WorkflowPanels.tsx', 'utf8');
   const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
+  const runListTable = fs.readFileSync('web/src/components/RunListTable.tsx', 'utf8');
   assert.match(app, /Run Console sections/);
   assert.match(app, /Tesseraft Console/);
   assert.match(app, /Current console context/);
@@ -151,11 +230,11 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /Confirm permanent deletion of this run's directory/);
   assert.match(controls, /deleteJson<MutationResult>\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
   assert.match(controls, /isDeletableLiveness/);
-  assert.match(runPanels, /Show only deletable runs/);
+  assert.match(runListTable, /Show only deletable runs/);
   assert.match(controls, /Confirm one local node execution/);
   assert.match(workflowPanels, /aria-current=\{selected \? 'true' : undefined\}/);
-  assert.match(runPanels, /aria-current=\{selected \? 'true' : undefined\}/);
-  assert.match(runPanels, /status-pill/);
+  assert.match(runListTable, /aria-current=\{expanded \? 'true' : undefined\}/);
+  assert.match(runListTable, /status-pill/);
   // Start still goes through POST /api/runs from RunControls' onStart callback.
   assert.match(controls, /postJson<MutationResult>\('\/api\/runs'/);
   assert.match(controls, /max_steps: maxSteps/);

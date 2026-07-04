@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
-import { RunsPanel } from './components/RunPanels';
+import { RunListTable } from './components/RunListTable';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { GitUserPanel } from './components/GitUserPanel';
@@ -103,6 +103,25 @@ export const App = () => {
     return () => source.close();
   }, [selectedRun, runDetail?.status]);
 
+  const collapseRun = (): void => {
+    setSelectedRun(null);
+    setRunDetail(null);
+    setEvents([]);
+    setArtifacts([]);
+    setRunError(null);
+    setLastRunRefresh(null);
+    setSelectedNodeId(null);
+  };
+
+  const handleToggleRow = async (runId: string): Promise<void> => {
+    if (runId === selectedRun) {
+      collapseRun();
+    } else {
+      setSelectedNodeId(null);
+      await selectRun(runId);
+    }
+  };
+
   const refreshAfterMutation = async (runId?: string): Promise<void> => {
     await loadRuns();
     if (runId) {
@@ -147,7 +166,18 @@ export const App = () => {
           <WorkflowPanels workflows={workflows} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} graph={graph} selectedNodeId={selectedNodeId} workflowError={workflowError} onSelectWorkflow={selectWorkflow} onSelectNode={setSelectedNodeId} />
         )}
         {activeTab === 'runs' && (
-          <RunsPanel runs={runs} selectedRun={selectedRun} runDetail={runDetail} events={events} artifacts={artifacts} runError={runError} selectedNodeId={selectedNodeId} lastRunRefresh={lastRunRefresh} onSelectRun={selectRun} />
+          <RunListTable
+            runs={runs}
+            expandedRunId={selectedRun}
+            runDetail={runDetail}
+            events={events}
+            artifacts={artifacts}
+            runError={runError}
+            selectedNodeId={selectedNodeId}
+            lastRunRefresh={lastRunRefresh}
+            onToggleRow={handleToggleRow}
+            onSelectNode={setSelectedNodeId}
+          />
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'git-user' && <GitUserPanel />}
