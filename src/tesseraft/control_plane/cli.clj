@@ -69,6 +69,48 @@
              (control-plane/set-git-user options (:name p) (:email p) (:global p))))
       (control-plane/error-response 400 "bad_request" (str "Unknown git-user subcommand: " sub)))))
 
+(def ^:private settings-flags
+  {"--pi-default-provider" :pi_default_provider
+   "--pi-default-model" :pi_default_model
+   "--github-token" :github_token
+   "--jira-token" :jira_token
+   "--default-repo-root" :default_repo_root})
+
+(def ^:private settings-clear-flags
+  {"--clear-pi-default-provider" :pi_default_provider
+   "--clear-pi-default-model" :pi_default_model
+   "--clear-github-token" :github_token
+   "--clear-jira-token" :jira_token
+   "--clear-default-repo-root" :default_repo_root})
+
+(defn parse-settings-set-args [args]
+  (loop [xs args acc {} global false]
+    (if (empty? xs)
+      {:updates acc :global global}
+      (let [a (first xs)]
+        (cond
+          (= a "--global") (recur (rest xs) acc true)
+          (contains? settings-clear-flags a)
+          (recur (rest xs) (assoc acc (get settings-clear-flags a) nil) global)
+          (contains? settings-flags a)
+          (let [v (second xs)]
+            (if (nil? v)
+              (throw (ex-info (str "Missing value for " a) {:flag a}))
+              (recur (drop 2 xs) (assoc acc (get settings-flags a) v) global)))
+          :else (recur (rest xs) acc global))))))
+
+(defn settings-command [options args]
+  (let [[sub & rest] (if (empty? args) ["get"] args)]
+    (case sub
+      "get" (control-plane/get-settings options)
+      "set" (let [parsed (try (parse-settings-set-args rest)
+                              (catch Throwable t
+                                {:error t}))]
+              (if-let [err (:error parsed)]
+                (control-plane/error-response 400 "bad_request" (.getMessage err))
+                (control-plane/set-settings options (:updates parsed) (:global parsed))))
+      (control-plane/error-response 400 "bad_request" (str "Unknown settings subcommand: " sub)))))
+
 (defn require-nth-arg [opts idx label]
   (or (nth (:args opts) idx nil)
       (throw (ex-info (str "Missing " label) {:label label}))))
@@ -95,6 +137,7 @@
                    "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id"))
                    "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path"))
                    "git-user" (git-user-command options (:args opts))
+                   "settings" (settings-command options (:args opts))
                    (usage!))]
       (print-json! result)
       (when (not= 0 (exit-status result))

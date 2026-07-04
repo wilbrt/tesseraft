@@ -154,20 +154,32 @@ test('Run component sources expose attempt, artifact, failure, and resource insp
   assert.match(runInspection, /Related events/);
 });
 
-test('Git user UI source exposes a config tab reading and writing the git user identity', () => {
+test('Settings UI source exposes a config tab reading and writing settings plus git identity', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const panel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
+  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
+  const gitUserPanel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
   const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
-  assert.match(app, /'git-user'/);
-  assert.match(app, />Git user <span>config<\/span><\/button>/);
-  assert.match(app, /<GitUserPanel \/>/);
-  assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'git-user'/);
-  assert.match(panel, /Git user settings/);
-  assert.match(panel, /\.tesseraft\/git-user\.json/);
-  assert.match(panel, /\/api\/git-user/);
-  assert.match(panel, /putJson<GitUserResponse>\('\/api\/git-user'/);
-  assert.match(panel, /Save git user/);
+  assert.match(app, /'settings'/);
+  assert.match(app, />Settings <span>config<\/span><\/button>/);
+  assert.match(app, /<SettingsPanel \/>/);
+  assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'settings'/);
+  // The settings tab embeds the git identity fields and posts to /api/git-user.
+  assert.match(panel, /Settings/);
+  assert.match(panel, /\.tesseraft\/settings\.json/);
+  assert.match(panel, /\/api\/settings/);
+  assert.match(panel, /putJson<SettingsResponse>\('\/api\/settings'/);
+  assert.match(panel, /Default provider/);
+  assert.match(panel, /Default model/);
+  assert.match(panel, /GitHub token/);
+  assert.match(panel, /Jira token/);
+  assert.match(panel, /Default repo root/);
+  assert.match(panel, /Save settings/);
   assert.match(panel, /Source/);
+  assert.match(panel, /Git identity/);
+  assert.match(panel, /\/api\/git-user/);
+  // GitUserPanel is still present and unchanged (git-user.json contract preserved).
+  assert.match(gitUserPanel, /Git user settings/);
+  assert.match(gitUserPanel, /\.tesseraft\/git-user\.json/);
   assert.match(api, /export const putJson = async <T,>/);
 });
 

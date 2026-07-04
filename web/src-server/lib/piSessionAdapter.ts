@@ -183,6 +183,25 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
   type SdkSession = { sessionId?: string; subscribe?: (listener: (event: unknown) => void) => (() => void); prompt?: (text: string) => Promise<void>; dispose?: () => void };
   type RealSession = StoredSession & { sdkSession: SdkSession; unsubscribe?: () => void };
 
+  // Read default pi provider/model from the local settings file by shelling
+  // out to the control-plane (mirrors /api/settings). Settings are local files
+  // so this is cheap; reading per createSession keeps values fresh without a
+  // cache-invalidation strategy in the adapter lifetime.
+  const readPiDefaults = async (): Promise<{ provider?: string; model?: string }> => {
+    try {
+      const { runControlPlane } = await import('../lib/cli.js');
+      const result = await runControlPlane(['settings', 'get'], { timeout: 5000 });
+      if (result.status !== 200 || !result.body || typeof result.body !== 'object') return {};
+      const settings = (result.body as { settings?: Record<string, unknown> }).settings;
+      if (!settings) return {};
+      const provider = typeof settings.pi_default_provider === 'string' && settings.pi_default_provider.trim() !== '' ? settings.pi_default_provider : undefined;
+      const model = typeof settings.pi_default_model === 'string' && settings.pi_default_model.trim() !== '' ? settings.pi_default_model : undefined;
+      return { provider, model };
+    } catch {
+      return {};
+    }
+  };
+
   const sessions = new Map<string, RealSession>();
   let nextSession = 1;
   let nextEvent = 1;
@@ -229,7 +248,26 @@ export const createRealPiSessionAdapter = (): PiSessionAdapter => {
       if (typeof createAgentSession !== 'function' || !sessionManagerFactory || typeof (sessionManagerFactory as { inMemory?: unknown }).inMemory !== 'function') {
         throw Object.assign(new Error('Installed Pi SDK is incompatible: expected createAgentSession() and SessionManager.inMemory(). Update @earendil-works/pi-coding-agent or set TESSERAFT_PI_ADAPTER=fake for local fake responses.'), { status: 503, code: 'pi_adapter_unavailable' });
       }
-      const result = await (createAgentSession as (options: unknown) => Promise<{ session: SdkSession }>)({ sessionManager: (sessionManagerFactory as { inMemory: () => unknown }).inMemory() });
+      const sessionManager = (sessionManagerFactory as { inMemory: () => unknown }).inMemory();
+      const defaults = await readPiDefaults();
+      const baseOptions: Record<string, unknown> = { sessionManager };
+      // Pass default provider/model into the SDK when configured. The exact
+      // option key shape varies by SDK version; pass a small set of candidate
+      // keys and fall back to the plain sessionManager call if the SDK rejects
+      // them, so a settings default never blocks session creation.
+      const withDefaults: Record<string, unknown> = { ...baseOptions };
+      if (defaults.provider) { withDefaults.provider = defaults.provider; withDefaults.modelProvider = defaults.provider; }
+      if (defaults.model) { withDefaults.model = defaults.model; withDefaults.modelId = defaults.model; }
+      let result: { session: SdkSession };
+      try {
+        result = await (createAgentSession as (options: unknown) => Promise<{ session: SdkSession }>)(withDefaults);
+      } catch (firstError) {
+        try {
+          result = await (createAgentSession as (options: unknown) => Promise<{ session: SdkSession }>)(baseOptions);
+        } catch {
+          throw firstError;
+        }
+      }
       const sdkSession = result.session;
       const id = input.id?.trim() || sdkSession.sessionId || `pi-session-${nextSession++}`;
       if (!validId(id)) throw Object.assign(new Error('Session id may contain only letters, numbers, dot, underscore, and dash'), { status: 400, code: 'bad_request' });
