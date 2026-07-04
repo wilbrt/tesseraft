@@ -813,3 +813,129 @@
       (fs/create-dirs (fs/parent target))
       (store/write-json! target {:name name :email email})
       (get-git-user options))))
+
+;; ---- settings config (source of truth: .tesseraft/settings.json) ----
+;; Mirrors git-user precedence (project then global). Tokens are returned
+;; masked so the browser DOM never holds the full secret; the file itself is
+;; plaintext (local-only, no auth model) under the already-gitignored
+;; .tesseraft/ directory.
+
+(def ^:private settings-fields
+  [:pi_default_provider :pi_default_model :github_token
+   :jira_token :default_repo_root])
+
+(def ^:private settings-token-fields
+  #{:github_token :jira_token})
+
+(def ^:private settings-length-limits
+  {:pi_default_provider 100 :pi_default_model 200
+   :github_token 500 :jira_token 500 :default_repo_root 1000})
+
+;; Sentinel for "leave this token field as-is" (used by the web API to round-trip
+;; masked tokens safely). See docs in `set-settings`.
+(def settings-unchanged "__unchanged__")
+
+(defn settings-paths [options]
+  (let [{:keys [workspace-root]} (opts options)
+        home (tesseraft-home options)]
+    {:project (fs/path workspace-root ".tesseraft" "settings.json")
+     :global (fs/path home "settings.json")}))
+
+(defn read-settings-file [p]
+  (when (fs/exists? p)
+    (try (store/read-json p) (catch Throwable _ nil))))
+
+(defn coerce-settings
+  "Keep only the known settings fields from a parsed config map. Unknown
+  fields are dropped (ignored on read)."
+  [raw]
+  (if (map? raw)
+    (into {} (for [k settings-fields :when (contains? raw k)] [k (get raw k)]))
+    {}))
+
+(defn validate-settings-field [k v]
+  (cond
+    (nil? v) nil ;; not provided; nothing to validate
+    (not (string? v)) (str (name k) " must be a string")
+    (str/blank? (str/trim v)) (str (name k) " must not be empty")
+    (re-find #"\n" v) (str (name k) " must not contain newlines")
+    :else
+    (let [limit (get settings-length-limits k)]
+      (if (and limit (> (count v) limit))
+        (str (name k) " must be at most " limit " characters")
+        nil))))
+
+(defn mask-token [v]
+  (if (or (nil? v) (not (string? v)) (str/blank? v))
+    {:present false}
+    {:present true :preview (subs (str v) (max 0 (- (count (str v)) 4)))}))
+
+(defn mask-settings [settings]
+  (let [base {:pi_default_provider (or (:pi_default_provider settings) nil)
+              :pi_default_model (or (:pi_default_model settings) nil)
+              :default_repo_root (or (:default_repo_root settings) nil)}]
+    (-> base
+        (api-value)
+        (assoc :github_token (mask-token (:github_token settings))
+               :jira_token (mask-token (:jira_token settings))))))
+
+(defn get-settings
+  ([] (get-settings {}))
+  ([options]
+   (let [{:keys [project global]} (settings-paths options)
+         project-settings (coerce-settings (read-settings-file project))
+         global-settings (coerce-settings (read-settings-file global))
+         [source raw] (cond
+                        (seq project-settings) ["project" project-settings]
+                        (seq global-settings) ["global" global-settings]
+                        :else ["none" {}])
+         masked (-> raw (mask-settings) (assoc :source source))]
+     {:settings masked})))
+
+(defn set-settings
+  "Apply a partial update to the project (or global) settings file. `updates`
+  maps known field keywords to their new values. Entries may be nil (clear the
+  field) or, for token fields, the `settings-unchanged` sentinel to preserve.
+  Unknown keys are rejected. Returns the masked `get-settings` view."
+  ([options updates] (set-settings options updates false))
+  ([options updates global?]
+   (if (empty? updates)
+     (get-settings options)
+     (let [unknown (remove (set settings-fields) (keys updates))]
+       (if (seq unknown)
+         (error-response 400 "bad_request"
+                         (str "Unknown settings fields: "
+                              (str/join ", " (map name (sort unknown)))))
+         (let [errs (reduce (fn [acc [k v]]
+                              (if-let [e (validate-settings-field k v)]
+                                (conj acc e) acc))
+                            [] updates)]
+           (if (seq errs)
+             (error-response 400 "bad_request" (str/join "; " errs))
+             (let [paths (settings-paths options)
+                   target (if global? (:global paths) (:project paths))
+                   current (coerce-settings (read-settings-file target))
+                   merged (reduce
+                              (fn [acc [k v]]
+                                (cond
+                                  ;; Token unchanged: keep whatever is (or isn't) there.
+                                  (and (settings-token-fields k)
+                                       (= v settings-unchanged))
+                                  acc
+                                  ;; Clear: drop the key entirely (nil update).
+                                  (nil? v) (dissoc acc k)
+                                  ;; Set/replace.
+                                  :else (assoc acc k v)))
+                              current updates)]
+               ;; Cross-field consistency: a default model without a default
+               ;; provider is an inconsistent state. Reject it here so the
+               ;; store never holds model-without-provider (this also defends
+               ;; the CLI and direct API callers, not just the web UI).
+               (if (and (contains? merged :pi_default_model)
+                        (not (contains? merged :pi_default_provider)))
+                 (error-response 400 "bad_request"
+                                 "pi_default_provider is required when pi_default_model is set")
+                 (do
+                   (fs/create-dirs (fs/parent target))
+                   (store/write-json! target merged)
+                   (get-settings options)))))))))))

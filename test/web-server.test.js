@@ -100,6 +100,7 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifacts'), ['artifacts', 'smoke-test']);
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
   assert.deepEqual(routeApi('/api/git-user'), ['git-user']);
+  assert.deepEqual(routeApi('/api/settings'), ['settings']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
@@ -641,6 +642,107 @@ test('web server exposes git-user read and write via the control plane', async (
   const refreshedBody = await refreshed.json();
   assert.equal(refreshedBody.git_user.source, 'project');
   assert.equal(refreshedBody.git_user.name, 'Tess Bot');
+});
+
+test('web server exposes settings read and write via the control plane with masked tokens', async (t) => {
+  const configFile = path.join(process.cwd(), '.tesseraft', 'settings.json');
+  fs.rmSync(configFile, { force: true });
+  t.after(() => fs.rmSync(configFile, { force: true }));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const initial = await fetch(`${base}/api/settings`);
+  assert.equal(initial.status, 200);
+  const initialBody = await initial.json();
+  assert.equal(initialBody.settings.source, 'none');
+  assert.equal(initialBody.settings.pi_default_provider, null);
+  assert.equal(initialBody.settings.github_token.present, false);
+  assert.equal(initialBody.settings.jira_token.present, false);
+
+  const badWrite = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_provider: `a${'\n'}b` })
+  });
+  assert.equal(badWrite.status, 400);
+  assert.equal((await badWrite.json()).error.code, 'bad_request');
+  assert.equal(fs.existsSync(configFile), false);
+
+  const write = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      pi_default_provider: 'openai',
+      pi_default_model: 'gpt-4o-mini',
+      github_token: 'ghp_secretvalue1234',
+      jira_token: 'jira-token-abcd',
+      default_repo_root: '/tmp/my-repo'
+    })
+  });
+  assert.equal(write.status, 200);
+  const written = await write.json();
+  assert.equal(written.settings.source, 'project');
+  assert.equal(written.settings.pi_default_provider, 'openai');
+  assert.equal(written.settings.pi_default_model, 'gpt-4o-mini');
+  assert.equal(written.settings.default_repo_root, '/tmp/my-repo');
+  // Tokens must be masked — only present + last 4 preview, never full value.
+  assert.equal(written.settings.github_token.present, true);
+  assert.equal(written.settings.github_token.preview, '1234');
+  assert.equal(written.settings.jira_token.present, true);
+  assert.equal(written.settings.jira_token.preview, 'abcd');
+
+  const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  assert.equal(stored.github_token, 'ghp_secretvalue1234');
+  assert.equal(stored.jira_token, 'jira-token-abcd');
+
+  // The masked GET round-trips: sending the sentinel preserves the token.
+  const unchanged = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_provider: 'anthropic', github_token: null })
+  });
+  assert.equal(unchanged.status, 200);
+  const unchangedBody = await unchanged.json();
+  assert.equal(unchangedBody.settings.pi_default_provider, 'anthropic');
+  assert.equal(unchangedBody.settings.github_token.present, true);
+  assert.equal(unchangedBody.settings.github_token.preview, '1234');
+  // And the stored value is unchanged.
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).github_token, 'ghp_secretvalue1234');
+
+  // Clearing the provider while a model is still set is an inconsistent
+  // state and must be rejected (cross-field validation).
+  const inconsistent = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_provider: null })
+  });
+  assert.equal(inconsistent.status, 400);
+  assert.equal((await inconsistent.json()).error.code, 'bad_request');
+  // The stored file is unchanged: provider still 'anthropic'.
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).pi_default_provider, 'anthropic');
+
+  // Clearing both provider and model removes them and is allowed.
+  const cleared = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_provider: null, pi_default_model: null })
+  });
+  assert.equal(cleared.status, 200);
+  const clearedBody = await cleared.json();
+  assert.equal(clearedBody.settings.pi_default_provider, null);
+  assert.equal(clearedBody.settings.pi_default_model, null);
+
+  // Setting a model without a provider is also rejected.
+  const modelOnly = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pi_default_model: 'gpt-4o-mini' })
+  });
+  assert.equal(modelOnly.status, 400);
+  assert.equal((await modelOnly.json()).error.code, 'bad_request');
 });
 
 test('control-plane derived attempts do not treat exit code zero as a failure', () => {

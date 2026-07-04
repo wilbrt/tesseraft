@@ -24,6 +24,7 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
     return name === null ? { badRequest: 'Malformed workflow name' } : ['graph', name];
   }
   if (parts.length === 2 && parts[1] === 'git-user') return ['git-user'];
+  if (parts.length === 2 && parts[1] === 'settings') return ['settings'];
   if (parts.length === 2 && parts[1] === 'runs') return ['runs'];
   if (parts.length === 3 && parts[1] === 'runs') {
     const runId = safeDecode(parts[2]);
@@ -163,6 +164,59 @@ const readMaxSteps = (value: unknown, fallback: number): number | null => {
 };
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+const SETTINGS_TOKEN_FIELDS = new Set(['github_token', 'jira_token']);
+const SETTINGS_NON_TOKEN_FIELDS = new Set(['pi_default_provider', 'pi_default_model', 'default_repo_root']);
+const SETTINGS_FIELDS = new Set([...SETTINGS_TOKEN_FIELDS, ...SETTINGS_NON_TOKEN_FIELDS]);
+const SETTINGS_LENGTH_LIMITS: Record<string, number> = {
+  pi_default_provider: 100, pi_default_model: 200,
+  github_token: 500, jira_token: 500, default_repo_root: 1000
+};
+const SETTINGS_UNCHANGED = '__unchanged__';
+
+const validateSettingsField = (field: string, value: unknown): string | null => {
+  if (typeof value !== 'string') return `${field} must be a string`;
+  if (value.trim() === '') return `${field} must not be empty`;
+  if (/\n/.test(value)) return `${field} must not contain newlines`;
+  const limit = SETTINGS_LENGTH_LIMITS[field];
+  if (limit && value.length > limit) return `${field} must be at most ${limit} characters`;
+  return null;
+};
+
+const handleGetSettings = async (res: Response): Promise<void> => {
+  const result = await runControlPlane(['settings', 'get']);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleSetSettings = async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as JsonRecord;
+  const updates: JsonRecord = {};
+  for (const [field, raw] of Object.entries(body)) {
+    if (!SETTINGS_FIELDS.has(field)) return jsonResponse(res, 400, errorBody(400, 'bad_request', `Unknown settings field: ${field}`));
+    // Token unchanged sentinel: null or the literal sentinel preserves.
+    if (SETTINGS_TOKEN_FIELDS.has(field) && (raw === null || raw === SETTINGS_UNCHANGED)) {
+      updates[field] = SETTINGS_UNCHANGED;
+      continue;
+    }
+    if (raw === null) {
+      // Non-token field cleared.
+      updates[field] = null;
+      continue;
+    }
+    const err = validateSettingsField(field, raw);
+    if (err) return jsonResponse(res, 400, errorBody(400, 'bad_request', err));
+    updates[field] = raw;
+  }
+  const args = ['settings', 'set'];
+  for (const [field, value] of Object.entries(updates)) {
+    const flag = `--${field.replace(/_/g, '-')}`;
+    if (value === null) args.push(`--clear-${field.replace(/_/g, '-')}`);
+    else if (value === SETTINGS_UNCHANGED) args.push(flag, SETTINGS_UNCHANGED);
+    else args.push(flag, String(value));
+  }
+  const result = await runControlPlane(args);
+  return jsonResponse(res, result.status, result.body);
+};
 
 const readGitUser = (value: unknown): { name: string; email: string } | undefined | 'invalid' => {
   if (value === undefined || value === null) return undefined;
@@ -396,6 +450,8 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   router.get('/browse', (req, res, next) => { void handleBrowse(req, res).catch(next); });
   router.get('/git-user', (_req, res, next) => { void handleGetGitUser(res).catch(next); });
   router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
+  router.get('/settings', (_req, res, next) => { void handleGetSettings(res).catch(next); });
+  router.put('/settings', (req, res, next) => { void handleSetSettings(req, res).catch(next); });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });
   router.get('/runs/:runId/stream', (req, res, next) => {
