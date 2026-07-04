@@ -2,7 +2,7 @@
 // lint authority; the UI only sends/receives JSON drafts.
 
 import type { LintReport, StudioPositions, StudioWorkflow } from '../types/studio';
-import { getJson, postJson } from './api';
+import { getJson, postJson, putJson } from './api';
 
 export type CreateStudioWorkflowResponse = { workflow: { name: string; path: string } };
 export type StudioSidecar = { status: string; draft?: StudioWorkflow; positions?: StudioPositions; lint?: LintReport };
@@ -38,3 +38,16 @@ export const saveStudioWorkflow = async (name: string, draft: StudioWorkflow, po
 
 export const lintStudioWorkflow = (name: string): Promise<LintReport> =>
   postJson<LintReport>(`/api/studio/workflows/${encodeURIComponent(name)}/lint`, {}).then((res) => ({ ok: res.ok, errors: res.errors || [], warnings: res.warnings || [], diagnostics: res.diagnostics || [] }));
+
+// Workflow package asset read/write (prompt templates, etc.). The asset path
+// is a safe relative path under `.tesseraft/workflows/<name>/` (e.g.
+// `prompts/<id>.md.tmpl`). Slashes are valid path separators and the path is
+// validated server-side, so encodeURI (keeps slashes) is the right encoder.
+export type WorkflowAsset = { workflow: string; path: string; rel_path: string; content: string };
+export type WorkflowAssetWriteResult = { ok: boolean; workflow: string; path: string; rel_path: string };
+
+export const readWorkflowAsset = (name: string, assetPath: string): Promise<WorkflowAsset> =>
+  getJson<WorkflowAsset>(`/api/studio/workflows/${encodeURIComponent(name)}/assets/${encodeURI(assetPath)}`);
+
+export const writeWorkflowAsset = (name: string, assetPath: string, content: string): Promise<WorkflowAssetWriteResult> =>
+  putJson<WorkflowAssetWriteResult>(`/api/studio/workflows/${encodeURIComponent(name)}/assets/${encodeURI(assetPath)}`, { content });
