@@ -2,9 +2,10 @@ import type { Request, Response, Router } from 'express';
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runControlPlane, runRuntime, startRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
+import { runControlPlane, runLint, runRuntime, startRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
+import { toEdn } from '../lib/edn.js';
 import { errorBody, jsonResponse, safeDecode } from '../lib/http.js';
-import { ROOT_DIR } from '../lib/paths.js';
+import { ROOT_DIR, WORKSPACE_ROOT } from '../lib/paths.js';
 import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/piSessionAdapter.js';
 
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
@@ -217,6 +218,187 @@ const handleSetSettings = async (req: Request, res: Response): Promise<void> => 
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
 };
+
+
+// Workflow Studio authoring routes write workflow definition files under
+// `.tesseraft/workflows/<name>/workflow.edn` (project workspace). The CLI
+// discovers project workflows there, so the file is the source of truth once
+// written. Writes are path-confined to the project workflows root; drafts may
+// be invalid EDN-wise (linter is the authority on save-completed).
+const WORKFLOW_NAME_RE = /^[a-z][a-z0-9-]{0,62}$/;
+const projectWorkflowsRoot = (): string => path.join(WORKSPACE_ROOT, '.tesseraft', 'workflows');
+const workflowFilePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'workflow.edn');
+const workflowStatePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'studio-state.json');
+
+type StudioSidecar = { status: string; draft?: JsonRecord; positions?: Record<string, { x: number; y: number }>; lint?: { ok?: boolean; errors?: unknown[]; warnings?: unknown[] } };
+
+const readStudioState = async (name: string): Promise<StudioSidecar> => {
+  try {
+    const raw = await fs.promises.readFile(workflowStatePath(name), 'utf8');
+    return JSON.parse(raw) as StudioSidecar;
+  } catch {
+    return { status: 'draft' };
+  }
+};
+const writeStudioState = async (name: string, state: StudioSidecar): Promise<void> => {
+  await fs.promises.mkdir(path.dirname(workflowStatePath(name)), { recursive: true });
+  await fs.promises.writeFile(workflowStatePath(name), JSON.stringify(state, null, 2), 'utf8');
+};
+
+// Drop empty/optional fields so emitted EDN stays minimal and lint-friendly.
+// Keyword-valued strings keep their leading colon; empty strings, empty
+// objects/arrays, and null are omitted. `states` keys become string keys in
+// the EDN map (the emitter turns them into keywords).
+// Coerce id-reference fields the UI stores sans-colon into EDN keywords.
+// `initial`, per-node `next`, and per-transition `next` reference state ids;
+// the emitter only writes colon-prefixed strings as keywords, so prefix them
+// here. Other string values (e.g. :when condition values, metadata) stay as
+// quoted strings. The sidecar keeps the raw sans-colon draft for UI reload.
+const coerceKeyword = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) return undefined;
+  const str = String(value);
+  if (str === '') return undefined;
+  return str.startsWith(':') ? str : `:${str}`;
+};
+
+const coerceDraftKeywords = (draft: JsonRecord): JsonRecord => {
+  const out: JsonRecord = { ...draft };
+  out.initial = coerceKeyword(draft.initial) ?? null;
+  const statesIn = (draft.states || {}) as Record<string, JsonRecord>;
+  const statesOut: Record<string, JsonRecord> = {};
+  for (const id of Object.keys(statesIn)) {
+    const node = { ...statesIn[id] };
+    if (node.next) node.next = coerceKeyword(node.next);
+    if (Array.isArray(node.transitions)) {
+      node.transitions = (node.transitions as JsonRecord[]).map((t) => ({ ...t, next: coerceKeyword(t.next) }));
+    }
+    statesOut[id] = node;
+  }
+  out.states = statesOut;
+  return out;
+};
+
+const sanitizeDraft = (draft: JsonRecord): JsonRecord => {
+  const clean = (value: unknown): unknown => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    if (Array.isArray(value)) return value.map(clean).filter((item) => item !== undefined);
+    if (typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+        const cleaned = clean(val);
+        if (cleaned === undefined || cleaned === null) continue;
+        if (Array.isArray(cleaned) && cleaned.length === 0) continue;
+        if (typeof cleaned === 'object' && !Array.isArray(cleaned) && Object.keys(cleaned as Record<string, unknown>).length === 0) continue;
+        out[key] = cleaned;
+      }
+      return out;
+    }
+    return value;
+  };
+  const result = clean(draft) as JsonRecord;
+  return result;
+};
+
+const scaffoldWorkflowEdn = (name: string, description?: string): string => {
+  const metadata: Record<string, string> = { name };
+  if (description) metadata.description = description;
+  const workflow = {
+    'api-version': 'tesseraft.workflow/v1',
+    kind: ':workflow',
+    metadata,
+    initial: null,
+    states: {}
+  };
+  return toEdn(workflow);
+};
+
+const handleCreateStudioWorkflow = async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as JsonRecord;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  if (!WORKFLOW_NAME_RE.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must match /^[a-z][a-z0-9-]{0,62}$/'));
+  const fileDir = path.join(projectWorkflowsRoot(), name);
+  const filePath = workflowFilePath(name);
+  if (fs.existsSync(filePath)) return jsonResponse(res, 409, errorBody(409, 'conflict', 'A workflow with that name already exists', { name }));
+  await fs.promises.mkdir(fileDir, { recursive: true });
+  const draft: JsonRecord = { 'api-version': 'tesseraft.workflow/v1', kind: ':workflow', metadata: description ? { name, description } : { name }, initial: null, states: {} };
+  await fs.promises.writeFile(filePath, scaffoldWorkflowEdn(name, description || undefined), 'utf8');
+  await writeStudioState(name, { status: 'draft', draft, positions: {} });
+  jsonResponse(res, 201, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn') } });
+};
+
+const handleGetStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
+  const filePath = workflowFilePath(name);
+  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  let edn: string;
+  try {
+    edn = await fs.promises.readFile(filePath, 'utf8');
+  } catch (error) {
+    return jsonResponse(res, 500, errorBody(500, 'internal_error', error instanceof Error ? error.message : 'Failed to read workflow'));
+  }
+  const state = await readStudioState(name);
+  jsonResponse(res, 200, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn'), edn }, state });
+};
+
+const handlePutStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
+  if (!WORKFLOW_NAME_RE.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must match /^[a-z][a-z0-9-]{0,62}$/'));
+  const body = req.body as JsonRecord;
+  const mode = body.save_mode === 'completed' ? 'completed' : 'draft';
+  // Accept either pre-formatted EDN text (`edn`) or a JSON draft (`draft`) the
+  // server serializes via toEdn. The UI sends `draft` to avoid duplicating the
+  // EDN emitter in the bundle; the server is the serialization authority.
+  let payloadEdn: string | null = null;
+  let draftSnapshot: JsonRecord | null = null;
+  if (typeof body.edn === 'string') {
+    payloadEdn = body.edn;
+  } else if (body.draft && typeof body.draft === 'object') {
+    draftSnapshot = sanitizeDraft(body.draft as JsonRecord);
+    payloadEdn = toEdn(coerceDraftKeywords(draftSnapshot));
+  }
+  if (!payloadEdn) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Provide edn (string) or draft (object)'));
+  const positions = body.positions && typeof body.positions === 'object' && !Array.isArray(body.positions) ? body.positions as Record<string, { x: number; y: number }> : undefined;
+  const filePath = workflowFilePath(name);
+  const dir = path.dirname(filePath);
+  const draftsRoot = projectWorkflowsRoot();
+  const resolvedDir = path.resolve(dir);
+  if (!isUnderRoot(resolvedDir, draftsRoot)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Resolved path is outside the allowed root'));
+  // For completed saves, lint before persisting the real file. Write to a temp
+  // file under the same directory so the linter reads a real path, then either
+  // promote or reject without clobbering the existing file.
+  if (mode === 'completed') {
+    const tmpPath = path.join(dir, `.studio-lint-${Date.now()}.edn`);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(tmpPath, payloadEdn, 'utf8');
+    try {
+      const lint = await runLint(tmpPath);
+      if (!lint.ok) {
+        return jsonResponse(res, 422, { status: 422, ok: false, save_mode: 'completed', lint: { ok: false, errors: lint.errors, warnings: lint.warnings, diagnostics: lint.diagnostics } });
+      }
+      await fs.promises.writeFile(filePath, payloadEdn, 'utf8');
+      await writeStudioState(name, { status: 'completed', draft: draftSnapshot || undefined, positions, lint: { ok: true, errors: lint.errors, warnings: lint.warnings } });
+      return jsonResponse(res, 200, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn') }, ok: true, save_mode: 'completed', lint: { ok: true, errors: lint.errors, warnings: lint.warnings } });
+    } finally {
+      try { await fs.promises.unlink(tmpPath); } catch { /* ignore */ }
+    }
+  }
+  // Draft: persist unconditionally; lint non-blocking.
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(filePath, payloadEdn, 'utf8');
+  let lint: Awaited<ReturnType<typeof runLint>> | null = null;
+  try { lint = await runLint(filePath); } catch { lint = null; }
+  await writeStudioState(name, { status: 'draft', draft: draftSnapshot || undefined, positions, lint: lint ? { ok: lint.ok, errors: lint.errors, warnings: lint.warnings } : undefined });
+  jsonResponse(res, 200, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn') }, ok: true, save_mode: 'draft', lint: lint ? { ok: lint.ok, errors: lint.errors, warnings: lint.warnings } : null });
+};
+
+const handleLintStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
+  void req;
+  const filePath = workflowFilePath(name);
+  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  const lint = await runLint(filePath);
+  jsonResponse(res, 200, { ok: lint.ok, errors: lint.errors, warnings: lint.warnings, diagnostics: lint.diagnostics });
+}
 
 const readGitUser = (value: unknown): { name: string; email: string } | undefined | 'invalid' => {
   if (value === undefined || value === null) return undefined;
@@ -452,6 +634,26 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
   router.get('/settings', (_req, res, next) => { void handleGetSettings(res).catch(next); });
   router.put('/settings', (req, res, next) => { void handleSetSettings(req, res).catch(next); });
+
+  // Workflow Studio authoring routes (see design doc). These write workflow
+  // definition files under .tesseraft/workflows/ and run the linter as the
+  // save-completed gate. They are registered before the generic GET fallback.
+  router.post('/studio/workflows', (req, res, next) => { void handleCreateStudioWorkflow(req, res).catch(next); });
+  router.get('/studio/workflows/:name', (req, res, next) => {
+    const name = safeDecode(req.params.name);
+    if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    return void handleGetStudioWorkflow(req, res, name).catch(next);
+  });
+  router.put('/studio/workflows/:name', (req, res, next) => {
+    const name = safeDecode(req.params.name);
+    if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    return void handlePutStudioWorkflow(req, res, name).catch(next);
+  });
+  router.post('/studio/workflows/:name/lint', (req, res, next) => {
+    const name = safeDecode(req.params.name);
+    if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    return void handleLintStudioWorkflow(req, res, name).catch(next);
+  });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });
   router.get('/runs/:runId/stream', (req, res, next) => {

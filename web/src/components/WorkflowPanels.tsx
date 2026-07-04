@@ -2,7 +2,7 @@ import { WorkflowGraph } from './WorkflowGraph';
 import { FieldList } from './FieldList';
 import type { WorkflowDetail, WorkflowGraphState, WorkflowSummary } from '../types/runConsole';
 
-export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, graph, selectedNodeId, workflowError, onSelectWorkflow, onSelectNode }: {
+export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, graph, selectedNodeId, workflowError, onSelectWorkflow, onSelectNode, onOpenStudio, onCreateWorkflow }: {
   workflows: { data: WorkflowSummary[]; error: string | null };
   selectedWorkflow: string | null;
   workflowDetail: WorkflowDetail | null;
@@ -11,10 +11,15 @@ export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, gr
   workflowError: string | null;
   onSelectWorkflow: (name: string) => Promise<void>;
   onSelectNode: (nodeId: string) => void;
+  onOpenStudio: (name: string) => void;
+  onCreateWorkflow: () => void;
 }) => (
   <>
     <section className="panel">
-      <h2>Workflows</h2>
+      <div className="panel-heading-row">
+        <h2>Workflows</h2>
+        <button type="button" className="header-start-button" onClick={onCreateWorkflow}>Create workflow</button>
+      </div>
       {workflows.error && <div className="error">{workflows.error}</div>}
       <ul className="item-list">
         {workflows.data.length === 0 && <li className="muted">No workflows found.</li>}
@@ -24,6 +29,7 @@ export const WorkflowPanels = ({ workflows, selectedWorkflow, workflowDetail, gr
             <li key={workflow.name} className={selected ? 'selected-row' : undefined} aria-current={selected ? 'true' : undefined}>
               <button type="button" onClick={() => onSelectWorkflow(workflow.name)}>{workflow.name || '(unnamed)'}</button>
               <span>{workflow.path}</span>
+              <button type="button" className="link" aria-label={`Edit ${workflow.name} in Studio`} onClick={() => onOpenStudio(workflow.name)}>Studio</button>
             </li>
           );
         })}

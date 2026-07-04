@@ -39,6 +39,26 @@ export const startRuntime = (args: string[]): BackgroundRuntime => {
   return { pid: child.pid };
 };
 
+export type LintResult = { ok: boolean; errors: unknown[]; warnings: unknown[]; diagnostics: unknown[]; status: number; body: unknown };
+
+export const runLint = async (filePath: string, options: { workspaceRoot?: string; tesseraftHome?: string; timeout?: number } = {}): Promise<LintResult> => new Promise((resolve) => {
+  const args = ['lint', filePath, '--format', 'json'];
+  const env = process.env;
+  if (options.workspaceRoot) env.TESSERAFT_WORKSPACE_ROOT = options.workspaceRoot;
+  if (options.tesseraftHome) env.TESSERAFT_HOME = options.tesseraftHome;
+  execFile(tesseraftBin(), args, { cwd: ROOT_DIR, timeout: options.timeout || 15000, maxBuffer: 10 * 1024 * 1024, env }, (error, stdout, stderr) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout || '{}');
+    } catch {
+      resolve({ ok: false, errors: [], warnings: [], diagnostics: [], status: 502, body: errorBody(502, 'bad_gateway', 'Linter returned invalid JSON', { stderr: String(stderr || '').trim(), exit_code: error && typeof error.code === 'number' ? error.code : null }) });
+      return;
+    }
+    const body = parsed as { ok?: boolean; errors?: unknown[]; warnings?: unknown[]; diagnostics?: unknown[] };
+    resolve({ ok: Boolean(body.ok), errors: body.errors || [], warnings: body.warnings || [], diagnostics: body.diagnostics || [], status: 200, body: parsed });
+  });
+});
+
 export const runRuntime = (args: string[], options: { timeout?: number } = {}): Promise<RuntimeResult> => new Promise((resolve) => {
   execFile(tesseraftBin(), ['run', ...args], { cwd: ROOT_DIR, timeout: options.timeout || 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
     const exitCode = error && typeof error.code === 'number' ? error.code : null;

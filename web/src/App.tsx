@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
+import { WorkflowStudio } from './components/WorkflowStudio';
 import { RunListTable } from './components/RunListTable';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
@@ -9,7 +10,7 @@ import { isActiveRun } from './lib/runConsole';
 import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowDetail, WorkflowGraphState, WorkflowSummary } from './types/runConsole';
 import './style.css';
 
-type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'settings';
+type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'settings' | 'studio';
 type RunSnapshot = { run?: RunDetail; events?: EventRecord[]; artifacts?: Artifact[]; runs?: RunSummary[] };
 
 export const App = () => {
@@ -28,6 +29,7 @@ export const App = () => {
   const [runError, setRunError] = useState<string | null>(null);
   const [lastRunRefresh, setLastRunRefresh] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [studioWorkflowName, setStudioWorkflowName] = useState<string | null>(null);
 
   const loadRuns = async (): Promise<void> => {
     try {
@@ -44,6 +46,15 @@ export const App = () => {
       .catch((error: Error) => setWorkflows({ data: [], error: error.message }));
     void loadRuns();
   }, []);
+
+  const refreshWorkflows = async (): Promise<void> => {
+    try {
+      const data = await getJson<{ workflows: WorkflowSummary[] }>('/api/workflows');
+      setWorkflows({ data: data.workflows || [], error: null });
+    } catch (error) {
+      setWorkflows({ data: [], error: error instanceof Error ? error.message : String(error) });
+    }
+  };
 
   const selectWorkflow = async (name: string): Promise<void> => {
     setSelectedWorkflow(name);
@@ -137,8 +148,8 @@ export const App = () => {
     workflows: 'Workflows',
     runs: 'Runs',
     'pi-sessions': 'Pi Sessions',
-    'git-user': 'Git user',
-    'settings': 'Settings'
+    'settings': 'Settings',
+    studio: 'Workflow Studio'
   };
   const runStatus = runDetail?.status || (selectedRun ? 'loading' : null);
   const streamFreshness = runDetail && isActiveRun(runDetail) ? `Streaming · ${lastRunRefresh || 'pending'}` : 'Stream idle';
@@ -152,6 +163,9 @@ export const App = () => {
           {(activeTab === 'workflows' || activeTab === 'runs') && (
             <button type="button" className="header-start-button" onClick={() => setWizardOpen(true)}>Start workflow</button>
           )}
+          {activeTab === 'workflows' && (
+            <button type="button" className="header-start-button" onClick={() => { setStudioWorkflowName(null); setActiveTab('studio'); }}>Studio</button>
+          )}
         </div>
         <div className="context-strip" aria-label="Current console context">
           <span className="context-chip"><strong>Workflow</strong>{selectedWorkflow || 'No workflow selected'}</span>
@@ -164,11 +178,12 @@ export const App = () => {
           <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} aria-label="Runs: operate and inspect run status" onClick={() => setActiveTab('runs')}>Runs <span>operate</span></button>
           <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} aria-label="Pi Sessions: chat with Pi sessions" onClick={() => setActiveTab('pi-sessions')}>Pi Sessions <span>chat</span></button>
           <button type="button" className={activeTab === 'settings' ? 'active' : ''} aria-pressed={activeTab === 'settings'} aria-label="Settings: configure Pi defaults, tokens, repo root, and git identity" onClick={() => setActiveTab('settings')}>Settings <span>config</span></button>
+          <button type="button" className={activeTab === 'studio' ? 'active' : ''} aria-pressed={activeTab === 'studio'} aria-label="Workflow Studio: author workflows on a canvas" onClick={() => { setActiveTab('studio'); setStudioWorkflowName(studioWorkflowName); }}>Studio <span>author</span></button>
         </nav>
       </header>
       <main>
         {activeTab === 'workflows' && (
-          <WorkflowPanels workflows={workflows} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} graph={graph} selectedNodeId={selectedNodeId} workflowError={workflowError} onSelectWorkflow={selectWorkflow} onSelectNode={setSelectedNodeId} />
+          <WorkflowPanels workflows={workflows} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} graph={graph} selectedNodeId={selectedNodeId} workflowError={workflowError} onSelectWorkflow={selectWorkflow} onSelectNode={setSelectedNodeId} onOpenStudio={(name) => { setStudioWorkflowName(name); setActiveTab('studio'); }} onCreateWorkflow={() => { setStudioWorkflowName(null); setActiveTab('studio'); }} />
         )}
         {activeTab === 'runs' && (
           <RunListTable
@@ -186,7 +201,8 @@ export const App = () => {
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'settings' && <SettingsPanel />}
-        {activeTab !== 'pi-sessions' && activeTab !== 'settings' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
+        {activeTab === 'studio' && <WorkflowStudio initialWorkflowName={studioWorkflowName} onExit={() => setActiveTab('workflows')} onWorkflowsChanged={refreshWorkflows} />}
+        {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
     </>
   );
