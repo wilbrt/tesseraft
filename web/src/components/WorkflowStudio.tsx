@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphEdge, GraphNode } from '../lib/graphLayout';
-import { createStudioWorkflow, getStudioWorkflow, lintStudioWorkflow, saveStudioWorkflow, type SaveStudioResult } from '../lib/studio';
+import { createStudioWorkflow, getStudioWorkflow, lintStudioWorkflow, saveStudioWorkflow, writeWorkflowAsset, type SaveStudioResult } from '../lib/studio';
+import { postJson } from '../lib/api';
+import type { PiChatMessage, PiSessionStatus } from '../types/piSessions';
 import { KNOWN_HANDLERS, CUSTOM_HANDLER_SENTINEL, NODE_TYPES, emptyDraft, type LintReport, type NodeTypeId, type StudioNode, type StudioPositions, type StudioWorkflow, type Transition, type WhenMap } from '../types/studio';
 
 const NODE_W = 150;
@@ -217,8 +219,9 @@ const WhenEditor = ({ value, onChange }: { value: WhenMap; onChange: (next: When
   </div>
 );
 
-const NodeForm = ({ form, setForm, draft, excludeId }: { form: NodeFormState; setForm: React.Dispatch<React.SetStateAction<NodeFormState>>; draft: StudioWorkflow; excludeId?: string }) => {
+const NodeForm = ({ form, setForm, draft, excludeId, onCompose }: { form: NodeFormState; setForm: React.Dispatch<React.SetStateAction<NodeFormState>>; draft: StudioWorkflow; excludeId?: string; onCompose?: () => void }) => {
   const otherNodeIds = Object.keys(draft.states).filter((id) => id !== excludeId);
+  const resolvedTemplatePath = form.agentPromptTemplate || (form.id ? `prompts/${form.id}.md.tmpl` : '');
   const set = (patch: Partial<NodeFormState>): void => setForm((prev) => ({ ...prev, ...patch }));
   const setTransition = (i: number, patch: Partial<Transition>): void => setForm((prev) => {
     const ts = [...(prev.transitions || [])];
@@ -234,7 +237,20 @@ const NodeForm = ({ form, setForm, draft, excludeId }: { form: NodeFormState; se
       {form.type === ':agent' && (
         <>
           <div className="row"><label>Executor</label><input type="text" value={form.agentExecutor} onChange={(e) => set({ agentExecutor: e.target.value })} placeholder=":pi-cli" /></div>
-          <div className="row"><label>Prompt template</label><input type="text" value={form.agentPromptTemplate} onChange={(e) => set({ agentPromptTemplate: e.target.value })} placeholder="prompts/x.md.tmpl" /></div>
+          <div className="row">
+            <label>Prompt template</label>
+            <div className="prompt-compose-row">
+              <button type="button" className="compose-btn" onClick={onCompose}>Compose prompt template…</button>
+              {resolvedTemplatePath
+                ? <span className="muted">Saves to: <code>{resolvedTemplatePath}</code></span>
+                : <span className="muted">Enter an ID first, then compose.</span>}
+            </div>
+          </div>
+          <details className="advanced-section">
+            <summary>Advanced: custom template path</summary>
+            <div className="row"><label>Template path</label><input type="text" value={form.agentPromptTemplate} onChange={(e) => set({ agentPromptTemplate: e.target.value })} placeholder="prompts/x.md.tmpl" /></div>
+            <p className="muted">Niche option. The composer saves the drafted content to this path; the node's <code>:prompt-template</code> field points to it.</p>
+          </details>
           <div className="row"><label>Prompt output</label><input type="text" value={form.agentPromptOutput} onChange={(e) => set({ agentPromptOutput: e.target.value })} placeholder="prompts/generated/x.md" /></div>
           <div className="row"><label>Status output path</label><input type="text" value={form.agentStatusPath} onChange={(e) => set({ agentStatusPath: e.target.value })} placeholder="status/status.json" /></div>
         </>
@@ -748,9 +764,176 @@ export const WorkflowStudio = ({ initialWorkflowName, onExit, onWorkflowsChanged
   );
 };
 
+// Bespoke Pi-session chat surface for drafting an agent-node prompt template.
+// Creates a Pi session on open, seeds it with a prompt-engineering instruction,
+// streams the assistant draft, and lets the user accept the draft and save it
+// to the workflow package as a `.md.tmpl` asset. The server asset route is the
+// write authority; the node's `:prompt-template` field is set to that path.
+const COMPOSE_SEED = (title: string, nodeId: string): string =>
+  `Draft a Tesseraft agent-node prompt template for a workflow node titled "${title || nodeId}" (id: ${nodeId}) of type :agent. ` +
+  'Use Tesseraft template variables where appropriate: {{inputs.*}}, {{run.*}}, {{node.*}}, and {{artifacts.*}}. ' +
+  `The template body will be saved to prompts/${nodeId}.md.tmpl and referenced by the node's :prompt-template field. ` +
+  'Output only the template body (no prose commentary, no code fences).';
+
+type PromptComposerModalProps = {
+  workflowName: string;
+  nodeId: string;
+  nodeTitle: string;
+  currentPath: string;
+  onSaved: (path: string) => void;
+  onClose: () => void;
+};
+
+const PromptComposerModal = ({ workflowName, nodeId, nodeTitle, currentPath, onSaved, onClose }: PromptComposerModalProps) => {
+  const resolvedPath = currentPath || (nodeId ? `prompts/${nodeId}.md.tmpl` : 'prompts/template.md.tmpl');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<PiChatMessage[]>([]);
+  const [prompt, setPrompt] = useState('');
+  const [streamStatus, setStreamStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+  const [sessionStatus, setSessionStatus] = useState<PiSessionStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [draftContent, setDraftContent] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Create + seed a Pi session on open. The seed is a fixed frontend string so
+  // the server stays generic (no Tesseraft-specific prompt knowledge there).
+  useEffect(() => {
+    if (!nodeId) return;
+    const sessionTitle = `studio:${workflowName}:${nodeId}`;
+    let cancelled = false;
+    void (async () => {
+      try {
+        setBusy(true); setError(null);
+        const created = await postJson<{ session: { id: string } }>('/api/pi-sessions', { title: sessionTitle });
+        if (cancelled) return;
+        const id = created.session.id;
+        setSessionId(id);
+        await postJson(`/api/pi-sessions/${encodeURIComponent(id)}/prompts`, { prompt: COMPOSE_SEED(nodeTitle, nodeId) });
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [workflowName, nodeId, nodeTitle]);
+
+  // Stream snapshots (reuses the Pi Sessions EventSource pattern).
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    const source = new EventSource(`/api/pi-sessions/${encodeURIComponent(sessionId)}/stream`);
+    setStreamStatus('connected');
+    source.addEventListener('snapshot', (event) => {
+      try {
+        const snap = JSON.parse((event as MessageEvent).data) as { messages?: PiChatMessage[]; session?: { status?: PiSessionStatus } };
+        setMessages(snap.messages || []);
+        if (snap.session?.status) setSessionStatus(snap.session.status);
+        setStreamStatus('connected');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    });
+    source.onerror = () => setStreamStatus('error');
+    return () => { source.close(); setStreamStatus('disconnected'); };
+  }, [sessionId]);
+
+  const lastAssistant = useMemo(() => {
+    const asst = messages.filter((m) => m.role === 'assistant');
+    return asst.length > 0 ? asst[asst.length - 1] : null;
+  }, [messages]);
+
+  // Surface Pi/SDK failures prominently. The real adapter can emit a
+  // session.error event (status='error') with empty assistant content when
+  // the upstream model errors (e.g. usage limit). Without this, the modal
+  // shows a 'connected' stream, no draft, and no indication that Pi failed.
+  const piError = useMemo(() => {
+    const err = messages.find((m) => m.status === 'error');
+    return err ? err.text : null;
+  }, [messages]);
+  // When the session reached 'done' with no assistant draft and no error,
+  // the adapter completed but produced nothing — usually a misconfigured
+  // provider/model (e.g. real SDK without TESSERAFT_PI_ADAPTER=fake). This
+  // is distinct from a hard 'error' status and from a still-running session,
+  // so it gets a specific diagnostic instead of the generic nudge hint.
+  const completedNoDraft = !busy && sessionStatus === 'done' && messages.length > 0 && !lastAssistant && !piError;
+  const hasNoDraft = !busy && sessionStatus !== 'done' && messages.length > 0 && !lastAssistant && !piError;
+
+  const sendPrompt = async (): Promise<void> => {
+    if (!sessionId || !prompt.trim()) return;
+    const toSend = prompt;
+    setPrompt('');
+    setError(null);
+    try {
+      setBusy(true);
+      await postJson(`/api/pi-sessions/${encodeURIComponent(sessionId)}/prompts`, { prompt: toSend });
+    } catch (e) {
+      setPrompt(toSend);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async (): Promise<void> => {
+    if (!draftContent) return;
+    setSaving(true); setError(null);
+    try {
+      await writeWorkflowAsset(workflowName, resolvedPath, draftContent);
+      onSaved(resolvedPath);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell title={`Compose prompt template — ${nodeId || 'new node'}`} onClose={onClose} wide>
+      <dl className="field-row">
+        <dt>Workflow</dt><dd>{workflowName}</dd>
+        <dt>Node</dt><dd>{nodeId || '(unset)'}</dd>
+        <dt>Save to</dt><dd><code>{resolvedPath}</code></dd>
+        <dt>Stream</dt><dd><span className={`status-pill ${streamStatus}`}>{streamStatus}</span></dd>
+      </dl>
+      {error && <div className="error">{error}</div>}
+      {piError && <div className="error">Pi returned an error: {piError}. Refine the prompt and send again to retry.</div>}
+      {completedNoDraft && <div className="error">Pi completed without generating a response. The Pi adapter may not be configured with a provider/model. Set TESSERAFT_PI_ADAPTER=fake on the server for local testing, or configure a default provider/model in Settings. Refine the prompt and send again to retry.</div>}
+      {streamStatus === 'error' && <div className="error">Live stream disconnected. Reopen the composer to reconnect.</div>}
+      {busy && <div className="muted">Working…</div>}
+      {hasNoDraft && <div className="muted">No assistant draft yet. Send a follow-up prompt to nudge Pi.</div>}
+      <div className="pi-chat-transcript" aria-label="Prompt composer transcript">
+        {messages.length === 0 && <div className="empty">Seeding the draft with Pi…</div>}
+        {messages.map((m) => (
+          <article key={m.id} className={`pi-chat-message ${m.role}`}>
+            <div className="pi-chat-meta">{m.role}{m.status ? ` · ${m.status}` : ''}</div>
+            <pre className="pi-chat-text">{m.text}</pre>
+          </article>
+        ))}
+      </div>
+      <div className="control-card pi-prompt-form">
+        <label>Prompt<textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Refine the draft with a follow-up prompt" /></label>
+        <button type="button" disabled={!prompt.trim() || busy} onClick={() => void sendPrompt()}>Send</button>
+      </div>
+      <div className="composer-preview">
+        <h3>Preview</h3>
+        {draftContent
+          ? <pre className="composer-preview-body">{draftContent}</pre>
+          : <p className="muted">Click "Use as template" to snapshot the latest assistant draft.</p>}
+      </div>
+      <div className="modal-actions">
+        <button type="button" disabled={!lastAssistant} onClick={() => setDraftContent(lastAssistant ? lastAssistant.text : null)}>Use as template</button>
+        <button type="button" disabled={!draftContent || saving} onClick={() => void save()}>Save to workflow</button>
+        <button type="button" onClick={onClose} disabled={saving}>Cancel</button>
+      </div>
+    </ModalShell>
+  );
+};
+
 const NodeFormModal = ({ title, draft, initial, excludeId, onClose, onSubmit }: { title: string; draft: StudioWorkflow; initial: NodeFormState; excludeId?: string; onClose: () => void; onSubmit: (form: NodeFormState) => string | null }) => {
   const [form, setForm] = useState<NodeFormState>(initial);
   const [error, setError] = useState<string | null>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   // Tracks the auto-derived values last applied for the current id/type, so
   // that changing the id re-derives defaults only for fields whose value still
@@ -815,12 +998,22 @@ const NodeFormModal = ({ title, draft, initial, excludeId, onClose, onSubmit }: 
           {NODE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
-      <NodeForm form={form} setForm={setFormTracked} draft={draft} excludeId={excludeId} />
+      <NodeForm form={form} setForm={setFormTracked} draft={draft} excludeId={excludeId} onCompose={() => setComposerOpen(true)} />
       {error && <div className="error">{error}</div>}
       <div className="modal-actions">
         <button type="button" onClick={() => { const err = onSubmit(form); if (err) setError(err); }}>Save node</button>
         <button type="button" onClick={onClose}>Cancel</button>
       </div>
+      {composerOpen && (
+        <PromptComposerModal
+          workflowName={draft.metadata.name}
+          nodeId={form.id}
+          nodeTitle={form.title || form.id}
+          currentPath={form.agentPromptTemplate}
+          onSaved={(path) => { setForm((prev) => ({ ...prev, agentPromptTemplate: path })); setComposerOpen(false); }}
+          onClose={() => setComposerOpen(false)}
+        />
+      )}
     </ModalShell>
   );
 };

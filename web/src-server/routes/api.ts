@@ -229,6 +229,39 @@ const WORKFLOW_NAME_RE = /^[a-z][a-z0-9-]{0,62}$/;
 const projectWorkflowsRoot = (): string => path.join(WORKSPACE_ROOT, '.tesseraft', 'workflows');
 const workflowFilePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'workflow.edn');
 const workflowStatePath = (name: string): string => path.join(projectWorkflowsRoot(), name, 'studio-state.json');
+// Bundled example workflows live under examples/<name>/ (the control-plane's
+// default :workflow-roots). Studio reads resolve the project workflow file
+// first, then fall back to the example so example workflows are loadable in
+// the Studio (read-only view). Writes (PUT) always target the project path
+// under .tesseraft/workflows/ so examples are never mutated; saving an
+// example creates a project copy that shadows it on later loads.
+const exampleWorkflowFilePath = (name: string): string => path.join(ROOT_DIR, 'examples', name, 'workflow.edn');
+const resolveReadableWorkflowFile = (name: string): string | null => {
+  const primary = workflowFilePath(name);
+  if (fs.existsSync(primary)) return primary;
+  const example = exampleWorkflowFilePath(name);
+  if (fs.existsSync(example)) return example;
+  return null;
+};
+
+// Workflow package asset files (e.g. prompt templates) live alongside
+// workflow.edn under `.tesseraft/workflows/<name>/`. The composer (see design
+// doc) writes a `.md.tmpl` body to the default `prompts/<id>.md.tmpl` path.
+// Asset paths must be safe relative paths confined to the package dir: no
+// leading slash, no `..`, and a conservative allow-list of extensions.
+const ASSET_PATH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.(md\.tmpl|md|tmpl|txt)$/;
+const safeAssetPath = (raw: unknown): string | null => {
+  if (typeof raw !== 'string' || raw === '') return null;
+  if (raw.startsWith('/') || raw.includes('..') || raw.includes('\\')) return null;
+  // Reject any empty segment (e.g. `a//b`) and a trailing slash.
+  const segments = raw.split('/');
+  if (segments.some((s) => s === '')) return null;
+  if (!ASSET_PATH_RE.test(raw)) return null;
+  return raw;
+};
+const workflowPackageDir = (name: string): string => path.join(projectWorkflowsRoot(), name);
+const resolveAssetPath = (name: string, assetPath: string): string => path.resolve(workflowPackageDir(name), assetPath);
+const assetRelPath = (name: string, assetPath: string): string => path.join('.tesseraft', 'workflows', name, assetPath);
 
 type StudioSidecar = { status: string; draft?: JsonRecord; positions?: Record<string, { x: number; y: number }>; lint?: { ok?: boolean; errors?: unknown[]; warnings?: unknown[] } };
 
@@ -330,8 +363,9 @@ const handleCreateStudioWorkflow = async (req: Request, res: Response): Promise<
 };
 
 const handleGetStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
-  const filePath = workflowFilePath(name);
-  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  void req;
+  const filePath = resolveReadableWorkflowFile(name);
+  if (!filePath) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
   let edn: string;
   try {
     edn = await fs.promises.readFile(filePath, 'utf8');
@@ -339,7 +373,8 @@ const handleGetStudioWorkflow = async (req: Request, res: Response, name: string
     return jsonResponse(res, 500, errorBody(500, 'internal_error', error instanceof Error ? error.message : 'Failed to read workflow'));
   }
   const state = await readStudioState(name);
-  jsonResponse(res, 200, { workflow: { name, path: path.join('.tesseraft', 'workflows', name, 'workflow.edn'), edn }, state });
+  const relPath = path.relative(ROOT_DIR, filePath);
+  jsonResponse(res, 200, { workflow: { name, path: relPath, edn }, state });
 };
 
 const handlePutStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
@@ -394,11 +429,47 @@ const handlePutStudioWorkflow = async (req: Request, res: Response, name: string
 
 const handleLintStudioWorkflow = async (req: Request, res: Response, name: string): Promise<void> => {
   void req;
-  const filePath = workflowFilePath(name);
-  if (!fs.existsSync(filePath)) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
+  const filePath = resolveReadableWorkflowFile(name);
+  if (!filePath) return jsonResponse(res, 404, errorBody(404, 'not_found', 'Workflow not found', { name }));
   const lint = await runLint(filePath);
   jsonResponse(res, 200, { ok: lint.ok, errors: lint.errors, warnings: lint.warnings, diagnostics: lint.diagnostics });
-}
+};
+
+// Read a workflow package asset file (e.g. a composed prompt template) under
+// `.tesseraft/workflows/<name>/`. Returns 404 if the asset does not exist.
+const handleGetStudioAsset = async (res: Response, name: string, assetPath: string): Promise<void> => {
+  const resolved = resolveAssetPath(name, assetPath);
+  if (!isUnderRoot(resolved, workflowPackageDir(name))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Asset path is outside the workflow package dir'));
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.stat(resolved);
+  } catch {
+    return jsonResponse(res, 404, errorBody(404, 'not_found', 'Asset not found', { workflow: name, path: assetPath }));
+  }
+  if (!stat.isFile()) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Asset path is not a file', { workflow: name, path: assetPath }));
+  let content: string;
+  try {
+    content = await fs.promises.readFile(resolved, 'utf8');
+  } catch (error) {
+    return jsonResponse(res, 500, errorBody(500, 'internal_error', error instanceof Error ? error.message : 'Failed to read asset'));
+  }
+  jsonResponse(res, 200, { workflow: name, path: assetPath, rel_path: assetRelPath(name, assetPath), content });
+};
+
+// Write a workflow package asset file under `.tesseraft/workflows/<name>/`,
+// confined to the package dir via safeAssetPath + isUnderRoot. The workflow.edn
+// file is untouched; the linter remains the save-completed gate for it.
+const handlePutStudioAsset = async (req: Request, res: Response, name: string, assetPath: string): Promise<void> => {
+  const body = req.body as JsonRecord;
+  if (typeof body.content !== 'string') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'content must be a string'));
+  if (body.content.length > 1024 * 1024) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'content must be at most 1MB'));
+  const resolved = resolveAssetPath(name, assetPath);
+  if (!isUnderRoot(resolved, workflowPackageDir(name))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Asset path is outside the workflow package dir'));
+  const dir = path.dirname(resolved);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(resolved, body.content, 'utf8');
+  jsonResponse(res, 200, { ok: true, workflow: name, path: assetPath, rel_path: assetRelPath(name, assetPath) });
+};
 
 const readGitUser = (value: unknown): { name: string; email: string } | undefined | 'invalid' => {
   if (value === undefined || value === null) return undefined;
@@ -653,6 +724,26 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const name = safeDecode(req.params.name);
     if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
     return void handleLintStudioWorkflow(req, res, name).catch(next);
+  });
+  // Workflow package asset read/write (prompt templates, etc.). Path-confined
+  // to the workflow package dir via safeAssetPath + isUnderRoot.
+  router.get('/studio/workflows/:name/assets/*assetPath', (req, res, next) => {
+    const name = safeDecode(req.params.name);
+    if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    if (!WORKFLOW_NAME_RE.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must match /^[a-z][a-z0-9-]{0,62}$/'));
+    const rawAsset = Array.isArray(req.params.assetPath) ? req.params.assetPath.join('/') : req.params.assetPath;
+    const assetPath = safeAssetPath(safeDecode(rawAsset));
+    if (assetPath === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid asset path: must be a safe relative path ending in .md.tmpl/.md/.tmpl/.txt'));
+    return void handleGetStudioAsset(res, name, assetPath).catch(next);
+  });
+  router.put('/studio/workflows/:name/assets/*assetPath', (req, res, next) => {
+    const name = safeDecode(req.params.name);
+    if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    if (!WORKFLOW_NAME_RE.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must match /^[a-z][a-z0-9-]{0,62}$/'));
+    const rawAsset = Array.isArray(req.params.assetPath) ? req.params.assetPath.join('/') : req.params.assetPath;
+    const assetPath = safeAssetPath(safeDecode(rawAsset));
+    if (assetPath === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid asset path: must be a safe relative path ending in .md.tmpl/.md/.tmpl/.txt'));
+    return void handlePutStudioAsset(req, res, name, assetPath).catch(next);
   });
 
   router.post('/runs', (req, res, next) => { void handleStartRun(req, res).catch(next); });

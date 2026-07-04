@@ -200,3 +200,105 @@ test('POST /api/studio/workflows/:name/lint returns the linter report', async (t
   const body = await res.json();
   assert.ok(typeof body.ok === 'boolean');
 });
+
+test('GET /api/studio/workflows/:name falls back to bundled example workflows', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  // Example workflows ship under examples/<name>/ and are not copied into
+  // .tesseraft/workflows/ in a fresh workspace. The Studio must still load
+  // them so the composer can target example agent nodes (read-only view).
+  const res = await fetch(`${base}/api/studio/workflows/smoke`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.workflow.name, 'smoke');
+  assert.match(body.workflow.edn, /:workflow/);
+  assert.match(body.workflow.path, /examples\/smoke\/workflow\.edn$/);
+});
+
+test('GET /api/studio/workflows/:name/assets/* 404s for a missing asset', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  await fetch(`${base}/api/studio/workflows`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'wf-asset' })
+  });
+  const res = await fetch(`${base}/api/studio/workflows/wf-asset/assets/prompts/missing.md.tmpl`);
+  assert.equal(res.status, 404);
+  const body = await res.json();
+  assert.equal(body.error.code, 'not_found');
+});
+
+test('PUT /api/studio/workflows/:name/assets/* rejects unsafe paths with 400', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  await fetch(`${base}/api/studio/workflows`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'wf-asset-safe' })
+  });
+
+  // Path traversal via encoded `..` reaches the handler (literal `../` is
+  // normalized away by the URL client before routing) and must be rejected.
+  const escape1 = await fetch(`${base}/api/studio/workflows/wf-asset-safe/assets/prompts/%2e%2e%2fescape.md.tmpl`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content: 'bad' })
+  });
+  assert.equal(escape1.status, 400);
+
+  // Disallowed extension must be rejected.
+  const badext = await fetch(`${base}/api/studio/workflows/wf-asset-safe/assets/prompts/x.exe`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content: 'bad' })
+  });
+  assert.equal(badext.status, 400);
+
+  // Non-string content must be rejected.
+  const badcontent = await fetch(`${base}/api/studio/workflows/wf-asset-safe/assets/prompts/x.md.tmpl`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content: 123 })
+  });
+  assert.equal(badcontent.status, 400);
+
+  // Nothing should have been written outside the package dir.
+  assert.ok(!fs.existsSync(path.join(workflowsRoot, 'escape.md.tmpl')));
+});
+
+test('PUT then GET round-trips a prompt template asset under the package dir', async (t) => {
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  await fetch(`${base}/api/studio/workflows`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'wf-asset-rt' })
+  });
+  const content = 'Draft a prompt for {{node.id}} using {{inputs.x}}.\\n';
+  const put = await fetch(`${base}/api/studio/workflows/wf-asset-rt/assets/prompts/generated/my-node.md.tmpl`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content })
+  });
+  assert.equal(put.status, 200);
+  const putBody = await put.json();
+  assert.equal(putBody.ok, true);
+  assert.equal(putBody.path, 'prompts/generated/my-node.md.tmpl');
+  // Confined to the workflow package dir.
+  const file = path.join(workflowsRoot, 'wf-asset-rt', 'prompts', 'generated', 'my-node.md.tmpl');
+  assert.ok(fs.existsSync(file));
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  const get = await fetch(`${base}/api/studio/workflows/wf-asset-rt/assets/prompts/generated/my-node.md.tmpl`);
+  assert.equal(get.status, 200);
+  const getBody = await get.json();
+  assert.equal(getBody.workflow, 'wf-asset-rt');
+  assert.equal(getBody.path, 'prompts/generated/my-node.md.tmpl');
+  assert.equal(getBody.content, content);
+});
