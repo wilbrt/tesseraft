@@ -41,11 +41,15 @@ export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, activeNodeI
             </defs>
             {layout.edges.map((edge) => {
               const condition = formatCondition(edge.condition);
+              const midX = (edge.fromX + edge.toX) / 2;
+              const midY = (edge.fromY + edge.toY) / 2 - 8;
               return (
-                <g key={`${edge.from}-${edge.to}-${condition}`} className="graph-edge">
-                  <line x1={edge.fromX} y1={edge.fromY} x2={edge.toX} y2={edge.toY} markerEnd="url(#arrow)" />
+                <g key={`${edge.from}-${edge.to}-${condition}`} className={`graph-edge${edge.pathD ? ' back-edge' : ''}`}>
+                  {edge.pathD
+                    ? <path d={edge.pathD} fill="none" markerEnd="url(#arrow)" />
+                    : <line x1={edge.fromX} y1={edge.fromY} x2={edge.toX} y2={edge.toY} markerEnd="url(#arrow)" />}
                   {condition && (
-                    <text x={(edge.fromX + edge.toX) / 2} y={(edge.fromY + edge.toY) / 2 - 8}>{condition}</text>
+                    <text x={midX} y={midY}>{condition}</text>
                   )}
                 </g>
               );
@@ -63,18 +67,20 @@ export const WorkflowGraph = ({ nodes, edges, selectedNodeId = null, activeNodeI
           </svg>
         </div>
       )}
-      <h3>Graph edges</h3>
-      <ul className="item-list compact">
-        {edges.length === 0 && <li className="muted">No graph edges found.</li>}
-        {edges.map((edge) => {
-          const condition = formatCondition(edge.condition);
-          return (
-            <li key={`${edge.from}-${edge.to}-${condition}`}>
-              <strong>{edge.from}</strong> → <strong>{edge.to}</strong>{condition ? <span> when {condition}</span> : null}
-            </li>
-          );
-        })}
-      </ul>
+      <details className="graph-edges-details">
+        <summary>Graph edges</summary>
+        <ul className="item-list compact">
+          {edges.length === 0 && <li className="muted">No graph edges found.</li>}
+          {edges.map((edge) => {
+            const condition = formatCondition(edge.condition);
+            return (
+              <li key={`${edge.from}-${edge.to}-${condition}`}>
+                <strong>{edge.from}</strong> → <strong>{edge.to}</strong>{condition ? <span> when {condition}</span> : null}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
       {modalNode && <NodeModal node={modalNode} onClose={() => setModalNodeId(null)} renderNodeDetail={renderNodeDetail} />}
     </section>
   );
