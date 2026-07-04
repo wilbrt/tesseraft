@@ -62,6 +62,13 @@ export const RunListTable = ({ runs, expandedRunId, runDetail, events, artifacts
       </div>
       {runs.error && <div className="error">{runs.error}</div>}
       <table className="runs-table">
+        <colgroup>
+          <col style={{ width: '28%' }} />
+          <col style={{ width: '22%' }} />
+          <col style={{ width: '14%' }} />
+          <col style={{ width: '14%' }} />
+          <col style={{ width: '22%' }} />
+        </colgroup>
         <thead>
           <tr>
             <th scope="col">Run</th>

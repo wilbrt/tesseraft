@@ -27,6 +27,7 @@ export const App = () => {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
   const [lastRunRefresh, setLastRunRefresh] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const loadRuns = async (): Promise<void> => {
     try {
@@ -147,6 +148,9 @@ export const App = () => {
         <div className="header-topline">
           <h1>Tesseraft Console</h1>
           <span className="status-pill">{activeSectionLabel[activeTab]}</span>
+          {(activeTab === 'workflows' || activeTab === 'runs') && (
+            <button type="button" className="header-start-button" onClick={() => setWizardOpen(true)}>Start workflow</button>
+          )}
         </div>
         <div className="context-strip" aria-label="Current console context">
           <span className="context-chip"><strong>Workflow</strong>{selectedWorkflow || 'No workflow selected'}</span>
@@ -181,7 +185,7 @@ export const App = () => {
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'git-user' && <GitUserPanel />}
-        {activeTab !== 'pi-sessions' && activeTab !== 'git-user' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} />}
+        {activeTab !== 'pi-sessions' && activeTab !== 'git-user' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
     </>
   );

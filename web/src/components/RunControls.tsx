@@ -12,10 +12,14 @@ type Props = {
   selectedRun: string | null;
   runDetail: RunDetail | null;
   onRefresh: (runId?: string) => Promise<void>;
+  wizardOpen?: boolean;
+  onWizardOpenChange?: (open: boolean) => void;
 };
 
-export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selectedRun, runDetail, onRefresh }: Props) => {
-  const [wizardOpen, setWizardOpen] = useState(false);
+export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selectedRun, runDetail, onRefresh, wizardOpen: wizardOpenProp, onWizardOpenChange }: Props) => {
+  const [wizardOpenInternal, setWizardOpenInternal] = useState(false);
+  const wizardOpen = wizardOpenProp ?? wizardOpenInternal;
+  const setWizardOpen = (open: boolean): void => { setWizardOpenInternal(open); onWizardOpenChange?.(open); };
   const [runId, setRunId] = useState(`run-${Date.now()}`);
   const [maxSteps, setMaxSteps] = useState(10);
   const [confirmStep, setConfirmStep] = useState(false);
