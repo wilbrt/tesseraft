@@ -20,6 +20,7 @@ export const PiSessionsPanel = () => {
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -61,14 +62,20 @@ export const PiSessionsPanel = () => {
   };
 
   const createSession = async (): Promise<void> => {
-    setError(null);
+    setCreateError(null);
     try {
       const created = await postJson<{ session: PiSessionDetail }>('/api/pi-sessions', { title });
       setTitle('');
       await loadSessions();
       await loadSession(created.session.id);
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : String(createError));
+    } catch (createFailure) {
+      // Surface session-creation failures (e.g. pi_settings_resolution from a
+      // misconfigured Settings-page provider/model) inline next to the action
+      // that triggered them, in an assertive live region, so the banner is
+      // both visible and announced instead of silently dropped.
+      const message = createFailure instanceof Error ? createFailure.message : String(createFailure);
+      setCreateError(message);
+      setError(message);
     }
   };
 
@@ -130,7 +137,7 @@ export const PiSessionsPanel = () => {
       <section className="panel">
         <h2>Pi Sessions</h2>
         <p className="muted">Uses the real Pi SDK by default. Set TESSERAFT_PI_ADAPTER=fake on the web server only for local fake responses.</p>
-        {error && <div className="error">{error}</div>}
+        {error && <div className="error" role="alert">{error}</div>}
         <div className="control-card pi-session-create">
           <label>
             Optional title
@@ -138,6 +145,11 @@ export const PiSessionsPanel = () => {
           </label>
           <button type="button" onClick={() => void createSession()}>Create session</button>
           <button type="button" onClick={() => void refresh()}>Refresh sessions</button>
+          {createError && (
+            <div className="error inline pi-session-create-error" role="alert" aria-live="assertive">
+              {createError}
+            </div>
+          )}
         </div>
         <ul className="item-list">
           {sessions.length === 0 && <li className="muted">No Pi sessions yet. Create one locally to start.</li>}
