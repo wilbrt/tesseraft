@@ -202,6 +202,14 @@ test('Pi sessions UI source exposes tab, chat UI, SSE stream, prompt form, refre
   assert.match(panel, /Refresh chat/);
   assert.doesNotMatch(panel, /Events \/ output/);
   assert.match(panel, /Send prompt/);
+  // Create-flow failures (e.g. pi_settings_resolution) must surface as a
+  // visible, assertive inline error anchored near the action, not be dropped.
+  assert.match(panel, /pi-session-create-error/);
+  assert.match(panel, /role="alert" aria-live="assertive"/);
+  const createSession = panel.match(/const createSession = async[\s\S]*?^  };/m);
+  assert.ok(createSession, 'createSession handler present');
+  assert.match(createSession[0], /try \{[\s\S]*\/api\/pi-sessions[\s\S]*\} catch/);
+  assert.match(createSession[0], /setCreateError\(/);
 });
 
 test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST routes', () => {

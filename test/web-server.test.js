@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
-import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter, derivePiChatMessages } from '../web/dist-server/lib/piSessionAdapter.js';
+import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter, derivePiChatMessages, PiSettingsResolutionError } from '../web/dist-server/lib/piSessionAdapter.js';
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -787,4 +787,30 @@ test('control-plane artifact reads reject unsafe paths', () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('POST /api/pi-sessions surfaces pi_settings_resolution failures as 400 {error:{code,message}}', async (t) => {
+  const errAdapter = {
+    createSession: async () => { throw new PiSettingsResolutionError('acme', 'nope', 'no catalog entry for provider "acme" model "nope"'); },
+    listSessions: async () => [],
+    getSession: async () => null,
+    sendPrompt: async () => null,
+    listMessages: async () => [],
+    listEvents: async () => [],
+    streamEvents: async () => {}
+  };
+  const server = createServer({ piSessionAdapter: errAdapter });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+  const res = await fetch(`${base}/api/pi-sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.status, 400);
+  assert.equal(body.error.code, 'pi_settings_resolution');
+  assert.match(body.error.message, /acme/);
+  assert.match(body.error.message, /nope/);
+  assert.match(body.error.message, /pi auth/);
+  assert.equal(typeof body.error.message, 'string');
+  assert.ok(body.error.message.length > 0, 'actionable message text is exposed for the UI to render');
 });
