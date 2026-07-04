@@ -2,12 +2,79 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getJson } from '../lib/api';
 import { eventName, isActiveRun, nodeForEvent, snippet, stalenessLabel } from '../lib/runConsole';
 import { livenessPillClass } from '../lib/runConsole';
-import type { Artifact, Attempt, EventRecord, RunDetail, RunSummary, WorkflowGraphState } from '../types/runConsole';
+import type { Artifact, ArtifactRead, Attempt, EventRecord, RunDetail, RunSummary, WorkflowGraphState } from '../types/runConsole';
 import type { GraphNode } from '../lib/graphLayout';
 import { WorkflowGraph } from './WorkflowGraph';
 import { AttemptTimeline, FailureSummary } from './RunPanels';
 import { ArtifactBrowser } from './ArtifactBrowser';
 import { FieldList } from './FieldList';
+
+/** Inline per-node artifact viewer rendered inside the node modal. Keeps its
+ * own selection state (one preview open at a time) and reuses the existing
+ * `GET /api/runs/:runId/artifact?path=...` route + `ArtifactRead` preview,
+ * mirroring `ArtifactBrowser` without coupling to its state.
+ * `artifacts` is the per-node filtered list; if the selected path disappears
+ * (e.g. during streaming), the preview auto-clears to avoid stale views. */
+const NodeArtifactViewer = ({ runId, artifacts }: { runId: string; artifacts: Artifact[] }) => {
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ArtifactRead | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Auto-clear when the selected artifact is no longer present for this node.
+  useEffect(() => {
+    if (selectedPath && !artifacts.some((a) => a.path === selectedPath)) {
+      setSelectedPath(null);
+      setPreview(null);
+      setError(null);
+      setLoading(false);
+    }
+  }, [selectedPath, artifacts]);
+
+  const selectArtifact = async (artifact: Artifact): Promise<void> => {
+    if (selectedPath === artifact.path) return; // keep open; no refetch
+    setSelectedPath(artifact.path);
+    setPreview(null);
+    setError(null);
+    setLoading(true);
+    try {
+      const data = await getJson<ArtifactRead>(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`);
+      setPreview(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <ul className="item-list compact">
+        {artifacts.map((artifact) => (
+          <li key={`${artifact.source || 'artifact'}-${artifact.path}`} className={selectedPath === artifact.path ? 'selected-row' : ''}>
+            <button type="button" onClick={() => selectArtifact(artifact)}>
+              {artifact.path}
+            </button>
+            <span>{artifact.content_type || '—'} · {artifact.exists ? `${artifact.size ?? 0} bytes` : 'missing'}</span>
+          </li>
+        ))}
+      </ul>
+      {loading && <p className="muted">Loading artifact…</p>}
+      {error && <div className="error">{error}</div>}
+      {preview && (
+        <div className="node-artifact-preview">
+          <FieldList fields={[
+            ['Path', preview.artifact.path],
+            ['Type', preview.artifact.content_type],
+            ['Size', preview.artifact.size],
+            ['Preview', preview.previewable ? 'yes' : preview.reason || 'no']
+          ]} />
+          {preview.previewable && <pre className="node-attempt-result">{preview.content}</pre>}
+        </div>
+      )}
+    </>
+  );
+};
 
 type Props = {
   runSummary: RunSummary;
@@ -98,9 +165,7 @@ export const RunInspection = ({ runSummary, runDetail, events, artifacts, runErr
         {nodeArtifacts.length > 0 && (
           <>
             <h3>Related artifacts</h3>
-            <ul className="item-list compact">
-              {nodeArtifacts.map((artifact) => <li key={`${artifact.source || 'artifact'}-${artifact.path}`}>{artifact.path} · {artifact.content_type || '—'} · {artifact.exists ? `${artifact.size ?? 0} bytes` : 'missing'}</li>)}
-            </ul>
+            <NodeArtifactViewer runId={runSummary.run_id} artifacts={nodeArtifacts} />
           </>
         )}
         {nodeEvents.length > 0 && (
