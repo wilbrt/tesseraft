@@ -1,0 +1,26 @@
+Fresh Pi session: CODE REVIEW (agentic, round {{run.round}}).
+
+Inputs:
+- Execution status: {{run.dir}}/execution/status-{{run.round}}.json
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Manual-testing report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Issues from prior rounds (if any): {{run.issues-file}}
+- Worktree (repository root): {{run.worktree-dir}}
+
+Goal:
+Perform a pass/fail code review of the changes in the worktree, consuming the execution + manual-testing evidence. Confirm each change item from changes-needed/changes.json is actually addressed and that tests pass.
+
+Rules:
+- Inspect the repository diff and run checks as needed.
+- Do not edit source code; review only (read-only tools).
+- Do not push or create pull requests.
+- Map every failure to a concrete issue; do not fail without a reason.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- If failing: {{run.dir}}/review/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"all change items verified","issues_file":null}
+{"status":"fail","summary":"change item 3 not addressed","issues_file":"review/issues-{{run.round}}.json"}

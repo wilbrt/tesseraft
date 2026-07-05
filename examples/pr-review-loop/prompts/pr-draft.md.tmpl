@@ -1,0 +1,27 @@
+Fresh Pi session: CREATE A PR DRAFT (agentic).
+
+Inputs:
+- PR number (the PR whose comments we addressed): {{inputs.pr-number}}
+- Review report (latest round): {{run.dir}}/review/report-{{run.round}}.md
+- Manual-testing report (latest round): {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Execution summary (latest round): {{run.dir}}/execution/summary-{{run.round}}.md
+- Worktree (repository root): {{run.worktree-dir}}
+
+Goal:
+Draft the title and body for a NEW pull request on the fix branch (the implementation branch recorded in design/branch-name.txt). This PR addresses the comments on the original PR #{{inputs.pr-number}}.
+
+Rules:
+- Inspect the worktree diff to summarize what changed and why.
+- Title: concise imperative summary (no trailing newline beyond one).
+- Body: markdown — reference the original PR number, summarize the addressed comments, list the change items, and note how they were validated (tests + manual testing + review).
+- Do not push or create the PR here; that is the deterministic push-pr step.
+- Do not edit source code.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status JSON: {{run.dir}}/pr/draft-status.json
+
+Status JSON examples:
+{"status":"pass","summary":"drafted title + body","issues_file":null}
+{"status":"fail","summary":"could not summarize diff","issues_file":null}

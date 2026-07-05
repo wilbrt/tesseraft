@@ -1,0 +1,222 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "pr-review-loop"
+            :title "PR Review Loop"
+            :description "Take a PR number, fetch all comments (deterministic), evaluate the comments and output changes needed (agentic), make the changes (agentic), test them through the UI (agentic), code review (agentic), loop back to 'make the changes' if testing or review fail, then create a PR draft (agentic) and push the PR (deterministic)."}
+ :inputs {:pr-number {:type :string :required true}
+          :repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :branch {:type :string :required false}}
+ :defaults {:max-rounds 4
+            :state-timeout "45m"
+            :base-branch "main"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :fetch-pr-meta
+ :states
+ {:fetch-pr-meta
+  {:type :process
+   :title "Fetch PR metadata from PR number"
+   :command ["node" "./scripts/fetch_pr_meta.cjs"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:pr-json {:path "pr/fetched-pr.json" :required true}}
+   :resources {:requires [{:kind :input :name "pr-number" :mode :read}]
+               :produces [{:kind :pr-metadata :name "pr" :path "pr/fetched-pr.json"}]}
+   :next :fetch-comments}
+
+  :fetch-comments
+  {:type :deterministic
+   :title "Fetch all PR comments (deterministic)"
+   :handler :github/fetch-pr-feedback
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:pr-json "pr/fetched-pr.json"}
+   :outputs {:feedback-json {:path "pr/feedback/feedback.json" :required true}}
+   :resources {:requires [{:kind :pr-metadata :name "pr" :path "pr/fetched-pr.json" :mode :read}
+                          {:kind :capability :name "gh" :handler "github/fetch-pr-feedback"}
+                          {:kind :secret :name "github-token" :secret "github-token"}]
+               :produces [{:kind :review-evidence :name "feedback" :path "pr/feedback/feedback.json"}]}
+   :next :evaluate}
+
+  :evaluate
+  {:type :agent
+   :title "Evaluate comments and output changes needed (agentic)"
+   :executor :pi-cli
+   :prompt-template "prompts/evaluate.md.tmpl"
+   :prompt-output "prompts/generated/evaluate-{{run.attempt}}.md"
+   :session-name "pr-review-loop-evaluate-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "changes-needed/status.json" :schema "../../schemas/status.schema.json" :required true}
+             :changes-json {:path "changes-needed/changes.json" :required true}
+             :summary {:path "changes-needed/summary.md" :required true}
+             :branch-name {:path "design/branch-name.txt" :required true}
+             :manual-testing-spec {:path "manual-testing/spec.md" :required true}}
+   :resources {:requires [{:kind :review-evidence :name "feedback" :path "pr/feedback/feedback.json" :mode :read}
+                          {:kind :pr-metadata :name "pr" :path "pr/fetched-pr.json" :mode :read}
+                          {:kind :capability :name "repo-read" :mode :read}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :produces [{:kind :validation-report :name "evaluate-status" :path "changes-needed/status.json"}
+                          {:kind :design-doc :name "changes-needed" :path "changes-needed/changes.json"}
+                          {:kind :artifact :name "evaluate-summary" :path "changes-needed/summary.md"}
+                          {:kind :branch :name "branch-name" :path "design/branch-name.txt"}
+                          {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md"}]}
+   :transitions [{:when {:status "pass"} :next :ensure-worktree}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :ensure-worktree
+  {:type :deterministic
+   :title "Create isolated worktree"
+   :handler :git/ensure-worktree
+   :runtime {:timeout "5m"}
+   :inputs {:branch-file "design/branch-name.txt"}
+   :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
+   :resources {:requires [{:kind :branch :name "branch-name" :path "design/branch-name.txt" :mode :read}
+                          {:kind :capability :name "git" :handler "git/ensure-worktree"}]
+               :produces [{:kind :worktree :name "run-worktree" :path "worktree/path.txt"}
+                          {:kind :branch :name "implementation-branch" :source "design/branch-name.txt"}]}
+   :next :make-changes}
+
+  :make-changes
+  {:type :agent
+   :title "Make the changes (agentic, loop head)"
+   :executor :pi-cli
+   :prompt-template "prompts/make-changes.md.tmpl"
+   :prompt-output "prompts/generated/make-changes-{{run.round}}.md"
+   :session-name "pr-review-loop-make-changes-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary-{{run.round}}.md" :required true}
+             :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read-write}
+                          {:kind :design-doc :name "changes-needed" :path "changes-needed/changes.json" :mode :read}
+                          {:kind :artifact :name "evaluate-summary" :path "changes-needed/summary.md" :mode :read}
+                          {:kind :review-evidence :name "feedback" :path "pr/feedback/feedback.json" :mode :read}
+                          {:kind :run-state :name "issues" :path "issues.json" :mode :read}
+                          {:kind :capability :name "write-access" :mode :write}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :produces [{:kind :validation-report :name "execution-status" :path "execution/status-{{run.round}}.json"}
+                          {:kind :artifact :name "execution-summary" :path "execution/summary-{{run.round}}.md"}
+                          {:kind :issue-file :name "execution-issues" :path "execution/issues-{{run.round}}.json"}
+                          {:kind :artifact :name "code-changes" :source "worktree/path.txt"}]}
+   :transitions [{:when {:status "pass"} :next :start-test-server}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :make-changes}]}
+
+  :start-test-server
+  {:type :deterministic
+   :title "Start worktree test server"
+   :handler :web/start-test-server
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m"}
+   :inputs {:host "127.0.0.1"
+            :port 0
+            :build-command ["npm" "run" "web:build"]
+            :command ["node" "web/server.js" "--host" "127.0.0.1" "--port" "0"]}
+   :outputs {:test-server {:path "manual-testing/test-server-{{run.round}}.json" :required true}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :capability :name "web-start-test-server" :handler "web/start-test-server"}]
+               :produces [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json"}]}
+   :next :manual-test}
+
+  :manual-test
+  {:type :agent
+   :title "Test the changes through the UI (agentic)"
+   :executor :pi-cli
+   :prompt-template "prompts/manual-test.md.tmpl"
+   :prompt-output "prompts/generated/manual-test-{{run.round}}.md"
+   :session-name "pr-review-loop-manual-test-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "manual-testing/report-{{run.round}}.md" :required true}
+             :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md" :mode :read}
+                          {:kind :capability :name "browser-manual-testing" :mode :read}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :consumes [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :read}]
+               :produces [{:kind :validation-report :name "manual-testing-status" :path "manual-testing/status-{{run.round}}.json"}
+                          {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
+                          {:kind :issue-file :name "manual-testing-issues" :path "manual-testing/issues-{{run.round}}.json"}]}
+   :transitions [{:when {:status "pass"} :next :review}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :make-changes}]}
+
+  :review
+  {:type :agent
+   :title "Code review (agentic)"
+   :executor :pi-cli
+   :prompt-template "prompts/review.md.tmpl"
+   :prompt-output "prompts/generated/review-{{run.round}}.md"
+   :session-name "pr-review-loop-review-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "review/report-{{run.round}}.md" :required true}
+             :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :validation-report :name "execution-status" :path "execution/status-{{run.round}}.json"}
+                          {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :produces [{:kind :validation-report :name "review-status" :path "review/status-{{run.round}}.json"}
+                          {:kind :review-evidence :name "review-report" :path "review/report-{{run.round}}.md"}
+                          {:kind :issue-file :name "review-issues" :path "review/issues-{{run.round}}.json"}]}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :make-changes}]}
+
+  :pr-draft
+  {:type :agent
+   :title "Create a PR draft (agentic)"
+   :executor :pi-cli
+   :prompt-template "prompts/pr-draft.md.tmpl"
+   :prompt-output "prompts/generated/pr-draft.md"
+   :session-name "pr-review-loop-draft"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
+   :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
+             :title {:path "pr/pr-title.txt" :required true}
+             :body {:path "pr/pr-body.md" :required true}}
+   :resources {:requires [{:kind :review-evidence :name "review-report" :path "review/report-{{run.round}}.md"}
+                          {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
+                          {:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :produces [{:kind :validation-report :name "pr-draft-status" :path "pr/draft-status.json"}
+                          {:kind :pr-metadata :name "pr-title" :path "pr/pr-title.txt"}
+                          {:kind :pr-metadata :name "pr-body" :path "pr/pr-body.md"}]}
+   :transitions [{:when {:status "pass"} :next :push-pr}
+                 {:when {:status "fail"} :next :failed}]}
+
+  :push-pr
+  {:type :deterministic
+   :title "Push the PR (deterministic)"
+   :handler :github/create-pr
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:title-file "pr/pr-title.txt"
+            :body-file "pr/pr-body.md"
+            :branch-file "design/branch-name.txt"
+            :repo-dir-file "worktree/path.txt"}
+   :outputs {:pr-json {:path "pr/pr.json" :required true}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :branch :name "branch-name" :path "design/branch-name.txt" :mode :read}
+                          {:kind :pr-metadata :name "pr-title" :path "pr/pr-title.txt" :mode :read}
+                          {:kind :pr-metadata :name "pr-body" :path "pr/pr-body.md" :mode :read}
+                          {:kind :secret :name "github-token" :secret "github-token"}
+                          {:kind :capability :name "gh" :handler "github/create-pr"}]
+               :produces [{:kind :pr-metadata :name "pr-json" :path "pr/pr.json"}
+                          {:kind :pr-url :name "pull-request" :source "pr/pr.json"}]}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}
+
+  :failed
+  {:type :terminal
+   :title "Failed"
+   :status :failure}}}

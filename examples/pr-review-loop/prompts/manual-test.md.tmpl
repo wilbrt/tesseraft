@@ -1,0 +1,30 @@
+Fresh Pi session: TEST THE CHANGES THROUGH THE UI (agentic, round {{run.round}}).
+
+Inputs:
+- Manual-testing spec: {{run.dir}}/manual-testing/spec.md
+- Worktree-rooted test server (one-shot, current round): {{run.dir}}/manual-testing/test-server-{{run.round}}.json
+- Worktree (repository root): {{run.worktree-dir}}
+
+Goal:
+Drive an agentic browser test of the worktree-rooted test server against the manual-testing spec. The test-server JSON artifact records the current round's host/port/pid/cwd/command/started_at/lifecycle — read that one (NOT an earlier round's) to avoid stale-server hazards.
+
+Rules:
+- Read the test-server artifact for the current round to get host/port.
+- Exercise the surfaces listed in the spec; capture expected evidence.
+- Verify responsive/console checks and acceptance criteria from the spec.
+- Do not edit source code; testing only (you may read files and run non-mutating commands).
+- Do not push or create pull requests.
+
+Stale-server hazard:
+- Each round starts a fresh server on a new OS-assigned port. Always use the port from test-server-{{run.round}}.json; an old artifact's port is stale.
+
+Write:
+- Report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Status: {{run.dir}}/manual-testing/status-{{run.round}}.json
+- If failing: {{run.dir}}/manual-testing/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"all spec surfaces verified","issues_file":null}
+{"status":"fail","summary":"console errors on /runs view","issues_file":"manual-testing/issues-{{run.round}}.json"}
+
+If the spec declares manual testing may be skipped (with an explicit gate/rationale), validate the gate is met and write a passing status citing the skip rationale.

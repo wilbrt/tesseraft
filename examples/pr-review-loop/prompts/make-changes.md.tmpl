@@ -1,0 +1,30 @@
+Fresh Pi session: MAKE THE CHANGES (loop head, round {{run.round}}).
+
+Inputs:
+- PR number: {{inputs.pr-number}}
+- Changes needed: {{run.dir}}/changes-needed/changes.json
+- Evaluation summary: {{run.dir}}/changes-needed/summary.md
+- Fetched feedback: {{run.dir}}/pr/feedback/feedback.json
+- Issues from prior rounds (if any): {{run.issues-file}}
+- Worktree (repository root for this step): {{run.worktree-dir}}
+
+Goal:
+Implement the evaluated changes inside the worktree, addressing every change item from changes.json. If prior rounds produced an issues file, fix all outstanding issues too.
+
+Rules:
+- You may edit source code and tests.
+- Keep changes focused on the change items derived from the PR comments.
+- Run relevant checks/tests when practical (you are in the worktree root).
+- Commit locally if the repository uses git and the changes are coherent.
+- Do not push.
+- Do not create a pull request.
+- Do not edit Tesseraft workflow definition files.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- If failing: {{run.dir}}/execution/issues-{{run.round}}.json
+
+Status JSON examples:
+{"status":"pass","summary":"implemented and validated","issues_file":null}
+{"status":"fail","summary":"blocked by test failures","issues_file":"execution/issues-{{run.round}}.json"}
