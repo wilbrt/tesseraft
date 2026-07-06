@@ -1,5 +1,10 @@
 name: CI
 
+# Triggers on every pull request and on every push to `main`.
+# Merge gating: make the `test` job a required status check in
+#   Settings → Branches → `main` branch protection (or a ruleset).
+# That is a one-time manual repo setting; a workflow file alone cannot
+# enforce "required status checks". See design doc for follow-up note.
 on:
   pull_request:
   push:
@@ -19,5 +24,47 @@ jobs:
         with:
           bb: latest
 
-      - name: Run tests
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run Babashka tests (bb test)
         run: bb test
+
+      - name: Run web tests (npm run web:test)
+        # `bb test` above creates scratch dirs under .agent-runs/, which the
+        # web-server control-plane workflow-discovery test uses as the parent
+        # for mkdtemp. Guard the precondition so this step is robust to
+        # reordering or partial-step resolvers.
+        run: |
+          mkdir -p .agent-runs
+          npm run web:test
+
+      - name: Container harness (PR #37)
+        # ubuntu-latest provides a working Docker daemon. If a future
+        # runner lacks Docker, gate this behind a service container or
+        # `if: false` with a TODO rather than removing it.
+        if: hashFiles('test/container/test.sh') != ''
+        run: ./test/container/test.sh
+
+      - name: Tesseraft node lint (.tesseraft/nodes/*)
+        # `.tesseraft/nodes/` does not currently exist in the repo. With
+        # nullglob + a wildcards-only glob, an unmatched glob expands to
+        # nothing (not a literal string), so we skip with an explicit TODO
+        # instead of failing CI through no fault of the code. When node
+        # packages are added, this step will lint them automatically.
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          targets=(.tesseraft/nodes/*)
+          if [[ ${#targets[@]} -eq 0 ]]; then
+            echo "TODO: no .tesseraft/nodes/* packages present; skipping node lint"
+            exit 0
+          fi
+          ./bin/tesseraft node lint "${targets[@]}"
