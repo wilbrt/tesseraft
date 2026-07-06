@@ -15,4 +15,6 @@
                  :requires ([tesseraft.control-plane.cli :as cli])
                  :task (apply cli/-main *command-line-args*)}
   test {:doc "Run safe Tesseraft smoke checks"
-        :task (shell "./scripts/test.sh")}}}
+        :task (shell "./scripts/test.sh")}
+  status {:doc "Regenerate README status section from STATUS.edn (use --check for CI)"
+          :task (apply shell "bb" "scripts/generate_status.clj" *command-line-args*)}}}

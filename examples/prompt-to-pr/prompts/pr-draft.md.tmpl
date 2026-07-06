@@ -14,6 +14,10 @@ Rules:
 - Do not push.
 - Do not edit source code.
 - Summarize the user-facing change, validation performed, and any notable risks.
+- If the change adds, removes, or alters a Tesseraft capability, update
+  `STATUS.edn`, run `bb status`, and commit the `STATUS.edn` + `README.md`
+  diff in the **same commit** as the source change. Do not commit a stale
+  status section. `bb status --check` must pass locally before opening the PR.
 
 Write:
 - Title: {{run.dir}}/pr/pr-title.txt

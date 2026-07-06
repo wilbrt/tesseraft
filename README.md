@@ -119,24 +119,35 @@ src/tesseraft/adapters/*      deterministic handler adapters
 
 ## Current status
 
+<!-- BEGIN STATUS — generated from STATUS.edn by `bb status`. Do not edit by hand. -->
 Implemented:
 
-- Normative `SPEC.md`
-- JSON schemas for workflow, lint result, status, issues, run state, node attempt, process protocol
-- Standalone linter CLI with human/JSON/EDN output
-- Graph/mermaid emit from the linter
-- Static checks for graph shape, node contracts, artifacts, prompt files, template variables, handlers, executors, and policies
-- Reference runner with orphan-recovery and step-budget pre-checks (no orphaned in-flight nodes)
-- Read-only control-plane CLI (`tesseraft control-plane`) with additive liveness model (`done`/`failed`/`orphaned`/`stale`/`executing`/`parked`) and staleness heartbeat
-- Local HTTP web server + Web UI: Workflow Studio (authoring canvas, prompt-template composer) and Run Console (runs list, run detail, attempt timeline, clickable artifacts, liveness/staleness badges)
-- Container install path: sha256-verified `scripts/install.sh`, canonical `Dockerfile`, tracked container test harness (`test/container`)
-- GitHub Actions CI on `main` (`bb test`, `npm run web:test`, container harness, node lint)
-- Example workflows: smoke, prompt-to-pr, worktree-to-pr, review-loop, pr-housekeeping, jira-to-pr
+- **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.  
+  _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
+- **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.  
+  _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
+- **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
+  _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
+- **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
+  _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
+- **container-install** (implemented) — Containerized install path and install_deps script.  
+  _Evidence:_ docs/CONTAINER_INSTALL.md, scripts/install.sh, test/container/
+
+Partial:
+
+- **blocked-run-state** (partial) — Declared in run-state schema; runtime approval/manual-input node not merged.  
+  _Gap:_ PR #44 (approval/manual-input node) not on main; runtime/core.clj has no blocked branch.  
+  _Evidence:_ schemas/run-state.schema.json enum "blocked"
+- **mock-executor** (partial) — Side-effect-free mock-run-workflow example; runner-level mock dry-run mode not merged.  
+  _Gap:_ PR #8 (mock executor dry-run mode) not on main.  
+  _Evidence:_ examples/mock-run-workflow/workflow.edn
+- **web-ui** (partial) — Workflow Studio + Run Console scaffold exists; not feature-complete.  
+  _Evidence:_ web/src/, web/src/components/WorkflowStudio.tsx, docs/WEB_UI.md
 
 Not yet implemented:
 
-- Full Pi SDK executor (current executor is `:pi-cli` subprocess; Pi SDK adapter is in progress on `feature/pi-sdk-session-events`)
-- Approval / manual-input node UX (PR #44 open; not yet merged to `main`)
-- Mock executor dry-run mode (PR #8 open)
-- STATUS.edn-driven generated status section (PR #59 open)
-- Durable DB-backed runner (deferred per roadmap P2.3; file-backed run state remains the source of truth)
+- Full Pi SDK executor
+- HTTP control-plane server (read-only CLI/library skeleton only)
+- Approval node UX (runtime node not merged)
+- Durable DB-backed runner
+<!-- END STATUS -->

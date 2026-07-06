@@ -561,4 +561,7 @@ if ! grep -q "resource-unknown-mode" /tmp/tesseraft-resource-warning-node-lint.o
 fi
 rm -f /tmp/tesseraft-resource-warning-node-lint.out
 
+printf '\nChecking STATUS.edn ↔ README sync...\n'
+bb status --check
+
 echo "Smoke checks passed."
