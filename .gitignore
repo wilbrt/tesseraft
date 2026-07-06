@@ -10,3 +10,8 @@ __pycache__/
 # Generated web build outputs
 web/dist-server/
 web/static/
+
+# Container test scratch (build cache, logs). The harness under
+# test/container/ itself is tracked; only its generated output is ignored.
+test/container/logs/
+test/container/build/
