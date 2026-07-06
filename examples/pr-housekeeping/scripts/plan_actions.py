@@ -12,6 +12,7 @@ ACTION_FILES = {
     "merge": "merge-prs.json",
     "skip": "skipped-prs.json",
     "blocked": "blocked-prs.json",
+    "recommend-rebase": "rebase-recommendations.json",
 }
 
 
@@ -26,6 +27,12 @@ def main():
     for item in actions:
         groups.setdefault(item.get("action", "blocked"), []).append(item)
     groups["respond-only"] = [item for item in actions if item.get("needs_response")]
+    # The rebase recommendation is a parallel, report-only signal: list every
+    # PR flagged `rebase_recommended` regardless of its primary action, so the
+    # rebase report is a complete view of stale-and-behind PRs (see
+    # docs/MERGE_PROTOCOL.md). These items are never selected for repair by
+    # select_conflict_target.py / select_comment_target.py.
+    groups["recommend-rebase"] = [item for item in actions if item.get("rebase_recommended")]
 
     out_dir = run_dir / "housekeeping" / "planned"
     out_dir.mkdir(parents=True, exist_ok=True)
