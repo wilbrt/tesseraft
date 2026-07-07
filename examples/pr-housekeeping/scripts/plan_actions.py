@@ -5,6 +5,7 @@ import sys
 
 ACTION_FILES = {
     "fix-conflicts": "conflict-prs.json",
+    "fix-tests": "test-prs.json",
     "fix-comments": "comment-prs.json",
     "respond-only": "response-prs.json",
     "ready-to-merge": "merge-ready-prs.json",

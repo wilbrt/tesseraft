@@ -11,7 +11,11 @@ def main():
     run_dir = pathlib.Path(request["paths"]["run_dir"])
     meta = json.loads((run_dir / "comment-repair" / "worktree.json").read_text())
     worktree = pathlib.Path(meta["worktree"])
-    command = inputs.get("test-command") or "bb test"
+    # Mirror the GitHub Actions CI job (`.github/workflows/ci.yml`) so this
+    # step reproduces real CI failures (e.g. TS2688 from a missing `npm ci`),
+    # not just `bb test` which false-greens when local node_modules has
+    # @types/node installed. Override per-run via the `test-command` input.
+    command = inputs.get("test-command") or "npm ci && bb test && npm run web:test"
     result = subprocess.run(["bash", "-lc", command], cwd=worktree, text=True, capture_output=True)
     summary = run_dir / "comment-repair" / "test-summary.md"
     summary.write_text(

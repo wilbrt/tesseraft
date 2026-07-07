@@ -9,7 +9,10 @@
           :merge-approved {:type :boolean :default false}
           :dry-run {:type :boolean :default false}
           :target-pr {:type :integer :required false}
-          :test-command {:type :string :default "bb test"}}
+          ;; Mirrors `.github/workflows/ci.yml` so the local test step
+          ;; reproduces real CI failures (e.g. TS2688 from a missing `npm ci`),
+          ;; not just `bb test` (which false-greens locally). Override per-run.
+          :test-command {:type :string :default "npm ci && bb test && npm run web:test"}}
  :defaults {:max-rounds 1
             :state-timeout "5m"}
  :policies {:require-timeouts true
