@@ -126,13 +126,17 @@ Implemented:
 - Standalone linter CLI with human/JSON/EDN output
 - Graph/mermaid emit from the linter
 - Static checks for graph shape, node contracts, artifacts, prompt files, template variables, handlers, executors, and policies
-- Lightweight reference runner skeleton that refuses to run invalid workflows
-- Example Jira-to-PR workflow using agent-browser-only manual testing
+- Reference runner with orphan-recovery and step-budget pre-checks (no orphaned in-flight nodes)
+- Read-only control-plane CLI (`tesseraft control-plane`) with additive liveness model (`done`/`failed`/`orphaned`/`stale`/`executing`/`parked`) and staleness heartbeat
+- Local HTTP web server + Web UI: Workflow Studio (authoring canvas, prompt-template composer) and Run Console (runs list, run detail, attempt timeline, clickable artifacts, liveness/staleness badges)
+- Container install path: sha256-verified `scripts/install.sh`, canonical `Dockerfile`, tracked container test harness (`test/container`)
+- GitHub Actions CI on `main` (`bb test`, `npm run web:test`, container harness, node lint)
+- Example workflows: smoke, prompt-to-pr, worktree-to-pr, review-loop, pr-housekeeping, jira-to-pr
 
 Not yet implemented:
 
-- Full Pi SDK executor
-- HTTP control-plane server (the first read-only library/CLI skeleton is available via `tesseraft control-plane`)
-- UI Workflow Studio / Run Console (see `docs/WEB_UI.md`)
-- Approval node UX
-- Durable DB-backed runner
+- Full Pi SDK executor (current executor is `:pi-cli` subprocess; Pi SDK adapter is in progress on `feature/pi-sdk-session-events`)
+- Approval / manual-input node UX (PR #44 open; not yet merged to `main`)
+- Mock executor dry-run mode (PR #8 open)
+- STATUS.edn-driven generated status section (PR #59 open)
+- Durable DB-backed runner (deferred per roadmap P2.3; file-backed run state remains the source of truth)
