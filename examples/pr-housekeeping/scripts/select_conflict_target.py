@@ -16,13 +16,13 @@ def main():
     processed = json.loads(processed_path.read_text()) if processed_path.exists() else {"conflict": [], "comment": []}
     processed_conflicts = {int(v) for v in processed.get("conflict", [])}
     target = inputs.get("target-pr")
-    candidates = [item for item in actions if item.get("action") == "fix-conflicts" and int(item.get("number")) not in processed_conflicts]
+    candidates = [item for item in actions if item.get("action") in ("fix-conflicts", "fix-tests") and int(item.get("number")) not in processed_conflicts]
     if target:
         target_num = int(target)
         candidates = [item for item in candidates if int(item.get("number")) == target_num]
 
     if not candidates:
-        reason = "no conflicted PR target found" if not target else f"PR #{target} is not classified as fix-conflicts"
+        reason = "no conflict/test-failure PR target found" if not target else f"PR #{target} is not classified as fix-conflicts or fix-tests"
         (out_dir / "selection.json").write_text(json.dumps({"selected": False, "reason": reason}, indent=2) + "\n")
         json.dump({"ok": True, "status": "skip", "reason": reason, "outputs": {"selection": "conflict-repair/selection.json"}}, sys.stdout)
         print(); return

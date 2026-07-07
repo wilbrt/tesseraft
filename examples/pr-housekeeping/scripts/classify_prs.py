@@ -70,6 +70,12 @@ def classify(pr, merge_approved=False):
     elif comments:
         action = "respond-only"
         reason = f"{comments} comment/review comment signal(s) need a response"
+    elif checks == "failing" and merge_state in {"MERGEABLE", "UNSTABLE", "BEHIND", "CLEAN"}:
+        action = "fix-tests"
+        reason = "CI checks failing but mergeable; rebase onto base and push to refresh CI"
+    elif merge_state == "UNKNOWN" and checks in {"failing", "none"}:
+        action = "fix-tests"
+        reason = "merge state stale; rebase to refresh mergeability and rerun CI"
     elif merge_state == "UNKNOWN":
         action = "blocked"
         reason = "merge state is UNKNOWN"
