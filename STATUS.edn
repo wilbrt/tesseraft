@@ -1,0 +1,43 @@
+{:tesseraft
+ {:generated-from "STATUS.edn"
+  :readme-section "## Current status"
+  :capabilities
+  {:node-packaging-system
+   {:status :implemented
+    :summary "Self-contained node package import/export via `bb node`."
+    :evidence ["src/tesseraft/node/cli.clj" "docs/NODES.md" "docs/PACKAGES.md" "bb.edn :node"]}
+   :pinga-handler
+   {:status :implemented
+    :summary "Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN."
+    :evidence ["src/tesseraft/adapters/builtin.clj notify-pinga!" "src/tesseraft/spec.clj"]}
+   :blocked-run-state
+   {:status :partial
+    :summary "Declared in run-state schema; runtime approval/manual-input node not merged."
+    :evidence ["schemas/run-state.schema.json enum \"blocked\""]
+    :gap "PR #44 (approval/manual-input node) not on main; runtime/core.clj has no blocked branch."}
+   :recovery-tests
+   {:status :implemented
+    :summary "Interrupted-agent recovery + orphan detection with node.recovered events."
+    :evidence ["scripts/test.sh recovery fixture" "src/tesseraft/runtime/core.clj"]}
+   :routeapi-architecture
+   {:status :implemented
+    :summary "Declarative routeApi mapping /api paths to control-plane commands."
+    :evidence ["web/src-server/routes/api.ts" "test/web-server.test.js"]}
+   :mock-executor
+   {:status :partial
+    :summary "Side-effect-free mock-run-workflow example; runner-level mock dry-run mode not merged."
+    :evidence ["examples/mock-run-workflow/workflow.edn"]
+    :gap "PR #8 (mock executor dry-run mode) not on main."}
+   :container-install
+   {:status :implemented
+    :summary "Containerized install path and install_deps script."
+    :evidence ["docs/CONTAINER_INSTALL.md" "scripts/install.sh" "test/container/"]}
+   :web-ui
+   {:status :partial
+    :summary "Workflow Studio + Run Console scaffold exists; not feature-complete."
+    :evidence ["web/src/" "web/src/components/WorkflowStudio.tsx" "docs/WEB_UI.md"]}}
+  :not-yet-implemented
+  ["Full Pi SDK executor"
+   "HTTP control-plane server (read-only CLI/library skeleton only)"
+   "Approval node UX (runtime node not merged)"
+   "Durable DB-backed runner"]}}

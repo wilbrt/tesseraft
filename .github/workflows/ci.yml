@@ -36,6 +36,9 @@ jobs:
       - name: Run Babashka tests (bb test)
         run: bb test
 
+      - name: Verify STATUS.edn ↔ README sync
+        run: bb status --check
+
       - name: Run web tests (npm run web:test)
         # `bb test` above creates scratch dirs under .agent-runs/, which the
         # web-server control-plane workflow-discovery test uses as the parent
