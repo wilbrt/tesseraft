@@ -2,6 +2,7 @@
 import json
 import pathlib
 import sys
+from datetime import datetime, timezone
 
 
 def checks_status(pr):
@@ -51,12 +52,44 @@ def latest_review_state(pr):
     return pr.get("reviewDecision") or "REVIEW_REQUIRED"
 
 
-def classify(pr, merge_approved=False):
+REBASE_AGE_THRESHOLD_DAYS = 5
+
+
+def parse_updated_at(pr):
+    raw = pr.get("updatedAt")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def age_days(pr, snapshot_at):
+    updated = parse_updated_at(pr)
+    if not updated or snapshot_at is None:
+        return None
+    delta = snapshot_at - updated
+    return max(delta.total_seconds(), 0) / 86400.0
+
+
+def rebase_recommended(pr, age, merge_state):
+    # Strict, read-only signal: only an explicit BEHIND merge state combined
+    # with age >= threshold triggers a rebase recommendation. Never fire on
+    # UNKNOWN or missing data (see docs/MERGE_PROTOCOL.md).
+    if age is None:
+        return False
+    return age >= REBASE_AGE_THRESHOLD_DAYS and merge_state == "BEHIND"
+
+
+def classify(pr, merge_approved=False, snapshot_at=None):
     merge_state = pr.get("mergeStateStatus") or "UNKNOWN"
     review = latest_review_state(pr)
     draft = bool(pr.get("isDraft"))
     checks = checks_status(pr)
     comments = comment_count(pr)
+    age = age_days(pr, snapshot_at)
+    rebase_flag = rebase_recommended(pr, age, merge_state)
 
     if draft:
         action = "skip"
@@ -79,6 +112,12 @@ def classify(pr, merge_approved=False):
     elif merge_state == "UNKNOWN":
         action = "blocked"
         reason = "merge state is UNKNOWN"
+    elif rebase_flag:
+        action = "recommend-rebase"
+        reason = (
+            f"PR is {age:.1f} days old (updatedAt={pr.get('updatedAt')}) "
+            "and BEHIND base; rebase recommended"
+        )
     elif review == "APPROVED" and checks in {"success", "none"}:
         action = "merge" if merge_approved else "ready-to-merge"
         reason = "approved and mergeable" if merge_approved else "approved and mergeable; merge disabled"
@@ -104,6 +143,9 @@ def classify(pr, merge_approved=False):
         "is_draft": draft,
         "comment_count": comments,
         "needs_response": review == "CHANGES_REQUESTED" or comments > 0,
+        "age_days": round(age, 1) if age is not None else None,
+        "rebase_recommended": rebase_flag,
+        "snapshot_at": snapshot_at.isoformat() if snapshot_at else None,
         "action": action,
         "reason": reason,
     }
@@ -121,7 +163,8 @@ def main():
         prs = json.loads(states_path.read_text())
     else:
         prs = json.loads(open_prs_path.read_text())
-    actions = [classify(pr, merge_approved=merge_approved) for pr in prs]
+    snapshot_at = datetime.now(timezone.utc)
+    actions = [classify(pr, merge_approved=merge_approved, snapshot_at=snapshot_at) for pr in prs]
 
     out_dir = run_dir / "housekeeping"
     actions_path = out_dir / "actions.json"
@@ -132,11 +175,18 @@ def main():
     if not actions:
         lines.append("No open PRs found.")
     else:
-        lines.extend(["| PR | Action | Review | Merge state | Checks | Comments | Reason |", "|---:|---|---|---|---|---:|---|"])
+        lines.extend(["| PR | Action | Review | Merge state | Checks | Comments | Age (d) | Reason |", "|---:|---|---|---|---|---:|---:|---|"])
         for item in actions:
+            age_str = f"{item['age_days']:.1f}" if item.get("age_days") is not None else "?"
             lines.append(
-                f"| [#{item['number']}]({item['url']}) | {item['action']} | {item['review_decision']} | {item['merge_state']} | {item['checks_status']} | {item['comment_count']} | {item['reason']} |"
+                f"| [#{item['number']}]({item['url']}) | {item['action']} | {item['review_decision']} | {item['merge_state']} | {item['checks_status']} | {item['comment_count']} | {age_str} | {item['reason']} |"
             )
+    rebase_count = sum(1 for item in actions if item.get("rebase_recommended"))
+    lines.append("")
+    lines.append(
+        f"Rebase recommendations: {rebase_count} PR(s) older than "
+        f"{REBASE_AGE_THRESHOLD_DAYS} days and BEHIND base."
+    )
     report_path.write_text("\n".join(lines) + "\n")
 
     json.dump({
