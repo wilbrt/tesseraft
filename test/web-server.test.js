@@ -436,6 +436,145 @@ test('web server supports local smoke start-and-run, step, and resume mutations'
   assert.equal(run.run.run_id, runId);
 });
 
+test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {
+  const runId = `web-approval-${Date.now()}`;
+  const approvalRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
+  fs.rmSync(approvalRunDir, { recursive: true, force: true });
+  const workflowRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
+  t.after(() => fs.rmSync(approvalRunDir, { recursive: true, force: true }));
+
+  // A throwaway approval workflow written to the project-local discovery
+  // root (.tesseraft/workflows, gitignored) so the control-plane resolves it
+  // by name without editing any committed workflow definition file.
+  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', 'approval-smoke');
+  fs.rmSync(workflowDir, { recursive: true, force: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
+  const workflowFile = path.join(workflowDir, 'workflow.edn');
+  fs.writeFileSync(workflowFile, [
+    '{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "approval-smoke"}',
+    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :start',
+    ' :states {:start {:type :timer :duration "1ms" :next :gate}',
+    '          :gate {:type :approval :title "Gate" :message "Approve." :timeout "1m"',
+    '                 :artifact {:path "design/design.md" :kind "design-doc"}',
+    '                 :transitions [{:when {:decision "approve"} :next :done}',
+    '                                {:when {:decision "changes-requested"} :next :revise}]}',
+    '          :revise {:type :timer :duration "1ms" :next :failed}',
+    '          :done {:type :terminal :status :success}',
+    '          :failed {:type :terminal :status :failure}}}'
+  ].join('\n'));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  // Start the workflow; the background resume loops until it parks at the
+  // :gate approval node (blocked stops run-until-done!). Poll for blocked.
+  const startResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: 'approval-smoke', run_id: runId, inputs: {} })
+  });
+  assert.equal(startResponse.status, 202);
+  const parked = await waitForRunStatus(base, runId, 'blocked');
+  assert.equal(parked.state, 'gate');
+
+  // Approvals list exposes the pending request.
+  const approvalsResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals`);
+  assert.equal(approvalsResponse.status, 200);
+  const approvals = await approvalsResponse.json();
+  assert.ok(approvals.approvals.length >= 1);
+  const approvalId = approvals.approvals[0].approval_id;
+
+  // P0.2 presentation contract: the durable request record carries a
+  // materialized presentation (question/artifacts/decisions/routing) so the
+  // UI renders the decision screen from the record instead of hard-coded
+  // labels. Synthesized here because the node authored no `:presentation`.
+  const pending = approvals.approvals[0];
+  assert.equal(pending.routing?.kind, 'self');
+  assert.ok(Array.isArray(pending.artifacts) && pending.artifacts.length >= 1);
+  assert.equal(pending.artifacts[0].path, 'design/design.md');
+  assert.ok(Array.isArray(pending.decisions) && pending.decisions.length === 2);
+  const approveDecision = pending.decisions.find((d) => d.decision === 'approve');
+  const changesDecision = pending.decisions.find((d) => d.decision === 'changes-requested');
+  assert.ok(approveDecision, 'expected an approve decision option');
+  assert.ok(changesDecision, 'expected a changes-requested decision option');
+  assert.equal(approveDecision.next, 'done');
+  assert.equal(changesDecision.next, 'revise');
+
+  // Add a line-anchored comment on the referenced artifact.
+  const commentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'design/design.md', body: 'Tighten scope?', anchor: { start_line: 3, end_line: 5 } })
+  });
+  assert.equal(commentResponse.status, 200);
+  const comment = await commentResponse.json();
+  assert.equal(comment.comment.path, 'design/design.md');
+  assert.deepEqual(comment.comment.anchor, { start_line: 3, end_line: 5 });
+
+  // List comments.
+  const listResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  assert.equal(listed.comments.length, 1);
+  assert.match(listed.comments[0].body, /Tighten scope/);
+
+  // Regression R2-1: appending a SECOND comment on the same artifact must
+  // preserve the first comment and return both, in order. Previously the
+  // append used `(when (fs/exists? cf) (read-json cf) [])`, which dropped the
+  // [] fallback so `existing` was nil on a missing file — masked for the
+  // first comment by `(vec nil)`, but never actually validated for append.
+  const secondCommentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'design/design.md', body: 'Second nit: timeout too short?' })
+  });
+  assert.equal(secondCommentResponse.status, 200);
+  const secondComment = await secondCommentResponse.json();
+  assert.equal(secondComment.comment.path, 'design/design.md');
+
+  const listAfterSecond = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
+  assert.equal(listAfterSecond.status, 200);
+  const listedAfterSecond = await listAfterSecond.json();
+  assert.equal(listedAfterSecond.comments.length, 2);
+  assert.match(listedAfterSecond.comments[0].body, /Tighten scope/);
+  assert.match(listedAfterSecond.comments[1].body, /Second nit/);
+
+  // Unsafe path is rejected.
+  const unsafeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../../etc/passwd', body: 'x' })
+  });
+  assert.ok(unsafeResponse.status >= 400);
+
+  // Decide approve -> run advances to :done.
+  const decideResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve', summary: 'LGTM' })
+  });
+  assert.equal(decideResponse.status, 200);
+  const decided = await decideResponse.json();
+  assert.equal(decided.operation, 'decide');
+  assert.equal(decided.decision, 'approve');
+
+  const doneRun = await waitForRunStatus(base, runId, 'done');
+  assert.equal(doneRun.state, 'done');
+
+  // A second decide on the same approval is rejected (idempotent-ish).
+  const replay = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision: 'approve' })
+  });
+  assert.ok(replay.status >= 400);
+});
+
 test('web server reports mutation validation errors as JSON', async (t) => {
   const server = createServer();
   const port = await listen(server);
@@ -813,4 +952,41 @@ test('POST /api/pi-sessions surfaces pi_settings_resolution failures as 400 {err
   assert.match(body.error.message, /pi auth/);
   assert.equal(typeof body.error.message, 'string');
   assert.ok(body.error.message.length > 0, 'actionable message text is exposed for the UI to render');
+});
+
+test('control-plane comment add appends a second comment to the same artifact (R2-1)', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'comment-append-'));
+  const runDir = path.join(root, 'wf', 'append-run');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "append-run" :status "blocked" :state :gate}}');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '');
+  fs.mkdirSync(path.join(runDir, 'design'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'design', 'design.md'), '# Design\n');
+  const artifact = 'design/design.md';
+
+  try {
+    const first = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'First comment on the artifact'], { encoding: 'utf8' }));
+    assert.equal(first.comment.path, artifact);
+    assert.match(first.comment.body, /First comment/);
+
+    const second = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'Second comment on the artifact'], { encoding: 'utf8' }));
+    assert.equal(second.comment.path, artifact);
+    assert.match(second.comment.body, /Second comment/);
+
+    const listed = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comments', 'append-run', '--path', artifact], { encoding: 'utf8' }));
+    assert.equal(listed.comments.length, 2);
+    assert.match(listed.comments[0].body, /First comment/);
+    assert.match(listed.comments[1].body, /Second comment/);
+
+    // The persisted comment file on disk holds both, in order. comments-file
+    // maps <run-dir>/comments/<safe-path>/.json (the safe path becomes a dir
+    // and .json the file name), so design/design.md -> comments/design/design.md/.json.
+    const persisted = JSON.parse(fs.readFileSync(path.join(runDir, 'comments', artifact, '.json'), 'utf8'));
+    assert.ok(Array.isArray(persisted));
+    assert.equal(persisted.length, 2);
+    assert.match(persisted[0].body, /First comment/);
+    assert.match(persisted[1].body, /Second comment/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

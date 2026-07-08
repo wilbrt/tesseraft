@@ -343,6 +343,128 @@
     (store/save-context! failed)
     failed))
 
+;; ---- approval (manual input) pause/resume ----
+;; An :approval node pauses the run to collect a human decision about a produced
+;; artifact. On first entry it writes a run-relative approval-request record,
+;; appends approval.requested, marks the run "blocked", and parks (no
+;; node.started/finished are emitted, so orphan detection is not triggered). On
+;; resume (after a decision record is written by decide!), it appends
+;; approval.decided and advances through the transition whose :when matches
+;; {:decision "..."}. See design §3 R1.
+
+(defn approval-request-path [ctx state-id attempt]
+  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt ".json")))
+
+(defn approval-decision-path [ctx state-id attempt]
+  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt "-decision.json")))
+
+(defn load-approval-decision [ctx state-id attempt]
+  (let [p (approval-decision-path ctx state-id attempt)]
+    (when (fs/exists? p) (store/read-json p))))
+
+(defn render-artifact [ctx node]
+  (when-let [art (:artifact node)]
+    (cond-> art
+      (string? (:path art))
+      (assoc :path (spec/render-template-string (:path art) ctx)))))
+
+;; ---- approval presentation contract ----
+;; The Web UI should render the decision screen from the durable request
+;; record rather than hard-coded labels, so phase-2 reviewer routing becomes
+;; a routing change instead of a redesign. When the node author supplies an
+;; explicit `:presentation` block, it is materialized verbatim (with
+;; template-rendered artifact paths). When absent, we synthesize a minimal
+;; presentation from the legacy `:message` + single `:artifact` form and the
+;; node's `:transitions` whose `:when` carries a `:decision`. `routing`
+;; defaults to `{:kind :self}`. The posted `decision` string still matches
+;; transition `:when {:decision "..."}` unchanged.
+(defn approval-presentation [ctx node]
+  (if-let [pres (:presentation node)]
+    (-> pres
+        (update :question #(some-> % str))
+        (update :artifacts
+                (fn [arts]
+                  (mapv (fn [a]
+                          (cond-> a
+                            (and (map? a) (string? (:path a)))
+                            (assoc :path (spec/render-template-string (:path a) ctx))))
+                        arts)))
+        (update :routing #(or % {:kind :self})))
+    ;; Synthesize from the legacy form.
+    (let [artifact (render-artifact ctx node)
+          decisions (->> (spec/transitions node)
+                         (keep (fn [tr]
+                                 (when-let [d (get-in tr [:when :decision])]
+                                   {:decision (str d)
+                                    :label (str d)
+                                    :next (some-> (:next tr) name)}))))]
+      {:question (some-> (:message node) str)
+       :artifacts (if artifact [artifact] [])
+       :decisions decisions
+       :routing {:kind :self}})))
+
+(defn step-approval! [wf ctx state-id attempt node]
+  (if-let [decision (load-approval-decision ctx state-id attempt)]
+    ;; Resume: a decision record exists. Build a result carrying :decision so
+    ;; the node's :transitions :when {:decision "..."} can match, then advance.
+    (let [result {:status "ok" :ok true
+                  :approval_id (:approval_id decision)
+                  :decision (:decision decision)}
+          ; match-transition? compares :when predicates against result keys.
+          tr (or (some #(when (match-transition? result %) %) (spec/transitions node))
+                 (throw (ex-info "No approval transition matched the recorded decision"
+                                 {:state state-id :decision (:decision decision)})))
+          ctx (store/event! ctx {:event "approval.decided"
+                                  :state (name state-id)
+                                  :attempt attempt
+                                  :approval_id (:approval_id decision)
+                                  :decision (:decision decision)})
+          ctx (store/event! ctx {:event "transition.selected"
+                                  :from (name state-id)
+                                  :to (name (:next tr))
+                                  :effects (mapv name (:effects tr []))})
+          advanced (finish-if-terminal wf (advance ctx tr result))]
+      (store/save-context! advanced))
+    ;; Pause: no decision yet. Write the approval-request record (idempotent),
+    ;; append approval.requested only on first creation, mark the run blocked,
+    ;; and park. Returning a blocked ctx makes run-until-done! stop cleanly.
+    (let [req-path (approval-request-path ctx state-id attempt)
+          already? (fs/exists? req-path)
+          artifact (render-artifact ctx node)
+          presentation (approval-presentation ctx node)
+          approval-id (str (name state-id) "-" attempt)
+          request {:approval_id approval-id
+                   :run_id (get-in ctx [:run :id])
+                   :state (name state-id)
+                   :attempt attempt
+                   :message (:message node)
+                   :artifact artifact
+                   ;; Presentation contract (P0.2 review). The UI renders the
+                   ;; decision screen from these fields; legacy `message` /
+                   ;; `artifact` are kept for backward compatibility. When the
+                   ;; node authored a `:presentation`, it is materialized
+                   ;; verbatim; otherwise a minimal one is synthesized from
+                   ;; `:message` + `:artifact` + decision transitions.
+                   :question (:question presentation)
+                   :artifacts (:artifacts presentation)
+                   :decisions (:decisions presentation)
+                   :routing (:routing presentation)
+                   :requested_at (store/now)
+                   :status "pending"}
+          ctx (if already?
+                ctx
+                (do (fs/create-dirs (fs/parent req-path))
+                    (store/write-json! req-path request)
+                    (store/event! ctx {:event "approval.requested"
+                                       :state (name state-id)
+                                       :attempt attempt
+                                       :approval_id approval-id
+                                       :artifact (and artifact (:path artifact))})))
+          ctx (-> ctx
+                  (assoc-in [:run :status] "blocked")
+                  (assoc-in [:run :updated-at] (store/now)))]
+      (store/save-context! ctx))))
+
 (defn step! [wf ctx]
   (if (= "done" (get-in ctx [:run :status]))
     ctx
@@ -350,8 +472,14 @@
           attempt (get-in ctx [:run :attempt])
           node (spec/node wf state-id)]
       (when-not node (throw (ex-info "Current state not found" {:state state-id})))
-      (if (= :terminal (:type node))
+      (cond
+        (= :terminal (:type node))
         (finish-if-terminal wf ctx)
+
+        (= :approval (:type node))
+        (step-approval! wf ctx state-id attempt node)
+
+        :else
         ;; Recovery (existing path) handles a completed agent node whose status
         ;; artifact exists. If recovery returns nil, check for an orphan: a
         ;; prior node.started with no terminal event means the resume process
@@ -369,6 +497,65 @@
                   tr (choose-transition node result)]
               (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
               (finish-if-terminal wf (advance ctx tr result)))))))))
+
+(defn read-project-git-user []
+  (let [p (fs/path ".tesseraft" "git-user.json")]
+    (when (fs/exists? p) (store/read-json p))))
+
+;; decide!: record a human decision for the pending approval at the run's
+;; current state+attempt, then advance the run through the matching transition.
+;; Returns either {:run <advanced-run-map>} on success or a structured error
+;; {:status N :error {:code ... :message ...}} on a recoverable failure, so the
+;; caller can print JSON and map status to HTTP codes without a try/catch.
+;; Idempotent: a second decide on an already-decided approval returns 409
+;; conflict. This is the load-bearing mutation behind POST /approvals/{id}.
+(defn decide!
+  ([run-dir approval-id decision]
+   (decide! run-dir approval-id decision nil nil))
+  ([run-dir approval-id decision summary author-overrides]
+   (let [ctx (store/load-context run-dir)
+         wf-file (get-in ctx [:workflow :file])
+         wf (spec/read-workflow wf-file)
+         state-id (get-in ctx [:run :state])
+         attempt (get-in ctx [:run :attempt])
+         node (spec/node wf state-id)
+         expected-id (str (name state-id) "-" attempt)]
+     (cond
+       (or (nil? node) (not= :approval (:type node)))
+       {:status 422 :error {:code "not_approval"
+                            :message (str "Current state " state-id " is not an approval node")}}
+
+       (not= expected-id approval-id)
+       {:status 409 :error {:code "stale_approval"
+                            :message (str "Approval id " approval-id
+                                          " does not match the current pending approval " expected-id)
+                            :details {:expected expected-id :provided approval-id}}}
+
+       (fs/exists? (approval-decision-path ctx state-id attempt))
+       {:status 409 :error {:code "conflict"
+                            :message "A decision has already been recorded for this approval"}}
+
+       :else
+       (let [author (or (when (and (map? author-overrides)
+                                   (seq (str (:name author-overrides)))
+                                   (seq (str (:email author-overrides))))
+                         {:name (str (:name author-overrides))
+                          :email (str (:email author-overrides))})
+                       (read-project-git-user)
+                       {:name "unknown" :email "unknown@tesseraft.local"})
+             decision-rec {:approval_id approval-id
+                           :run_id (get-in ctx [:run :id])
+                           :state (name state-id)
+                           :attempt attempt
+                           :decision decision
+                           :summary summary
+                           :author author
+                           :decided_at (store/now)}
+             dec-path (approval-decision-path ctx state-id attempt)]
+         (fs/create-dirs (fs/parent dec-path))
+         (store/write-json! dec-path decision-rec)
+         ;; step! now sees the decision record and advances the run.
+         {:run (:run (step! wf ctx))})))))
 
 (defn assert-lint-ok! [workflow-file]
   (let [result (lint/lint-file workflow-file)]
@@ -388,14 +575,17 @@
     ;; fire in normal operation because the pre-check below stops the loop
     ;; before starting a node the budget cannot let finish.
     (when (> n max-steps) (throw (ex-info "Exceeded max steps" {:max-steps max-steps})))
-    (if (= "done" (get-in ctx [:run :status]))
-      ctx
-      ;; Pre-check: stop cleanly (park) before starting a node we cannot let
-      ;; finish. max-steps is the number of steps we are allowed to start.
-      ;; n is the number of steps already started. If (= n max-steps) the
-      ;; budget is exhausted, so park instead of advancing. This prevents a
-      ;; bounded `resume --max-steps N` from starting a node and then being
-      ;; torn down mid-flight, which would orphan an in-flight node.
-      (if (>= n max-steps)
-        ctx
-        (recur (store/save-context! (step! wf ctx)) (inc n))))))
+    (let [status (get-in ctx [:run :status])]
+      (cond
+        ;; A run is "blocked" when it parked at an :approval node awaiting a
+        ;; human decision. Stop advancing; the run is resumed by decide!
+        ;; (which writes a decision record and calls step!), not by looping.
+        (#{"done" "blocked"} status) ctx
+        ;; Pre-check: stop cleanly (park) before starting a node we cannot let
+        ;; finish. max-steps is the number of steps we are allowed to start.
+        ;; n is the number of steps already started. If (= n max-steps) the
+        ;; budget is exhausted, so park instead of advancing. This prevents a
+        ;; bounded `resume --max-steps N` from starting a node and then being
+        ;; torn down mid-flight, which would orphan an in-flight node.
+        (>= n max-steps) ctx
+        :else (recur (store/save-context! (step! wf ctx)) (inc n))))))

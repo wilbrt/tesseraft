@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runControlPlane, runLint, runRuntime, startRuntime, type ControlPlaneResult, type RuntimeResult } from '../lib/cli.js';
 import { toEdn } from '../lib/edn.js';
+import { makeGitUserAuthor } from '../lib/approvals.js';
 import { errorBody, jsonResponse, safeDecode } from '../lib/http.js';
 import { ROOT_DIR, WORKSPACE_ROOT } from '../lib/paths.js';
 import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/piSessionAdapter.js';
@@ -52,6 +53,21 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
     if (runId === null) return { badRequest: 'Malformed run id' };
     if (!artifactPath) return { badRequest: 'Missing artifact path' };
     return ['artifact', runId, artifactPath];
+  }
+  if (parts.length === 4 && parts[1] === 'runs' && parts[3] === 'approvals') {
+    const runId = safeDecode(parts[2]);
+    return runId === null ? { badRequest: 'Malformed run id' } : ['approvals', runId];
+  }
+  if (parts.length === 5 && parts[1] === 'runs' && parts[3] === 'approval') {
+    const runId = safeDecode(parts[2]);
+    const approvalId = safeDecode(parts[4]);
+    if (runId === null) return { badRequest: 'Malformed run id' };
+    if (approvalId === null) return { badRequest: 'Malformed approval id' };
+    return ['approval', runId, approvalId];
+  }
+  if (parts.length === 4 && parts[1] === 'runs' && parts[3] === 'comments') {
+    const runId = safeDecode(parts[2]);
+    return runId === null ? { badRequest: 'Malformed run id' } : ['comments', runId];
   }
   return { notFound: true };
 };
@@ -644,6 +660,48 @@ const handleDeleteRun = async (res: Response, runId: string): Promise<void> => {
   });
 };
 
+const handleApprovalDecision = async (req: Request, res: Response, runId: string, approvalId: string): Promise<void> => {
+  const body = (req.body || {}) as JsonRecord;
+  const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
+  if (!decision) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'decision is required'));
+  const summary = typeof body.summary === 'string' ? body.summary : undefined;
+  const detail = await runControlPlane(['run', runId]);
+  if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
+  const runDir = runDetailPath(detail.body);
+  if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
+  const author = await makeGitUserAuthor(req);
+  const args = ['decide', '--run-dir', runDir, '--approval-id', approvalId, '--decision', decision, '--format', 'json'];
+  if (summary) args.push('--summary', summary);
+  if (author) { args.push('--author-name', author.name, '--author-email', author.email); }
+  const cli = await runRuntime(args);
+  if (cli.status !== 200) {
+    // decide! returns a structured error body with HTTP-ish status.
+    const errBody = cli.body && typeof cli.body === 'object' && 'error' in cli.body ? cli.body : errorBody(409, 'conflict', 'Approval decision failed', { stderr: cli.stderr || undefined });
+    const status = (cli.body && typeof cli.body === 'object' && 'status' in cli.body && typeof (cli.body as { status?: unknown }).status === 'number') ? (cli.body as { status: number }).status : 409;
+    return jsonResponse(res, status, errBody);
+  }
+  const refreshed = await refreshedRun(runId);
+  return jsonResponse(res, 200, { operation: 'decide', status: 'ok', run_id: runId, approval_id: approvalId, decision, cli: { exit_code: cli.exitCode, result: cli.body }, run_detail: refreshed.status === 200 ? refreshed.body : null });
+};
+
+const handleAddComment = async (req: Request, res: Response, runId: string): Promise<void> => {
+  const body = (req.body || {}) as JsonRecord;
+  const path = typeof body.path === 'string' ? body.path.trim() : '';
+  const text = typeof body.body === 'string' ? body.body.trim() : '';
+  if (!path) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'path is required'));
+  if (!text) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'body is required'));
+  const anchor = body.anchor && typeof body.anchor === 'object' && !Array.isArray(body.anchor) ? body.anchor : undefined;
+  const args = ['comment', 'add', runId, '--path', path, '--body', text];
+  if (anchor && typeof anchor === 'object') {
+    const a = anchor as { start_line?: unknown; end_line?: unknown };
+    if (typeof a.start_line === 'number' && typeof a.end_line === 'number') {
+      args.push('--start-line', String(a.start_line), '--end-line', String(a.end_line));
+    }
+  }
+  const result = await runControlPlane(args);
+  return jsonResponse(res, result.status, result.body);
+};
+
 const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume'): Promise<void> => {
   const body = req.body as JsonRecord;
   const detail = await refreshedRun(runId);
@@ -758,6 +816,20 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     return void handleDeleteRun(res, runId).catch(next);
   });
 
+  // Specific POST routes MUST precede /runs/:runId/:operation, otherwise the
+  // wildcard :operation param would shadow /comments and /approvals/:id.
+  router.post('/runs/:runId/approvals/:approvalId', (req, res, next) => {
+    const runId = safeDecode(req.params.runId);
+    const approvalId = safeDecode(req.params.approvalId);
+    if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    if (approvalId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed approval id'));
+    return void handleApprovalDecision(req, res, runId, approvalId).catch(next);
+  });
+  router.post('/runs/:runId/comments', (req, res, next) => {
+    const runId = safeDecode(req.params.runId);
+    if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleAddComment(req, res, runId).catch(next);
+  });
   router.post('/runs/:runId/:operation', (req, res, next) => {
     const runId = safeDecode(req.params.runId);
     const operation = req.params.operation;
@@ -772,7 +844,12 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     if (routed === null) return next();
     if ('badRequest' in routed) return jsonResponse(res, 400, errorBody(400, 'bad_request', routed.badRequest));
     if ('notFound' in routed) return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
-    return void runControlPlane(routed).then((result) => jsonResponse(res, result.status, result.body)).catch(next);
+    // comments GET needs --path forwarded from the query string.
+    const routedArgs = routed as string[];
+    const cpArgs: string[] = routedArgs[0] === 'comments' && routedArgs.length === 2
+      ? [...routedArgs, '--path', new URLSearchParams(req.url.split('?')[1] || '').get('path') || '']
+      : routedArgs;
+    return void runControlPlane(cpArgs).then((result) => jsonResponse(res, result.status, result.body)).catch(next);
   });
 
   return router;

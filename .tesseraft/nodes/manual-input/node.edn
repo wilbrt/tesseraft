@@ -1,0 +1,16 @@
+{:api-version "tesseraft.node/v1"
+ :kind :node
+ :metadata {:name "manual-input"
+           :title "Manual input"
+           :description "A reusable approval gate that pauses a run to collect a human decision about a produced artifact (e.g. a design doc). The decision (e.g. \"approve\" or \"changes-requested\") is matched against the node's :transitions :when {:decision \"...\"} to advance the run. Place this node between a producer (e.g. :design) and its consumer; the referenced :artifact is surfaced in Run Console for annotation."}
+ :assets {:schemas ["schemas/approval-decision.schema.json"]}
+ :node {:type :approval
+        :title "Manual input"
+        :message "Review the referenced artifact and approve or request changes."
+        :timeout "PT0S"
+        :artifact {:path "design/design.md"
+                   :kind "design-doc"}
+        :transitions [{:when {:decision "approve"} :next :next}
+                      {:when {:decision "changes-requested"} :next :revise}]
+        :resources {:requires [{:kind :design-doc :name "artifact-under-review" :path "design/design.md" :mode :read}]
+                    :produces [{:kind :approval-decision :name "decision" :path "approvals/manual-input-{{run.attempt}}-decision.json"}]}}}

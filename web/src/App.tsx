@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
 import { WorkflowStudio } from './components/WorkflowStudio';
 import { RunListTable } from './components/RunListTable';
+import { ApprovalPanel } from './components/ApprovalPanel';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -186,18 +187,21 @@ export const App = () => {
           <WorkflowPanels workflows={workflows} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} graph={graph} selectedNodeId={selectedNodeId} workflowError={workflowError} onSelectWorkflow={selectWorkflow} onSelectNode={setSelectedNodeId} onOpenStudio={(name) => { setStudioWorkflowName(name); setActiveTab('studio'); }} onCreateWorkflow={() => { setStudioWorkflowName(null); setActiveTab('studio'); }} />
         )}
         {activeTab === 'runs' && (
-          <RunListTable
-            runs={runs}
-            expandedRunId={selectedRun}
-            runDetail={runDetail}
-            events={events}
-            artifacts={artifacts}
-            runError={runError}
-            selectedNodeId={selectedNodeId}
-            lastRunRefresh={lastRunRefresh}
-            onToggleRow={handleToggleRow}
-            onSelectNode={setSelectedNodeId}
-          />
+          <>
+            <RunListTable
+              runs={runs}
+              expandedRunId={selectedRun}
+              runDetail={runDetail}
+              events={events}
+              artifacts={artifacts}
+              runError={runError}
+              selectedNodeId={selectedNodeId}
+              lastRunRefresh={lastRunRefresh}
+              onToggleRow={handleToggleRow}
+              onSelectNode={setSelectedNodeId}
+            />
+            <ApprovalPanel runId={selectedRun} onRefresh={refreshAfterMutation} />
+          </>
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'settings' && <SettingsPanel />}

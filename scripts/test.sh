@@ -106,6 +106,7 @@ rm -f /tmp/tesseraft-agent-model-lint.json /tmp/tesseraft-agent-model-invalid-li
 
 printf '\nLinting self-contained node fixtures...\n'
 ./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn
+./bin/tesseraft node lint .tesseraft/nodes/manual-input/node.edn
 
 printf '\nChecking node export/import...\n'
 ./bin/tesseraft node export examples/smoke/workflow.edn start --out "$TMP_DIR/exported-start"
