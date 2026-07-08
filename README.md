@@ -147,6 +147,8 @@ Implemented:
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
 - **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.  
   _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
+- **blocked-run-state** (implemented) — Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments.  
+  _Evidence:_ schemas/run-state.schema.json enum "blocked", src/tesseraft/runtime/core.clj approval pause/resume, web/src/components/ApprovalPanel.tsx, web/src-server/lib/approvals.ts, docs/MERGE_PROTOCOL.md
 - **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
   _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
 - **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
@@ -156,9 +158,6 @@ Implemented:
 
 Partial:
 
-- **blocked-run-state** (partial) — Declared in run-state schema; runtime approval/manual-input node not merged.  
-  _Gap:_ PR #44 (approval/manual-input node) not on main; runtime/core.clj has no blocked branch.  
-  _Evidence:_ schemas/run-state.schema.json enum "blocked"
 - **mock-executor** (partial) — Side-effect-free mock-run-workflow example; runner-level mock dry-run mode not merged.  
   _Gap:_ PR #8 (mock executor dry-run mode) not on main.  
   _Evidence:_ examples/mock-run-workflow/workflow.edn
@@ -169,6 +168,5 @@ Not yet implemented:
 
 - Full Pi SDK executor
 - HTTP control-plane server (read-only CLI/library skeleton only)
-- Approval node UX (runtime node not merged)
 - Durable DB-backed runner
 <!-- END STATUS -->

@@ -44,8 +44,10 @@ Known semantic gaps remain:
 
 - Runner-level mock executor / dry-run mode is still a roadmap dependency for
   one-key mock-run and mock-mode badges.
-- Runtime approval/manual-input support is still a roadmap dependency for the
-  self-checkpoint approval UX.
+- Runtime approval/manual-input support landed in PR #44 (merged); the remaining
+  roadmap dependency is the diff-centric self-checkpoint approval UX itself
+  (P3.1), built on the now-implemented approval request/decision records and
+  `approval.requested`/`approval.decided` events.
 - Catalog-as-lens, cross-scope shadowing visibility, and fragment packages are
   next-step UX/product work over existing package discovery concepts.
 
@@ -243,9 +245,11 @@ forms, and one-key mock-run after runner-level mock mode lands.
 
 ### Next: self-checkpoint gates
 
-After approval/manual-input runtime support lands, add diff-centric approval
-screens, durable decisions, needs-you strip, and notification/deep-link flows
-for the single-developer phase-1 persona.
+The approval/manual-input runtime landed in PR #44 (merged), exposing durable
+approval request/decision records and `approval.requested`/`approval.decided`
+events through the control plane. Next, add diff-centric approval screens,
+needs-you strip, and notification/deep-link flows for the single-developer
+phase-1 persona (P3.1) on top of those durable records.
 
 ## Decisions
 

@@ -11,10 +11,9 @@
     :summary "Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN."
     :evidence ["src/tesseraft/adapters/builtin.clj notify-pinga!" "src/tesseraft/spec.clj"]}
    :blocked-run-state
-   {:status :partial
-    :summary "Declared in run-state schema; runtime approval/manual-input node not merged."
-    :evidence ["schemas/run-state.schema.json enum \"blocked\""]
-    :gap "PR #44 (approval/manual-input node) not on main; runtime/core.clj has no blocked branch."}
+   {:status :implemented
+    :summary "Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments."
+    :evidence ["schemas/run-state.schema.json enum \"blocked\"" "src/tesseraft/runtime/core.clj approval pause/resume" "web/src/components/ApprovalPanel.tsx" "web/src-server/lib/approvals.ts" "docs/MERGE_PROTOCOL.md"]}
    :recovery-tests
    {:status :implemented
     :summary "Interrupted-agent recovery + orphan detection with node.recovered events."
@@ -39,5 +38,4 @@
   :not-yet-implemented
   ["Full Pi SDK executor"
    "HTTP control-plane server (read-only CLI/library skeleton only)"
-   "Approval node UX (runtime node not merged)"
    "Durable DB-backed runner"]}}

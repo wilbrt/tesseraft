@@ -34,8 +34,11 @@ Reconfirmed from repo files during this rewrite:
 - **Manual testing harness exists** in `manual-testing/`.
 - **Mock executor remains the critical path**: README still marks runner-level
   mock dry-run mode as partial / PR #8 not on main.
-- **Approval/manual-input remains gated**: README and merge-protocol docs still
-  mark runtime approval/manual-input as not merged / PR #44 open.
+- **Approval/manual-input landed**: PR #44 merged; runtime approval/manual-input
+  node, approval request/decision records, `approval.requested`/`approval.decided`
+  events, and artifact comments are now on main (see `src/tesseraft/runtime/core.clj`,
+  `web/src/components/ApprovalPanel.tsx`). Remaining work: the self-checkpoint UX
+  surface (P3.1) and needs-you strip + decide affordances (P3.2).
 
 Treat PR state as stale unless rechecked immediately before acting.
 
@@ -80,8 +83,8 @@ P0.1 mock executor (#8) ────────────────┬─> 
                                         ├─> P4.1 golden UI mock fixtures
                                         └─> P4.2 re-run delta / downstream diff
 
-P0.2 approval schema feedback (#44) ────┬─> P3.1 self-checkpoint screen
-P0.3 approval runtime merge (#44) ──────┴─> P3.2 needs-you strip + decide
+P0.2 approval schema feedback (#44) ──✅──┬─> P3.1 self-checkpoint screen
+P0.3 approval runtime merge (#44) ────✅──┴─> P3.2 needs-you strip + decide
 
 P1.1 shadowing metadata ────────────────┬─> P1.2 catalog cards
                                         └─> P1.3 linter diagnostics
@@ -108,7 +111,8 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > separation. Add a short v3.2 alignment section: phase-1 user is one
   > developer, composition/reuse is the adoption gate, catalog is a lens over
   > existing discovery, mock mode is the Studio REPL once #8 lands, and approval
-  > UX is a self-checkpoint once #44 lands. Where implementation has outrun the
+  > UX (runtime landed via #44) is a self-checkpoint surfaced in the Run
+  > Console (P3.1). Where implementation has outrun the
   > docs (SSE, start/step/resume/delete, Studio writes, settings/Pi sessions),
   > document the implemented contract and remaining gaps.
 
@@ -127,12 +131,16 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > external services. The Web UI depends on this for one-key mock-run, launch
   > form rehearsal, mock-mode badges, and future golden event-log fixtures.
 
-### P0.2 Shape the approval presentation contract before #44 merges
+### P0.2 Shape the approval presentation contract before #44 merges — ✅ DONE (PR #44 merged)
 
 - **Workflow:** prompt-to-pr / PR review feedback
-- **Depends on:** open #44 state
+- **Depends on:** open #44 state (now satisfied — PR #44 merged)
 - **Parallelizable with:** P0.0, P0.1
 - **Side effects:** schema/API feedback only unless #44 is edited
+- **Status:** ✅ Done — PR #44 (`feature/manual-input-node`) merged to main
+  (merge commit 7952d5b). Approval request/decision records and
+  `approval.requested`/`approval.decided` events are durable runtime records;
+  artifact comments implemented as run-relative files.
 - **Prompt:**
   > Review PR #44 and propose the phase-1/phase-2-ready approval presentation
   > contract before merge: authored question, curated artifact list with render
@@ -141,12 +149,17 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > decisions to be durable runtime records with `approval.requested` and
   > `approval.decided` events. Do not build multi-user reviewer routing yet.
 
-### P0.3 Merge approval/manual-input runtime support (#44) after schema review
+### P0.3 Merge approval/manual-input runtime support (#44) after schema review — ✅ DONE
 
 - **Workflow:** review-loop
 - **Depends on:** P0.2, CI green
 - **Parallelizable with:** P1 catalog work; not with Run Console approval UI
 - **Side effects:** runtime + control-plane + web write surface
+- **Status:** ✅ Done — PR #44 merged to main. Blocked run state, approval
+  request/decision records, comment/annotation artifacts, replay-safe decision
+  semantics, and path-safe artifact/comment handling are preserved. Tests for
+  duplicate-decision 409s, path traversal rejection, and event-log evidence
+  are retained (`test/web-server.test.js`, `scripts/test.sh`).
 - **Prompt:**
   > Rebase and merge #44 after P0.2 feedback is resolved. Preserve blocked run
   > state, approval request/decision records, comment/annotation artifacts,
