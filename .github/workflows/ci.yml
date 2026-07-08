@@ -56,18 +56,18 @@ jobs:
         run: ./test/container/test.sh
 
       - name: Tesseraft node lint (.tesseraft/nodes/*)
-        # `.tesseraft/nodes/` does not currently exist in the repo. With
-        # nullglob + a wildcards-only glob, an unmatched glob expands to
-        # nothing (not a literal string), so we skip with an explicit TODO
-        # instead of failing CI through no fault of the code. When node
-        # packages are added, this step will lint them automatically.
+        # Node packages are directories containing `node.edn`; lint the
+        # `node.edn` files directly (passing a directory yields an
+        # `Is a directory` parse-error). With nullglob an unmatched glob
+        # expands to nothing, so we skip with an explicit TODO instead of
+        # failing CI through no fault of the code.
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          targets=(.tesseraft/nodes/*)
+          targets=(.tesseraft/nodes/*/node.edn)
           if [[ ${#targets[@]} -eq 0 ]]; then
-            echo "TODO: no .tesseraft/nodes/* packages present; skipping node lint"
+            echo "TODO: no .tesseraft/nodes/* node packages present; skipping node lint"
             exit 0
           fi
           ./bin/tesseraft node lint "${targets[@]}"
