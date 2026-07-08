@@ -153,14 +153,13 @@ Implemented:
   _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
 - **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
   _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
+- **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.  
+  _Evidence:_ src/tesseraft/runtime/core.clj mock-mode?/executor-mode, src/tesseraft/executors/mock.clj, examples/mock-run-workflow/workflow.edn, scripts/test.sh mock dry-run, README.md §Mock mode
 - **container-install** (implemented) — Containerized install path and install_deps script.  
   _Evidence:_ docs/CONTAINER_INSTALL.md, scripts/install.sh, test/container/
 
 Partial:
 
-- **mock-executor** (partial) — Side-effect-free mock-run-workflow example; runner-level mock dry-run mode not merged.  
-  _Gap:_ PR #8 (mock executor dry-run mode) not on main.  
-  _Evidence:_ examples/mock-run-workflow/workflow.edn
 - **web-ui** (partial) — Workflow Studio + Run Console scaffold exists; not feature-complete.  
   _Evidence:_ web/src/, web/src/components/WorkflowStudio.tsx, docs/WEB_UI.md
 

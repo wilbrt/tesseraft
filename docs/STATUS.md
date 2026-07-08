@@ -86,5 +86,5 @@ catches drift before push.
 capability that is only partially merged (e.g. a schema enum without runtime
 support, or an example without the runner mode) is `:partial` with a `:gap`
 note — never rounded up to `:implemented`. See the `:gap` fields in
-`STATUS.edn` for current examples (mock executor; blocked run state has since
-landed as `:implemented` via PR #44).
+`STATUS.edn` for current examples (neither blocked run state nor mock executor is
+a `:partial` gap any longer — both landed via PR #44 and PR #8 respectively).

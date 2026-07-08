@@ -53,7 +53,8 @@ Known next-work gaps:
 - catalog cards over example/global/project scopes, node packages, and override
   visibility;
 - fragment package contracts and gallery;
-- one-key mock-run from Studio, blocked on runner-level mock executor support;
+- one-key mock-run from Studio; the runner-level mock executor landed in PR #8
+  (merged), so the remaining work is the one-key UI surface (P2.2);
 - approval/self-checkpoint UX; the runtime approval/manual-input support landed in
   PR #44 (merged), so the remaining work is the diff-centric self-checkpoint UI
   (P3.1);
