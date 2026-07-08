@@ -1,6 +1,7 @@
 (ns tesseraft.runtime.core
   (:require
     [tesseraft.adapters.builtin :as adapters]
+    [tesseraft.executors.mock :as mock]
     [tesseraft.executors.pi-cli :as pi-cli]
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
@@ -30,7 +31,8 @@
         git-user-name (some-> (get-in opts [:git-user :name]) str/trim not-empty)
         git-user-email (some-> (get-in opts [:git-user :email]) str/trim not-empty)
         git-user (when (and git-user-name git-user-email)
-                   {:name git-user-name :email git-user-email})]
+                   {:name git-user-name :email git-user-email})
+        executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))]
     {:workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
@@ -46,6 +48,7 @@
            :issues-file (str (fs/path run-dir "issues.json"))
            :created-at (store/now)
            :updated-at (store/now)}
+         executor-mode (assoc :executor-mode executor-mode)
          git-user (assoc :git-user git-user))}))
 
 (defn artifact-path [ctx p]
@@ -116,6 +119,18 @@
     (Thread/sleep ms)
     {:status "ok" :slept-ms ms}))
 
+(defn executor-mode [ctx]
+  (when-let [mode (get-in ctx [:run :executor-mode])]
+    (keyword mode)))
+
+(defn mock-mode? [ctx]
+  (= :mock (executor-mode ctx)))
+
+(defn run-agent! [wf ctx state-id node]
+  (if (mock-mode? ctx)
+    (mock/run-agent-node! wf ctx state-id node)
+    (pi-cli/run-agent-node! wf ctx state-id node)))
+
 (defn json-compatible [x]
   (cond
     (nil? x) nil
@@ -180,11 +195,11 @@
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
   (try
     (let [result (case (:type node)
-                   :agent (let [exec-result (pi-cli/run-agent-node! wf ctx state-id node)]
+                   :agent (let [exec-result (run-agent! wf ctx state-id node)]
                             (when-not (:ok exec-result)
                               (throw (ex-info "Agent executor failed" exec-result)))
                             (merge exec-result (status-result ctx node)))
-                   :deterministic (adapters/run-handler! wf ctx state-id node)
+                   :deterministic (adapters/run-handler! wf ctx state-id node {:mock? (mock-mode? ctx)})
                    :process (run-process-node! wf ctx state-id node)
                    :timer (run-timer-node! wf ctx state-id node)
                    :approval (throw (ex-info "Approval nodes require a control plane" {:state state-id}))

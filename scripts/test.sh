@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 RUN_DIRS=(".agent-runs/smoke-demo/smoke-test"
+          ".agent-runs/review-loop/mock-test"
           ".agent-runs/recovery-fixture/recovery-test"
           ".agent-runs/process-failure-fixture/process-failure-test"
           ".agent-runs/agent-model-provider-fixture/agent-model-provider-test")
@@ -165,6 +166,23 @@ SMOKE_OUTPUT="$(./bin/tesseraft run examples/smoke/workflow.edn --run-id smoke-t
 printf '%s\n' "$SMOKE_OUTPUT"
 if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   echo "Expected smoke workflow run status to be done" >&2
+  exit 1
+fi
+
+printf '\nRunning review-loop mock executor dry run...\n'
+MOCK_RUN_DIR=".agent-runs/review-loop/mock-test"
+MOCK_OUTPUT="$(./bin/tesseraft run examples/review-loop/workflow.edn --executor mock --run-id mock-test --input prompt='Test dry run' --input repo-root=. --format json)"
+printf '%s\n' "$MOCK_OUTPUT"
+if ! grep -q '"status" : "done"' <<<"$MOCK_OUTPUT"; then
+  echo "Expected mock workflow run status to be done" >&2
+  exit 1
+fi
+if [[ ! -f "$MOCK_RUN_DIR/design/status.json" || ! -f "$MOCK_RUN_DIR/execution/status-1.json" || ! -f "$MOCK_RUN_DIR/pr/pr.json" ]]; then
+  echo "Expected mock dry run artifacts were not written" >&2
+  exit 1
+fi
+if ! grep -q ':executor-mode "mock"' "$MOCK_RUN_DIR/state.edn"; then
+  echo "Expected mock executor mode to be persisted in context" >&2
   exit 1
 fi
 

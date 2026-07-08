@@ -384,7 +384,101 @@
    :notify/pinga notify-pinga!
    :noop/succeed (fn [_wf _ctx _state-id _node] {:status "ok"})})
 
-(defn run-handler! [wf ctx state-id node]
-  (let [handler (get handlers (:handler node))]
-    (when-not handler (throw (ex-info "Unknown deterministic handler" {:handler (:handler node)})))
-    (handler wf ctx state-id node)))
+(defn output-path [ctx node output-key fallback]
+  (artifact-path ctx (or (get-in node [:outputs output-key :path]) fallback)))
+
+(defn mock-ticket [ctx]
+  (let [ticket (get-in ctx [:inputs :ticket] "MOCK-1")]
+    {:key ticket :summary "Mock dry-run ticket" :status "Mock" :mock true}))
+
+(defn mock-pr [ctx node]
+  (let [branch (branch-name ctx node)
+        base (or (get-in ctx [:inputs :base-branch]) "main")]
+    {:number 1
+     :url "https://example.invalid/mock/pr/1"
+     :state "OPEN"
+     :headRefName branch
+     :baseRefName base
+     :mock true}))
+
+(defn mock-worktree-dir [ctx node]
+  (or (artifact-text ctx (get-in node [:inputs :repo-dir-file]))
+      (str (fs/path (get-in ctx [:run :dir]) "mock-worktree"))))
+
+(defn mock-test-server [ctx node]
+  {:kind "web-service"
+   :name "mock-test-server"
+   :url "http://127.0.0.1:0"
+   :host (or (get-in node [:inputs :host]) "127.0.0.1")
+   :port 0
+   :pid nil
+   :cwd (mock-worktree-dir ctx node)
+   :worktree_root (mock-worktree-dir ctx node)
+   :command (mapv str (or (get-in node [:inputs :command]) []))
+   :build_command (when-let [cmd (get-in node [:inputs :build-command])] (mapv str cmd))
+   :mock true
+   :started_at (store/now)
+   :lifecycle {:cleanup "none; mock dry run did not start a process"}})
+
+(defn run-mock-handler! [_wf ctx _state-id node]
+  (case (:handler node)
+    :jira/fetch-ticket
+    (let [ticket (mock-ticket ctx)
+          out-path (output-path ctx node :ticket-json "ticket.json")]
+      (store/write-json! out-path ticket)
+      {:status "ok" :mock true :ticket (:key ticket) :ticket-file out-path})
+
+    :git/ensure-branch
+    {:status "ok" :mock true :branch (branch-name ctx node)
+     :base-branch (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")}
+
+    :git/ensure-worktree
+    (let [branch (branch-name ctx node)
+          base (or (get-in ctx [:inputs :base-branch]) (get-in ctx [:workflow :defaults :base-branch]) "main")
+          path (mock-worktree-dir ctx node)
+          out-path (output-path ctx node :worktree-path "worktree/path.txt")]
+      (fs/create-dirs path)
+      (fs/create-dirs (fs/parent out-path))
+      (spit out-path path)
+      {:status "ok" :mock true :branch branch :base-branch base :start-point (str "origin/" base) :worktree-dir path :worktree-file out-path})
+
+    :git/push
+    {:status "ok" :mock true :branch (branch-name ctx node)}
+
+    :github/create-pr
+    (let [pr (mock-pr ctx node)
+          pr-file (output-path ctx node :pr-json "pr/pr.json")]
+      (store/write-json! pr-file pr)
+      {:status "ok" :mock true :pr pr :pr-file pr-file})
+
+    :github/fetch-pr-feedback
+    (let [feedback {:pr {:number 1 :url "https://example.invalid/mock/pr/1" :state "OPEN" :mock true}
+                    :issue-comments []
+                    :reviews []
+                    :review-comments []}
+          out-path (output-path ctx node :feedback-json "pr/feedback/feedback.json")]
+      (store/write-json! out-path feedback)
+      {:status "ok" :mock true :feedback-file out-path})
+
+    :web/start-test-server
+    (let [server (mock-test-server ctx node)
+          out-path (output-path ctx node :test-server "manual-testing/test-server.json")]
+      (store/write-json! out-path server)
+      {:status "ok" :mock true :test-server-file out-path :url (:url server) :pid nil})
+
+    :notify/pinga
+    {:status "ok" :mock true}
+
+    :noop/succeed
+    {:status "ok" :mock true}
+
+    (throw (ex-info "Unknown mock deterministic handler" {:handler (:handler node)}))))
+
+(defn run-handler!
+  ([wf ctx state-id node] (run-handler! wf ctx state-id node {}))
+  ([wf ctx state-id node opts]
+   (if (:mock? opts)
+     (run-mock-handler! wf ctx state-id node)
+     (let [handler (get handlers (:handler node))]
+       (when-not handler (throw (ex-info "Unknown deterministic handler" {:handler (:handler node)})))
+       (handler wf ctx state-id node)))))
