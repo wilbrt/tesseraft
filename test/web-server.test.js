@@ -489,6 +489,22 @@ test('web server exposes approval pause, decide, and resume via the control plan
   assert.ok(approvals.approvals.length >= 1);
   const approvalId = approvals.approvals[0].approval_id;
 
+  // P0.2 presentation contract: the durable request record carries a
+  // materialized presentation (question/artifacts/decisions/routing) so the
+  // UI renders the decision screen from the record instead of hard-coded
+  // labels. Synthesized here because the node authored no `:presentation`.
+  const pending = approvals.approvals[0];
+  assert.equal(pending.routing?.kind, 'self');
+  assert.ok(Array.isArray(pending.artifacts) && pending.artifacts.length >= 1);
+  assert.equal(pending.artifacts[0].path, 'design/design.md');
+  assert.ok(Array.isArray(pending.decisions) && pending.decisions.length === 2);
+  const approveDecision = pending.decisions.find((d) => d.decision === 'approve');
+  const changesDecision = pending.decisions.find((d) => d.decision === 'changes-requested');
+  assert.ok(approveDecision, 'expected an approve decision option');
+  assert.ok(changesDecision, 'expected a changes-requested decision option');
+  assert.equal(approveDecision.next, 'done');
+  assert.equal(changesDecision.next, 'revise');
+
   // Add a line-anchored comment on the referenced artifact.
   const commentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
     method: 'POST',

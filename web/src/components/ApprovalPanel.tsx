@@ -31,12 +31,19 @@ const usePendingApproval = (runId: string | null): { approval: ApprovalRequest |
   return { approval, loading, error, reload };
 };
 
-const decodeDecisionLabels = (approval: ApprovalRequest | null): string[] => {
-  // The node's transitions are not exposed over the API in v1, so derive
-  // common decision labels from the artifact and default to approve /
-  // changes-requested when unknown. The runtime matches the decision string
-  // against transition :when {:decision "..."}.
-  return ['approve', 'changes-requested'];
+const decodeDecisionLabels = (approval: ApprovalRequest | null): { decision: string; label: string }[] => {
+  // Render decision options from the durable approval request record
+  // (presentation contract, P0.2 review) instead of a hard-coded array. The
+  // runtime materializes a `decisions` list from the node's transitions; the
+  // submitted `decision` string still matches transition :when {:decision "..."}.
+  // Fall back to the v1 hard-coded pair for records written before this
+  // contract shipped, so older paused runs keep rendering a decision UI.
+  const fromRecord = (approval?.decisions || [])
+    .filter((d) => d && typeof d.decision === 'string' && d.decision.length > 0)
+    .map((d) => ({ decision: d.decision, label: d.label?.trim() || d.decision }));
+  return fromRecord.length > 0
+    ? fromRecord
+    : [{ decision: 'approve', label: 'approve' }, { decision: 'changes-requested', label: 'changes-requested' }];
 };
 
 export const ApprovalPanel = ({ runId, onRefresh }: Props) => {
@@ -66,7 +73,12 @@ export const ApprovalPanel = ({ runId, onRefresh }: Props) => {
   };
 
   const artifactPath = approval.artifact?.path;
-  const labels = decodeDecisionLabels(approval);
+  const question = approval.question?.trim() || approval.message?.trim() || '';
+  const presentationArtifacts = (approval.artifacts || []).filter((a) => a && typeof a.path === 'string');
+  const options = decodeDecisionLabels(approval);
+  const routingKind = approval.routing?.kind || 'self';
+
+  const decideWith = (decision: string): Promise<void> => decide(decision);
 
   return (
     <section className="panel approval-panel" aria-label="Approval decision">
@@ -77,16 +89,31 @@ export const ApprovalPanel = ({ runId, onRefresh }: Props) => {
         <dt>State</dt><dd>{approval.state}</dd>
         <dt>Attempt</dt><dd>{approval.attempt}</dd>
         <dt>Approval id</dt><dd><code>{approval.approval_id}</code></dd>
-        <dt>Message</dt><dd>{approval.message || ''}</dd>
-        {artifactPath && <dt className="artifact-dt">Artifact</dt>}
-        {artifactPath && <dd><code>{artifactPath}</code></dd>}
+        {question && <dt className="question-dt">Question</dt>}
+        {question && <dd>{question}</dd>}
+        {!question && approval.message && <dt>Message</dt>}
+        {!question && approval.message && <dd>{approval.message}</dd>}
+        {presentationArtifacts.length > 0 && <dt className="artifact-dt">Artifacts</dt>}
+        {presentationArtifacts.length > 0 && (
+          <dd>
+            <ul className="approval-artifacts">
+              {presentationArtifacts.map((a) => (
+                <li key={a.path}><code>{a.path}</code>{a.label ? ` — ${a.label}` : ''}{a.kind ? ` (${a.kind})` : ''}</li>
+              ))}
+            </ul>
+          </dd>
+        )}
+        {presentationArtifacts.length === 0 && artifactPath && <dt className="artifact-dt">Artifact</dt>}
+        {presentationArtifacts.length === 0 && artifactPath && <dd><code>{artifactPath}</code></dd>}
+        {routingKind !== 'self' && <dt>Routing</dt>}
+        {routingKind !== 'self' && <dd>{routingKind}</dd>}
       </dl>
       <label className="comment-anchor">Summary (optional)
         <textarea value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Optional comment summarizing the decision." />
       </label>
       <div className="control-card approval-buttons">
-        {labels.map((label) => (
-          <button key={label} type="button" disabled={busy} onClick={() => void decide(label)}>{label}</button>
+        {options.map((opt) => (
+          <button key={opt.decision} type="button" disabled={busy} onClick={() => void decideWith(opt.decision)}>{opt.label}</button>
         ))}
       </div>
     </section>

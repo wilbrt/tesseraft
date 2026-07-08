@@ -235,7 +235,17 @@ test('Artifact comments and approval UI sources expose annotation and decision s
   assert.match(types, /export type Comment =/);
   assert.match(types, /export type ApprovalRequest =/);
   assert.match(types, /export type ApprovalsResponse =/);
+  assert.match(types, /export type ApprovalDecisionOption =/);
+  assert.match(types, /export type ApprovalRouting =/);
   assert.match(api, /export const postJson/);
+  // P0.2 presentation contract: the panel renders decision options from the
+  // durable approval record's `decisions` list, not a hard-coded array, with
+  // a backward-compatible fallback for older records.
+  assert.match(approvalPanel, /approval\?\.decisions/);
+  assert.match(approvalPanel, /approval\.question/);
+  assert.match(approvalPanel, /approval\.artifacts/);
+  assert.match(approvalPanel, /approval\.routing/);
+  assert.match(approvalPanel, /Manual input · approval/);
 });
 
 test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST routes', () => {

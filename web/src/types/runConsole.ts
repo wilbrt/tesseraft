@@ -30,7 +30,27 @@ export type RunDetail = RunSummary & { round?: number; attempt?: number; path?: 
 export type EventRecord = { event?: string; type?: string; state?: string; from?: string; attempt?: number; [key: string]: unknown };
 export type Comment = { id: string; path: string; anchor?: { start_line?: number | null; end_line?: number | null } | null; body: string; author?: { name?: string; email?: string } | string | null; created_at?: string };
 export type CommentsResponse = { run_id: string; path: string; comments: Comment[] };
-export type ApprovalRequest = { approval_id: string; run_id: string; state: string; attempt: number; message?: string; artifact?: { path?: string; kind?: string } | null; requested_at?: string; status?: string; decision?: ApprovalDecision | null };
+export type ApprovalArtifact = { path?: string; kind?: string; label?: string; render?: string; required?: boolean };
+export type ApprovalDecisionOption = { decision: string; label?: string; next?: string; consequence?: string };
+export type ApprovalRouting = { kind?: string };
+export type ApprovalRequest = {
+  approval_id: string;
+  run_id: string;
+  state: string;
+  attempt: number;
+  message?: string;
+  artifact?: { path?: string; kind?: string } | null;
+  /** Presentation contract (P0.2): the UI renders the decision screen from
+   * these durable fields instead of hard-coded labels. Synthesized by the
+   * runtime when the node does not author a `:presentation` block. */
+  question?: string | null;
+  artifacts?: ApprovalArtifact[] | null;
+  decisions?: ApprovalDecisionOption[] | null;
+  routing?: ApprovalRouting | null;
+  requested_at?: string;
+  status?: string;
+  decision?: ApprovalDecision | null;
+};
 export type ApprovalDecision = { approval_id: string; decision: string; summary?: string | null; author: { name: string; email: string }; decided_at: string };
 export type ApprovalsResponse = { run_id: string; approvals: ApprovalRequest[] };
 export type ApprovalResponse = { approval: ApprovalRequest };
