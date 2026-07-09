@@ -102,7 +102,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ## P0 — Reconcile canon and unblock semantic dependencies
 
-### P0.0 Reconcile Web UI docs with v3.2 and current implementation
+### P0.0 Reconcile Web UI docs with v3.2 and current implementation — ✅ DONE (docs reconciled; #8/#44 runtime landing reflected via PR #62/#63)
 
 - **Workflow:** prompt-to-pr
 - **Depends on:** —
