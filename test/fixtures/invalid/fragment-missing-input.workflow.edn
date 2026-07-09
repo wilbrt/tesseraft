@@ -1,0 +1,17 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-missing-input-fixture"}
+ :inputs {:repo-root {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :run-tests
+ :states
+ {:run-tests
+  {:type :fragment
+   :fragment "test-fix-loop"
+   ;; test-cmd is a required interface input but is not bound -> error.
+   :inputs {:repo-root "{{inputs.repo-root}}"}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :abort}]}
+  :done {:type :terminal :status :success}
+  :abort {:type :terminal :status :failure}}}

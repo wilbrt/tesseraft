@@ -1,0 +1,25 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-import-fixture"
+            :title "Fragment import fixture"
+            :description "Imports the test-fix-loop fragment via a {:type :fragment} boundary node."}
+ :inputs {:repo-root {:type :string :required true}
+          :test-cmd {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :run-tests
+ :states
+ {:run-tests
+  {:type :fragment
+   :fragment "test-fix-loop"
+   :inputs {:repo-root "{{inputs.repo-root}}"
+            :test-cmd "{{inputs.test-cmd}}"}
+   :parameters {:max-rounds 3 :base-branch "main"}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :effects [:merge-issues] :next :abort}]}
+
+  :done
+  {:type :terminal :status :success}
+
+  :abort
+  {:type :terminal :status :failure}}}

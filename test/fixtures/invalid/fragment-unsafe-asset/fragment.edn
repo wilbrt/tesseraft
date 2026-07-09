@@ -1,0 +1,17 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "unsafe-asset-fixture"}
+ :interface {:inputs {:prompt {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:prompts ["../escape.md.tmpl"]
+          :schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :work
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:work {:type :agent
+                            :executor :pi-cli
+                            :prompt-template "../escape.md.tmpl"
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "work/status.json" :required true}}
+                            :next :done}
+                     :done {:type :terminal :status :success}}}}

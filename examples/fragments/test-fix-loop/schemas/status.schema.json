@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft Standard Status Artifact",
+  "type": "object",
+  "required": ["status", "summary"],
+  "properties": {
+    "status": {"type": "string", "enum": ["pass", "fail", "actions_needed", "no_actions", "ok", "error"]},
+    "summary": {"type": "string"},
+    "issues_file": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

@@ -6,6 +6,10 @@
    {:status :implemented
     :summary "Self-contained node package import/export via `bb node`."
     :evidence ["src/tesseraft/node/cli.clj" "docs/NODES.md" "docs/PACKAGES.md" "bb.edn :node"]}
+   :fragment-package-contract
+   {:status :implemented
+    :summary "First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof."
+    :evidence ["src/tesseraft/fragment/cli.clj" "src/tesseraft/lint/core.clj lint-fragment-package" "docs/FRAGMENTS.md" "schemas/fragment-package.schema.json" "examples/fragments/test-fix-loop/fragment.edn" "bb.edn :fragment"]}
    :pinga-handler
    {:status :implemented
     :summary "Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN."

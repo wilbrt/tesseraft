@@ -29,6 +29,13 @@ schemas/*.schema.json
 policies.edn
 ```
 
+Node packages (`node.edn`, `tesseraft.node/v1`) and fragment packages
+(`fragment.edn`, `tesseraft.fragment/v1`) use the same scope model. Fragment
+packages live under `examples/fragments/<name>/fragment.edn`,
+`~/.tesseraft/fragments/<name>/fragment.edn`, and
+`.tesseraft/fragments/<name>/fragment.edn` (project precedence highest). See
+[docs/NODES.md](docs/NODES.md) and [docs/FRAGMENTS.md](docs/FRAGMENTS.md).
+
 ## 4. Top-level workflow shape
 
 ```edn
@@ -55,6 +62,10 @@ Supported node types are:
 - `:approval` — human approval gate.
 - `:router` — pure transition logic.
 - `:terminal` — terminal success/failure state.
+- `:fragment` — boundary call to a reusable subgraph package
+  (`tesseraft.fragment/v1`). Inclusion lints the fragment's boundary contract
+  (inputs, parameters, outputs, outcomes, resources) without duplicating the
+  internal subgraph proof. See [docs/FRAGMENTS.md](docs/FRAGMENTS.md).
 
 ## 6. Common node fields
 

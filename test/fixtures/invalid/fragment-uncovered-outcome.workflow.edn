@@ -1,0 +1,17 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-uncovered-outcome-fixture"}
+ :inputs {:repo-root {:type :string :required true}
+          :test-cmd {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :run-tests
+ :states
+ {:run-tests
+  {:type :fragment
+   :fragment "test-fix-loop"
+   :inputs {:repo-root "{{inputs.repo-root}}"
+            :test-cmd "{{inputs.test-cmd}}"}
+   ;; Only covers :fail; :pass is uncovered -> warning.
+   :transitions [{:when {:fragment/outcome "fail"} :next :abort}]}
+  :abort {:type :terminal :status :failure}}}

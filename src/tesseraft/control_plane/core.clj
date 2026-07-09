@@ -95,6 +95,39 @@
 (defn workflow-file-entries [options]
   (package-files options :workflows "workflow.edn"))
 
+;; Fragment packages live under .tesseraft/fragments/<name>/fragment.edn,
+;; ~/.tesseraft/fragments/<name>/fragment.edn, and
+;; examples/fragments/<name>/fragment.edn, using the same generic
+;; discovery-roots/package-files helpers.
+(defn fragment-file-entries [options]
+  (package-files options :fragments "fragment.edn"))
+
+(defn fragment-files [options]
+  (mapv :file (fragment-file-entries options)))
+
+(defn fragment-candidates [options name]
+  (->> (fragment-file-entries options)
+       (keep (fn [p]
+               (try
+                 (let [pkg (spec/read-fragment-package (:file p))]
+                   (when (= (str name) (str (spec/fragment-package-name pkg)))
+                     {:file (:file p)
+                      :source (:source p)
+                      :precedence (:precedence p)
+                      :fragment pkg}))
+                 (catch Throwable _ nil))))
+       vec))
+
+(defn resolve-fragment [options name]
+  (let [matches (fragment-candidates options name)
+        max-precedence (when (seq matches) (apply max (map :precedence matches)))
+        visible-matches (filter #(= max-precedence (:precedence %)) matches)]
+    (cond
+      (empty? visible-matches) (error-response 404 "not_found" "Fragment package not found" {:name name})
+      (> (count visible-matches) 1) (error-response 409 "conflict" "Multiple fragment packages share this name"
+                                                    {:name name :paths (mapv #(relative-path (:workspace-root (opts options)) (:file %)) visible-matches)})
+      :else (first visible-matches))))
+
 (defn lint-summary [lint-result]
   {:ok (:ok lint-result)
    :errors (count (:errors lint-result))

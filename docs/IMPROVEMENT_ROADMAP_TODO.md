@@ -241,7 +241,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > shadowed package lives. Surface the same diagnostic in CLI JSON and Web UI
   > catalog/detail views so terminal and UI tell the same story.
 
-### P1.4 Define first-class fragment packages in the same scope system
+### P1.4 Define first-class fragment packages in the same scope system — ✅ DONE (spec/linter/docs + fixture + `bb fragment lint|import`; boundary inclusion lints without duplicating internal proof)
 
 - **Workflow:** design-doc-first review-loop
 - **Depends on:** P0.0
