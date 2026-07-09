@@ -161,6 +161,30 @@ check_invalid_fragment () {
 check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch
 check_invalid_fragment fragment-unsafe-asset invalid-asset-path
 check_invalid_fragment fragment-missing-required-input fragment-missing-interface
+# P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is
+# proven once by lint-fragment-package. These fixtures exercise the checks
+# that were previously omitted (reachability, node-contract, template-var,
+# cycle) — see issues.json B1.
+check_invalid_fragment fragment-no-terminal missing-terminal-state
+check_invalid_fragment fragment-missing-prompt agent-missing-prompt-template
+check_invalid_fragment fragment-bad-template-var unknown-template-root
+# Unbounded internal cycle is a warning non-strict; under --strict it is an
+# error, so the broken fragment cannot pass lint.
+set +e
+./bin/tesseraft fragment lint test/fixtures/invalid/fragment-unbounded-cycle/fragment.edn --strict --format json >/tmp/tesseraft-fragment-cycle.out 2>&1
+_cycle_status=$?
+set -e
+if [[ "$_cycle_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-fragment-cycle.out >&2
+  echo "Expected unbounded-cycle fragment to fail under --strict" >&2
+  exit 1
+fi
+if ! grep -q "cycle-without-explicit-limit" /tmp/tesseraft-fragment-cycle.out; then
+  cat /tmp/tesseraft-fragment-cycle.out >&2
+  echo "Expected fragment-unbounded-cycle to report cycle-without-explicit-limit" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-fragment-cycle.out
 
 check_invalid_fragment_workflow () {
   local fixture="$1"

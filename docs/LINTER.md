@@ -66,7 +66,7 @@ Fragment package lint:
 - `fragment-outcome-mismatch` — `:interface :outcomes` is not a non-empty keyword set, an `:exit` references an unknown outcome, or a declared outcome has no `:exit` entry.
 - `fragment-exit-missing-output` — a required `:interface :outputs` entry is not produced on an `:exit` path.
 - `fragment-asset-missing` — a declared asset does not exist.
-- `fragment-internal-lint-failed` — (workflow-side) the fragment package itself failed lint when included.
+- `fragment-internal-lint-failed` — (workflow-side) the fragment package itself failed lint when included. Within a single `lint-workflow` invocation this is de-duplicated per resolved file path: a fragment imported at N import sites surfaces the internal-proof failure at most once, so the importing workflow never re-proves the fragment's internal subgraph.
 
 Inclusion (workflow-side `{:type :fragment}` node) diagnostics:
 
@@ -75,4 +75,4 @@ Inclusion (workflow-side `{:type :fragment}` node) diagnostics:
 - `fragment-unknown-outcome` — a transition references an outcome not declared in `:interface :outcomes`.
 - `fragment-uncovered-outcome` — an `:interface :outcomes` member has no covering transition (warning).
 
-Internal subgraph shape/transition/path/resource diagnostics within a fragment reuse the existing workflow diagnostic codes (`unknown-node-type`, `dead-end-non-terminal`, `unknown-next-state`, `invalid-artifact-path`, `output-missing-path`, `resource-*`, etc.).
+Internal subgraph checks within a fragment run the **full** workflow primitive set on `:fragment :states` once in `lint-fragment-package`: top-level (`missing-initial-state`, `missing-terminal-state`), `node-type-checks`, `transition-checks`, `reachability-checks` (`unreachable-state`), `node-contract-checks` (`agent-missing-prompt-template`, `prompt-template-missing`, `deterministic-missing-handler`, `process-missing-command`, `timer-missing-duration`, `approval-missing-message`, `missing-runtime-timeout`), `duplicate-output-checks`, `workflow-resource-checks` (`resource-*`), `cycle-checks` (`cycle-without-explicit-limit`), `template-var-checks` (`unknown-template-root`, `unknown-*-template-var`), and `path-contract-checks` (`invalid-artifact-path`, `output-schema-missing`). Boundary inputs/parameters from `:interface` are synthesized as the internal `:inputs` so template-var checks for boundary bindings resolve. Inclusion sites (`{:type :fragment}`) lint **only** the boundary contract and never re-run these internal checks.

@@ -447,7 +447,7 @@
                      [(err :output-schema-missing [:states id :outputs out-key :schema]
                            (str "Declared output schema does not exist: " schema))]))))))))
 
-(declare lint-fragment-package)
+(declare lint-fragment-package lint-fragment-package-cached)
 
 ;; ---- workflow :fragment node checks ----
 ;; A {:type :fragment} node is a boundary call to a fragment package.
@@ -502,7 +502,7 @@
     (map? contract) (not= false (:required contract))
     :else false))
 
-(defn fragment-node-diagnostics [wf id n]
+(defn fragment-node-diagnostics [wf id n opts]
   (let [frag-name (:fragment n)
         path [:states id]]
     (if-let [fpath (find-fragment-package-file wf n)]
@@ -518,8 +518,19 @@
             (for [k missing-inputs]
               (err :fragment-input-binding-missing (conj path :inputs k)
                    (str "Fragment " frag-name " requires input " (name k) " but it is not bound")))
-            (let [res (lint-fragment-package pkg)]
-              (when-not (:ok res)
+            ;; Boundary-only inclusion: the import site does NOT re-prove the
+            ;; fragment's internal subgraph. Internal proof is done once by
+            ;; `tesseraft fragment lint` and `fragment import`. We surface
+            ;; at most one de-duplicated, per-file-path internal-lint signal
+            ;; per lint-workflow invocation so a broken fragment is still
+            ;; reported to importing workflows without N-fold re-proof.
+            (let [res (lint-fragment-package-cached pkg opts)
+                  fkey (spec/fragment-package-file pkg)
+                  seen (::fragment-internal-seen opts)]
+              (when (and (not (:ok res))
+                         (or (nil? seen)
+                             (not (contains? @seen fkey))))
+                (when seen (swap! seen conj fkey))
                 [(err :fragment-internal-lint-failed (conj path :fragment)
                       (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
                       (str/join "; " (map :message (:errors res))))]))
@@ -535,11 +546,14 @@
       [(err :fragment-unknown-package (conj path :fragment)
             (str "Fragment package not found: " frag-name))])))
 
-(defn fragment-node-checks [wf]
-  (apply concat
-         (for [[id n] (:states wf)
-               :when (and (map? n) (= :fragment (:type n)))]
-           (fragment-node-diagnostics wf id n))))
+(defn fragment-node-checks [wf opts]
+  (let [opts (-> opts
+                 (assoc ::fragment-internal-cache (atom {}))
+                 (assoc ::fragment-internal-seen (atom #{})))]
+    (apply concat
+           (for [[id n] (:states wf)
+                 :when (and (map? n) (= :fragment (:type n)))]
+             (fragment-node-diagnostics wf id n opts)))))
 
 (defn node-contract-checks [wf opts]
   (apply concat
@@ -711,7 +725,7 @@
                                     (transition-checks wf)
                                     (reachability-checks wf)
                                     (node-contract-checks wf opts)
-                                    (fragment-node-checks wf)
+                                    (fragment-node-checks wf opts)
                                     (duplicate-output-checks wf)
                                     (workflow-resource-checks wf)
                                     (cycle-checks wf)
@@ -1008,23 +1022,78 @@
         (warn :referenced-asset-not-declared [:assets]
               (str "Fragment references an asset that is not declared in :assets: " path))))))
 
-(defn fragment-internal-subgraph-checks [pkg]
+(defn fragment-internal-inputs [pkg]
+  ;; The fragment's internal subgraph references boundary inputs/parameters
+  ;; via template vars (e.g. {{inputs.repo-root}}). The boundary contract
+  ;; lives in :interface, not on the internal "workflow-like" object, so to
+  ;; run the workflow template-var/node-contract primitives meaningfully we
+  ;; synthesize an :inputs map from the interface inputs AND parameters
+  ;; (parameters become template vars inside the fragment too). This keeps
+  ;; the valid fixture green while still catching genuinely unknown roots.
+  (let [iface (:interface pkg {})
+        inputs (:inputs iface {})
+        params (:parameters iface {})]
+    (merge inputs params)))
+
+(defn fragment-internal-subgraph-checks [pkg opts]
   (let [fragment (:fragment pkg)
         states (:states fragment {})]
     (when (and (map? fragment) (map? states))
+      ;; Build a workflow-like object so the reusable workflow linter
+      ;; primitives prove the internal subgraph once, here. We carry
+      ;; :__dir/:__file from the package (so prompt/schema/path resolution
+      ;; resolves relative to the fragment dir, like read-workflow) and a
+      ;; synthesized :inputs from the boundary interface (so template-var
+      ;; checks for boundary inputs/parameters resolve). This is the
+      ;; mandatory single internal proof; inclusion sites do not re-prove.
       (let [wf-like {:initial (:initial fragment)
                      :defaults (:defaults fragment)
                      :policies (:policies fragment)
+                     :inputs (fragment-internal-inputs pkg)
+                     :__dir (spec/fragment-package-dir pkg)
+                     :__file (spec/fragment-package-file pkg)
                      :states states}]
         (concat
           (let [required [:initial :states]]
             (for [k required :when (not (contains? fragment k))]
               (err :missing-top-level-key [:fragment k] (str "Missing required fragment key " k))))
+          (when (and (:initial fragment)
+                     (map? states)
+                     (not (contains? states (:initial fragment))))
+            [(err :missing-initial-state [:fragment :initial]
+                  (str "Initial state does not exist: " (:initial fragment)))])
+          (when (and (map? states) (empty? (spec/terminal-ids wf-like)))
+            [(err :missing-terminal-state [:fragment :states]
+                  "Fragment must declare at least one :terminal node")])
           (node-type-checks wf-like)
           (transition-checks wf-like)
+          (reachability-checks wf-like)
+          (node-contract-checks wf-like opts)
+          (duplicate-output-checks wf-like)
+          (workflow-resource-checks wf-like)
+          (cycle-checks wf-like)
+          (template-var-checks wf-like)
           (apply concat
                  (for [[id n] states :when (map? n)]
                    (path-contract-checks wf-like id n))))))))
+
+;; Per-lint-workflow-invocation cache of fragment internal lint results,
+;; keyed by resolved file path, so a workflow importing the same fragment at
+;; multiple sites surfaces the internal-proof signal at most once per file
+;; path without re-running the internal subgraph lint on every import site.
+(defn fragment-internal-cache [opts]
+  (or (::fragment-internal-cache opts)
+      (atom {})))
+
+(defn lint-fragment-package-cached [pkg opts]
+  (let [cache (fragment-internal-cache opts)
+        key (spec/fragment-package-file pkg)]
+    (if (and key (map? @cache))
+      (or (get @cache key)
+          (let [res (lint-fragment-package pkg opts)]
+            (swap! cache assoc key res)
+            res))
+      (lint-fragment-package pkg opts))))
 
 (defn fragment-resource-checks [pkg]
   (concat
@@ -1038,7 +1107,7 @@
                                    (apply concat
                                      [(fragment-package-top-level-checks pkg)
                                       (fragment-interface-checks pkg)
-                                      (fragment-internal-subgraph-checks pkg)
+                                      (fragment-internal-subgraph-checks pkg opts)
                                       (fragment-resource-checks pkg)
                                       (fragment-asset-checks pkg)])))
          strict? (:strict opts)

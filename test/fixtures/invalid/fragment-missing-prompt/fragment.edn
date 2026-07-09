@@ -1,0 +1,16 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "missing-prompt-fixture"}
+ :interface {:inputs {}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :work
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:work {:type :agent
+                            :executor :pi-cli
+                            ;; Missing :prompt-template -> agent-missing-prompt-template.
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "work/status.json" :required true}}
+                            :next :done}
+                     :done {:type :terminal :status :success}}}}
