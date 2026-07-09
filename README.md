@@ -155,6 +155,8 @@ Implemented:
   _Evidence:_ schemas/run-state.schema.json enum "blocked", src/tesseraft/runtime/core.clj approval pause/resume, web/src/components/ApprovalPanel.tsx, web/src-server/lib/approvals.ts, docs/MERGE_PROTOCOL.md
 - **fragment-package-contract** (implemented) — First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof.  
   _Evidence:_ src/tesseraft/fragment/cli.clj, src/tesseraft/lint/core.clj lint-fragment-package, docs/FRAGMENTS.md, schemas/fragment-package.schema.json, examples/fragments/test-fix-loop/fragment.edn, bb.edn :fragment
+- **scope-shadow-metadata** (implemented) — Workflow discovery (list + detail) exposes scope (configured/global/project), precedence, and shadowing metadata (duplicates lowered by precedence; conflicts at equal precedence) so the UI can show when a project workflow overrides a global/example one. Discovery precedence semantics are unchanged; metadata is purely inspectable.  
+  _Evidence:_ src/tesseraft/control_plane/core.clj list-workflows/get-workflow, test/discovery-scope.test.js, web/src/types/runConsole.ts, scripts/test.sh scope-shadow block
 - **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
   _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
 - **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  

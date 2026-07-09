@@ -137,21 +137,24 @@
   (let [{:keys [workspace-root]} (opts options)
         workflow-file (if (map? workflow-entry) (:file workflow-entry) workflow-entry)
         source (if (map? workflow-entry) (:source workflow-entry) :configured)
+        precedence (when (map? workflow-entry) (:precedence workflow-entry))
         lint-result (lint/lint-file workflow-file)]
     (try
       (let [wf (spec/read-workflow workflow-file)]
-        {:name (str (spec/workflow-name wf))
-         :path (relative-path workspace-root workflow-file)
-         :source source
-         :api_version (:api-version wf)
-         :lint (lint-summary lint-result)})
+        (cond-> {:name (str (spec/workflow-name wf))
+                 :path (relative-path workspace-root workflow-file)
+                 :source source
+                 :api_version (:api-version wf)
+                 :lint (lint-summary lint-result)}
+          (some? precedence) (assoc :precedence precedence)))
       (catch Throwable t
-        {:name nil
-         :path (relative-path workspace-root workflow-file)
-         :source source
-         :api_version nil
-         :lint (lint-summary lint-result)
-         :error {:code "parse_error" :message (.getMessage t)}}))))
+        (cond-> {:name nil
+                 :path (relative-path workspace-root workflow-file)
+                 :source source
+                 :api_version nil
+                 :lint (lint-summary lint-result)
+                 :error {:code "parse_error" :message (.getMessage t)}}
+          (some? precedence) (assoc :precedence precedence))))))
 
 (defn entry-name [entry]
   (try
@@ -169,11 +172,61 @@
        (sort-by (juxt (comp str entry-name) (comp str :file)))
        vec))
 
+(defn workflow-meta-item
+  "Compact, UI-facing record of a same-name workflow entry used to describe
+  shadowing/conflict relationships. `scope` is the stringified discovery source
+  (configured/global/project); kept distinct from the outer entry's `source`
+  field name to match the design contract (outer keeps `source`, shadowing
+  lists use `scope`)."
+  [workspace-root entry]
+  {:scope (name (:source entry))
+   :path (relative-path workspace-root (:file entry))
+   :precedence (:precedence entry)})
+
+(defn shadowing-for-visible
+  "Compute purely-inspectable shadowing metadata for each *visible* workflow
+  entry without altering precedence/selection semantics. For a visible entry
+  `v` with name `n` and precedence `p`:
+    - `conflicts`   = other same-name entries at equal precedence `p`
+                     (the ambiguous case resolve-workflow 409s on; surfaced
+                     here so the list endpoint can show *why* without a resolve).
+    - `duplicates`  = other same-name entries at strictly lower precedence
+                     (entries this one overrides/shadows).
+  Returns a map from the entry's file path (string) to its metadata.
+  Grouping reuses `entry-name` (the same reader the unchanged
+  `select-visible-workflow-entries` uses), so the visible set is exactly what
+  `select-visible-workflow-entries` already returns — nothing about precedence
+  selection changes here."
+  [options entries visible]
+  (let [{:keys [workspace-root]} (opts options)
+        by-name (group-by entry-name entries)]
+    (into {}
+      (for [v visible
+            :let [name (entry-name v)
+                  same-name (get by-name name)
+                  self-file (:file v)
+                  prec (:precedence v)
+                  others (remove #(= (:file %) self-file) same-name)
+                  conflicts (mapv #(workflow-meta-item workspace-root %)
+                                  (filter #(= (:precedence %) prec) others))
+                  duplicates (mapv #(workflow-meta-item workspace-root %)
+                                   (filter #(< (:precedence %) prec) others))]]
+        [(str self-file)
+         (cond-> {:precedence prec}
+           (seq conflicts) (assoc :conflicts conflicts)
+           (seq duplicates) (assoc :duplicates duplicates))]))))
+
 (defn list-workflows
   ([] (list-workflows {}))
   ([options]
-   {:workflows (mapv #(api-value (read-workflow-entry options %))
-                     (select-visible-workflow-entries (workflow-file-entries options)))}))
+   (let [entries (workflow-file-entries options)
+         visible (select-visible-workflow-entries entries)
+         meta (shadowing-for-visible options entries visible)]
+     {:workflows (mapv (fn [v]
+                         (api-value
+                           (merge (read-workflow-entry options v)
+                                  (get meta (str (:file v))))))
+                       visible)})))
 
 (defn workflow-candidates [options name]
   (->> (workflow-file-entries options)
@@ -205,15 +258,31 @@
      (if (:error resolved)
        resolved
        (let [{:keys [workspace-root]} (opts options)
-             {:keys [file workflow]} resolved
-             lint-result (lint/lint-file file)]
+             {:keys [file workflow source precedence]} resolved
+             lint-result (lint/lint-file file)
+             ;; Shadowing context for the detail view. `resolve-workflow`
+             ;; already 409s on an equal-precedence conflict, so when we
+             ;; get here the resolution is unique: `conflicts` is therefore
+             ;; empty in practice (kept for symmetry with the list endpoint)
+             ;; and `duplicates` lists the lower-precedence same-name entries
+             ;; this workflow overrides. Precedence/selection semantics are
+             ;; untouched — this only attaches inspection metadata.
+             matches (workflow-candidates options name)
+             others (remove #(= (:file %) file) matches)
+             conflicts (mapv #(workflow-meta-item workspace-root %)
+                             (filter #(= (:precedence %) precedence) others))
+             duplicates (mapv #(workflow-meta-item workspace-root %)
+                              (filter #(< (:precedence %) precedence) others))]
          (api-value
-           {:workflow {:name (str (spec/workflow-name workflow))
-                       :path (relative-path workspace-root file)
-                       :source (:source resolved)
-                       :api_version (:api-version workflow)
-                       :normalized (dissoc workflow :__file :__dir)
-                       :lint lint-result}}))))))
+           (cond-> {:workflow {:name (str (spec/workflow-name workflow))
+                               :path (relative-path workspace-root file)
+                               :source source
+                               :precedence precedence
+                               :api_version (:api-version workflow)
+                               :normalized (dissoc workflow :__file :__dir)
+                               :lint lint-result}}
+             (seq conflicts) (assoc-in [:workflow :conflicts] conflicts)
+             (seq duplicates) (assoc-in [:workflow :duplicates] duplicates))))))))
 
 (defn edge-from-transition [from tr]
   (cond-> {:from (spec/normalize-id from)
