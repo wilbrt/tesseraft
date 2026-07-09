@@ -378,10 +378,12 @@ Constraints:
 - The API response should report deleted run id, liveness, and path when
   available.
 
-### Future `POST /api/runs/{run-id}/approvals/{approval-id}`
+### `POST /api/runs/{run-id}/approvals/{approval-id}`
 
-Purpose: record a human approval decision for an approval gate once runtime
-approval/manual-input support lands.
+Purpose: record a human approval decision for an approval gate. **Implemented**
+in PR #44 (merged): the runtime writes approval request/decision records and
+appends `approval.requested`/`approval.decided` events; the API shell outs to
+`tesseraft runtime decide --run-dir <dir> --approval-id <id> --decision <d>`.
 
 Constraints to preserve:
 
@@ -391,6 +393,19 @@ Constraints to preserve:
 - reject decisions that do not match the active approval request;
 - reject replayed decisions with conflict semantics;
 - never store approval decisions only in browser state.
+
+### `POST /api/runs/{run-id}/comments`
+
+Purpose: annotate a run artifact with a durable comment (line-range anchor
+optional). **Implemented** in PR #44 (merged): comments are appended to
+run-relative `comments/<safe-path>/.json` via `tesseraft control-plane comment
+add`.
+
+Constraints to preserve:
+
+- path-traversal-safe artifact/comment paths;
+- comments are metadata reconstructed from files, not workflow behavior;
+- never store comments only in browser state.
 
 ## Settings, browse, and Pi-session endpoints
 
@@ -480,5 +495,6 @@ boundaries:
 - How will a later DB-backed control plane preserve this contract while
   replacing file-backed persistence?
 - How should mock executor mode be represented in run state and API responses?
-- What approval presentation payload should #44 expose: question, artifacts,
-  render hints, decision schema, consequences, and self-routing?
+- Open: what richer approval presentation payload should be exposed beyond the
+  initial question/artifacts/decision contract — render hints, per-option
+  consequences text, and self-routing remain future work (P3.1)?

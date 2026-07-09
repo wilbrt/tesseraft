@@ -129,21 +129,24 @@ accepts approval nodes and their `:message` / `:decision` transitions (SPEC
 §5, §10). Runtime event categories `approval.requested` and
 `approval.decided` are defined (SPEC §202).
 
-### Runtime gap (today)
+### Runtime status (now landed)
 
-At runtime, `src/tesseraft/runtime/core.clj` throws:
+The runtime approval/manual-input node landed in PR #44 (merged to main):
+`src/tesseraft/runtime/core.clj` now implements approval pause/resume — on
+first entry it writes a run-relative approval-request record, appends
+`approval.requested`, marks the run `"blocked"`, and parks; a decision via
+`tesseraft runtime decide` (exposed through the control plane and
+`POST /api/runs/{run-id}/approvals/{approval-id}`) appends `approval.decided`
+and advances through the transition whose `:when` matches the decision.
+Artifact comments are persisted run-relative. The earlier
+`"Approval nodes require a control plane"` placeholder throw has been
+replaced by the real implementation.
 
-> `"Approval nodes require a control plane"`
+### P0.3 dogfood scope (deliberately bounded, as scoped at the time)
 
-for **any** `:approval` node. There is no control-plane implementation that
-records approval events or exposes a `decide!` path in the reference runner,
-as of this slice. Therefore a workflow containing a real `:approval` node
-will **lint clean but fail at run time**.
-
-### P0.3 dogfood scope (deliberately bounded)
-
-Because a runnable `:approval` node would throw at runtime, P0.3 **does not**
-wire a real `:approval` node into `workflow.edn`. The dogfood is:
+At the time this slice was authored, a runnable `:approval` node would throw
+at runtime, so P0.3 **did not** wire a real `:approval` node into
+`workflow.edn`. The dogfood was:
 
 1. **The rebase recommendation report** (Layer A) — runnable now, read-only,
    validated by `bb test` + `./bin/tesseraft lint`.
@@ -159,10 +162,13 @@ and the `merge-approved` pr-housekeeping input is the bridge that lets the
 classifier surface `merge` instead of `ready-to-merge`. The protocol
 contract is unchanged; only its runtime executor is deferred.
 
-When P0.1-e ships, the wiring is: replace the human-recorded decision with a
-real `:approval` node in the merge path, emitting `approval.requested` /
-`approval.decided` events into `events.jsonl`, and gate the merge action on
-that event. **No change to the gates in this document is expected.**
+Now that the approval runtime has landed (PR #44), the wiring is available:
+replace the human-recorded decision with a real `:approval` node in the merge
+path, emitting `approval.requested` / `approval.decided` events into
+`events.jsonl`, and gate the merge action on that event. **No change to the
+gates in this document is expected.** (Adopting a real `:approval` node in
+`examples/pr-housekeeping/workflow.edn` is a follow-up; the protocol gates
+are unchanged.)
 
 ## Validation
 
@@ -188,8 +194,11 @@ Modified:
   `recommend-rebase` bucket writing `rebase-recommendations.json` and a
   `## recommend-rebase` section in `action-plan.md`.
 
-Not modified (deferred):
+Not modified (deferred at the time):
 - `examples/pr-housekeeping/workflow.edn` — no new node; the runtime stays
   safe. A real `:approval` gate node is documented here but **not wired**
-  pending P0.1-e.
+  pending the approval runtime landing. The approval runtime has since landed
+  in PR #44; wiring a real `:approval` node into the merge dogfood is now
+  follow-up work.
 - `src/tesseraft/runtime/core.clj` — no approval runtime work in this slice.
+  (Approval runtime support has since landed in PR #44.)
