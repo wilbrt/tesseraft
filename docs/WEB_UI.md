@@ -42,8 +42,10 @@ implementation under `web/`:
 
 Known semantic gaps remain:
 
-- Runner-level mock executor / dry-run mode is still a roadmap dependency for
-  one-key mock-run and mock-mode badges.
+- Runner-level mock executor / dry-run mode landed in PR #8 (merged); the
+  remaining roadmap dependency is the one-key mock-run UI surface and mock-mode
+  badges (P2.2), built on the now-implemented `--executor mock` runtime and
+  executor-mode persistence.
 - Runtime approval/manual-input support landed in PR #44 (merged); the remaining
   roadmap dependency is the diff-centric self-checkpoint approval UX itself
   (P3.1), built on the now-implemented approval request/decision records and
@@ -241,7 +243,8 @@ fragment package contracts and gallery support after the contract is designed.
 ### Next: Studio inner loop
 
 Add continuous lint-in-context, resolved prompt preview, schema-driven launch
-forms, and one-key mock-run after runner-level mock mode lands.
+forms, and one-key mock-run on top of the landed runner-level mock mode
+(`--executor mock`; remaining work is the UI surface, P2.2).
 
 ### Next: self-checkpoint gates
 

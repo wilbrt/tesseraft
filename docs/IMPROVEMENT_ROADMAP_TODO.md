@@ -32,8 +32,12 @@ Reconfirmed from repo files during this rewrite:
   names. README documents the same convention for node packages.
 - **Node import/export exists** through `bb node` / `tesseraft node` commands.
 - **Manual testing harness exists** in `manual-testing/`.
-- **Mock executor remains the critical path**: README still marks runner-level
-  mock dry-run mode as partial / PR #8 not on main.
+- **Mock executor landed**: PR #8 merged; runner-level mock/dry-run mode
+  (`--executor mock`), executor-mode persistence in run state, deterministic
+  placeholder artifacts, and mock handlers for Jira/Git/GitHub/Pinga are on main
+  (see `src/tesseraft/runtime/core.clj`, `src/tesseraft/executors/mock.clj`,
+  `scripts/test.sh` mock dry-run). Remaining work: one-key mock-run UI (P2.2),
+  golden UI mock fixtures (P4.1), and re-run delta / downstream diff (P4.2).
 - **Approval/manual-input landed**: PR #44 merged; runtime approval/manual-input
   node, approval request/decision records, `approval.requested`/`approval.decided`
   events, and artifact comments are now on main (see `src/tesseraft/runtime/core.clj`,
@@ -55,7 +59,8 @@ Treat PR state as stale unless rechecked immediately before acting.
    scopes, overrides, schemas, and import/export semantics before inventing a
    hosted repository.
 5. **Mock mode is the Studio REPL.** One-key mock-run and clear mock badges are
-   central once #8 lands.
+   central now that #8 has landed (runtime mock mode is implemented; the
+   remaining work is the UI surface, P2.2).
 6. **Gates are self-checkpoints in phase 1.** Approval UX routes to the same
    developer, is low-ceremony, diff-centric, and records durable decisions.
 7. **Local-first control plane.** Build on the existing file-backed local HTTP
@@ -79,9 +84,9 @@ P0.0 docs/current-state reconciliation ─┬─> P1 catalog/reuse docs and UI
                                         ├─> P2 Studio inner-loop refinements
                                         └─> P3 Run Console / gates refinements
 
-P0.1 mock executor (#8) ────────────────┬─> P2.2 one-key mock-run
-                                        ├─> P4.1 golden UI mock fixtures
-                                        └─> P4.2 re-run delta / downstream diff
+P0.1 mock executor (#8) ──────────────✅──┬─> P2.2 one-key mock-run
+                                          ├─> P4.1 golden UI mock fixtures
+                                          └─> P4.2 re-run delta / downstream diff
 
 P0.2 approval schema feedback (#44) ──✅──┬─> P3.1 self-checkpoint screen
 P0.3 approval runtime merge (#44) ────✅──┴─> P3.2 needs-you strip + decide
@@ -110,18 +115,24 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > future work. Preserve their source-of-truth rules and Studio/Run Console
   > separation. Add a short v3.2 alignment section: phase-1 user is one
   > developer, composition/reuse is the adoption gate, catalog is a lens over
-  > existing discovery, mock mode is the Studio REPL once #8 lands, and approval
+  > existing discovery, mock mode is the Studio REPL (runtime landed via #8; UI
+  > surface P2.2 is remaining), and approval
   > UX (runtime landed via #44) is a self-checkpoint surfaced in the Run
   > Console (P3.1). Where implementation has outrun the
   > docs (SSE, start/step/resume/delete, Studio writes, settings/Pi sessions),
   > document the implemented contract and remaining gaps.
 
-### P0.1 Rebase/merge the runner-level mock executor (#8)
+### P0.1 Rebase/merge the runner-level mock executor (#8) — ✅ DONE (PR #8 merged)
 
 - **Workflow:** review-loop
 - **Depends on:** CI green
 - **Parallelizable with:** P0.0, P0.2, P1.1
 - **Side effects:** runtime/executor semantics; no external service mutations
+- **Status:** ✅ Done — PR #8 (`agent/add-dry-run-mode`) merged to main
+  (merge commit 6cb3858). Runner-level mock/dry-run mode, executor-mode
+  persistence in run state, deterministic placeholder artifact generation,
+  and mock handlers for external integrations are preserved and exercised by
+  `scripts/test.sh` (mock dry-run of the review-loop workflow).
 - **Prompt:**
   > Re-check PR #8 and either rebase/merge it or write down the design
   > reservation blocking it. Preserve runner-level mock/dry-run mode,

@@ -48,8 +48,9 @@ safe rehearsal:
 - **Catalog as lens:** render example/global/project discovery, scope,
   overrides, schemas, and import/export semantics; do not introduce a hosted
   registry as the first abstraction.
-- **Mock mode as REPL:** once runner-level mock mode lands, the API and UI must
-  persist and display executor mode so mock artifacts/events cannot be confused
+- **Mock mode as REPL:** runtime mock mode landed in PR #8; the API persists
+  executor mode so mock artifacts/events cannot be confused with real effects.
+  The UI must display executor mode (remaining work: UI badges, P2.2).
   with real effects.
 - **Self-checkpoint approvals:** runtime approval support landed in PR #44
   (merged); approval requests/decisions are durable runtime records through the
@@ -132,8 +133,9 @@ Next:
 
 - Expose scope and shadowing metadata for example/global/project packages.
 - Add node/fragment catalog endpoints and schema-derived signatures.
-- Add runner-level mock-mode start once the executor lands, including persisted
-  mode and UI badges.
+- Add runner-level mock-mode start affordances in the UI (the executor landed in
+  PR #8; executor mode is already persisted). Remaining: UI start entry and
+  mock-mode badges (P2.2).
 - Add approval decision endpoints once approval/manual-input runtime support
   lands. (Landed in PR #44: `POST /api/runs/{run-id}/approvals/{approval-id}`
   and `POST /api/runs/{run-id}/comments`; remaining work is the richer UI

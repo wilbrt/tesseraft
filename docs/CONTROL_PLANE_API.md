@@ -60,8 +60,8 @@ composition and safe rehearsal fast while preserving source-of-truth rules:
 
 - expose package scope and shadowing metadata so the catalog can be a lens over
   existing discovery;
-- carry executor/mock mode in run state and API responses once runner-level mock
-  mode lands;
+- carry executor/mock mode in run state and API responses (implemented in PR #8;
+  executor-mode is persisted in run state and visible in API responses);
 - record approval requests/decisions as durable runtime records once approval
   runtime support lands;
 - keep settings/doctor checks local and avoid leaking secrets;
@@ -345,8 +345,9 @@ Constraints:
 - Resolve the workflow through the control plane; do not accept browser-supplied
   workflow content as runtime truth.
 - Record runtime state through the runner, not browser state.
-- Next gap: support runner-level mock mode once #8 lands, with mode persisted
-  and visible in API responses.
+- Runner-level mock mode landed in PR #8: `--executor mock` is persisted in run
+  state (`:executor-mode`) and visible in API responses. Remaining gap: richer
+  mock-mode presentation/badges in the UI.
 
 ### `POST /api/runs/{run-id}/step`
 
