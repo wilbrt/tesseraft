@@ -1,8 +1,36 @@
 import type { GraphEdge, GraphNode } from '../lib/graphLayout';
 
-export type WorkflowSummary = { name: string; path?: string };
+/** Per-entry shadowing/conflict record used by `conflicts` and `duplicates`. */
+export type WorkflowShadowEntry = { scope: string; path: string; precedence: number };
+
+/**
+ * A discovered workflow summary as returned by the control-plane list endpoint.
+ * `source` (configured/global/project) and `precedence` are always present;
+ * `conflicts` (equal-precedence same-name entries) and `duplicates`
+ * (lower-precedence same-name entries this one overrides) are populated only
+ * when non-empty. P1.1: scope/shadowing metadata, precedence semantics
+ * unchanged — these fields are purely inspectable.
+ */
+export type WorkflowSummary = {
+  name: string;
+  path?: string;
+  source?: string;
+  precedence?: number;
+  conflicts?: WorkflowShadowEntry[];
+  duplicates?: WorkflowShadowEntry[];
+};
 export type WorkflowInputDefinition = { type?: string; required?: boolean; default?: string | number | boolean | null; description?: string; title?: string; enum?: Array<string | number | boolean> };
-export type WorkflowDetail = { name: string; path?: string; api_version?: string; lint?: { ok?: boolean }; normalized?: { inputs?: Record<string, WorkflowInputDefinition>; metadata?: { title?: string; description?: string } } };
+export type WorkflowDetail = {
+  name: string;
+  path?: string;
+  source?: string;
+  precedence?: number;
+  conflicts?: WorkflowShadowEntry[];
+  duplicates?: WorkflowShadowEntry[];
+  api_version?: string;
+  lint?: { ok?: boolean };
+  normalized?: { inputs?: Record<string, WorkflowInputDefinition>; metadata?: { title?: string; description?: string } };
+};
 export type Attempt = { attempt?: number; node_id?: string; state?: string; status?: string; started_at?: string; finished_at?: string; next_state?: string; error?: string; result?: unknown; effects?: string[] };
 export type Failure = { source?: string; message?: string; path?: string; node_id?: string };
 export type Artifact = { path: string; name?: string; source?: string; node_id?: string; attempt?: number; kind?: string; exists?: boolean; size?: number; content_type?: string; read_url?: string };

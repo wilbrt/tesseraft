@@ -26,6 +26,10 @@
    {:status :implemented
     :summary "Declarative routeApi mapping /api paths to control-plane commands."
     :evidence ["web/src-server/routes/api.ts" "test/web-server.test.js"]}
+   :scope-shadow-metadata
+   {:status :implemented
+    :summary "Workflow discovery (list + detail) exposes scope (configured/global/project), precedence, and shadowing metadata (duplicates lowered by precedence; conflicts at equal precedence) so the UI can show when a project workflow overrides a global/example one. Discovery precedence semantics are unchanged; metadata is purely inspectable."
+    :evidence ["src/tesseraft/control_plane/core.clj list-workflows/get-workflow" "test/discovery-scope.test.js" "web/src/types/runConsole.ts" "scripts/test.sh scope-shadow block"]}
    :mock-executor
    {:status :implemented
     :summary "Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state."

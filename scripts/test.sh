@@ -510,6 +510,55 @@ import json
 x=json.load(open('/tmp/tesseraft-cp-workflows.json'))
 assert any(w['name'] == 'smoke-demo' for w in x['workflows'])
 PY
+
+printf '\nChecking control-plane scope/shadowing metadata (P1.1)...\n'
+SCOPE_TMP="$(mktemp -d)"
+SCOPE_WS="$SCOPE_TMP/ws"
+SCOPE_HOME="$SCOPE_TMP/home"
+SCOPE_EX="$SCOPE_TMP/examples"
+mkdir -p "$SCOPE_WS/.tesseraft/workflows/shared" "$SCOPE_HOME/workflows/shared" "$SCOPE_EX/shared"
+cat >"$SCOPE_WS/.tesseraft/workflows/shared/workflow.edn" <<'EDN'
+{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "scope-shadow-demo"} :initial :done :states {:done {:type :terminal}}}
+EDN
+cp "$SCOPE_WS/.tesseraft/workflows/shared/workflow.edn" "$SCOPE_HOME/workflows/shared/workflow.edn"
+cp "$SCOPE_WS/.tesseraft/workflows/shared/workflow.edn" "$SCOPE_EX/shared/workflow.edn"
+SCOPE_CP_OUT="$(./bin/tesseraft control-plane --workspace-root "$SCOPE_WS" --tesseraft-home "$SCOPE_HOME" --workflow-root "$SCOPE_EX" workflows)"
+if ! grep -q '"precedence"' <<<"$SCOPE_CP_OUT"; then
+  echo "Expected precedence metadata in control-plane workflows output" >&2
+  echo "$SCOPE_CP_OUT" >&2
+  exit 1
+fi
+if ! grep -q '"duplicates"' <<<"$SCOPE_CP_OUT"; then
+  echo "Expected duplicates metadata in control-plane workflows output" >&2
+  echo "$SCOPE_CP_OUT" >&2
+  exit 1
+fi
+python3 - "$SCOPE_WS" "$SCOPE_HOME" "$SCOPE_EX" <<'PY'
+import json, subprocess, sys
+ws, home, ex = sys.argv[1], sys.argv[2], sys.argv[3]
+out = subprocess.run(['./bin/tesseraft','control-plane','--workspace-root',ws,'--tesseraft-home',home,'--workflow-root',ex,'workflows'], capture_output=True, text=True)
+x = json.loads(out.stdout)
+wf = [w for w in x['workflows'] if w['name'] == 'scope-shadow-demo']
+assert len(wf) == 1, out.stdout
+wf = wf[0]
+assert wf['source'] == 'project', wf
+assert wf['precedence'] == 200, wf
+assert 'duplicates' in wf and len(wf['duplicates']) == 2, wf
+scopes = sorted(d['scope'] for d in wf['duplicates'])
+assert scopes == ['configured','global'], scopes
+for d in wf['duplicates']:
+    assert d['precedence'] < 200, d
+PY
+SCOPE_DETAIL="$(./bin/tesseraft control-plane --workspace-root "$SCOPE_WS" --tesseraft-home "$SCOPE_HOME" --workflow-root "$SCOPE_EX" workflow scope-shadow-demo)"
+if ! grep -q '"precedence"' <<<"$SCOPE_DETAIL"; then
+  echo "Expected precedence metadata in control-plane workflow detail output" >&2
+  exit 1
+fi
+if ! grep -q '"duplicates"' <<<"$SCOPE_DETAIL"; then
+  echo "Expected duplicates metadata in control-plane workflow detail output" >&2
+  exit 1
+fi
+rm -rf "$SCOPE_TMP"
 ./bin/tesseraft control-plane graph smoke-demo >/tmp/tesseraft-cp-graph.json
 python3 - <<'PY'
 import json
