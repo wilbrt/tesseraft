@@ -7,9 +7,14 @@
 
 (def supported-api-versions #{"tesseraft.workflow/v1"})
 (def supported-node-api-versions #{"tesseraft.node/v1"})
+(def supported-fragment-api-versions #{"tesseraft.fragment/v1"})
 (def supported-kind :workflow)
 (def supported-node-kind :node)
-(def valid-node-types #{:agent :deterministic :process :timer :approval :router :terminal})
+(def supported-fragment-kind :fragment)
+;; :fragment is a boundary-call node type used in workflows to include a
+;; fragment package. It is linted as a boundary contract, not an inlined
+;; subgraph; the internal proof is done once by lint-fragment-package.
+(def valid-node-types #{:agent :deterministic :process :timer :approval :router :terminal :fragment})
 (def known-effects #{:merge-issues :clear-issues :inc-round :inc-feedback-cycle :set-context :record-pr :fail-run})
 (def base-pi-tools #{:read :bash :edit :write :grep :find :ls})
 (def default-known-executors #{:pi-cli :pi-sdk})
@@ -42,12 +47,20 @@
 (defn read-node-package [node-file]
   (read-data-file node-file))
 
+(defn read-fragment-package [fragment-file]
+  (read-data-file fragment-file))
+
 (defn workflow-dir [wf] (:__dir wf "."))
 (defn workflow-file [wf] (:__file wf))
 (defn workflow-name [wf] (or (get-in wf [:metadata :name]) (:name wf)))
 (defn node-package-dir [pkg] (:__dir pkg "."))
 (defn node-package-file [pkg] (:__file pkg))
 (defn node-package-name [pkg] (get-in pkg [:metadata :name]))
+(defn fragment-package-dir [pkg] (:__dir pkg "."))
+(defn fragment-package-file [pkg] (:__file pkg))
+(defn fragment-package-name [pkg] (get-in pkg [:metadata :name]))
+(defn resolve-fragment-package-path [pkg p]
+  (when p (str (fs/path (fragment-package-dir pkg) p))))
 (defn node-ids [wf] (set (keys (:states wf))))
 (defn node [wf id] (get-in wf [:states id]))
 (defn terminal-node? [[_ n]] (= :terminal (:type n)))

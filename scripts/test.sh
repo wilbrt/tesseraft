@@ -124,6 +124,136 @@ EOF
 ./bin/tesseraft node import test/fixtures/valid/simple-node/node.edn "$TMP_DIR/import-target.workflow.edn" --as imported-design --next done
 ./bin/tesseraft lint "$TMP_DIR/import-target.workflow.edn"
 
+printf '\nLinting self-contained fragment fixture...\n'
+./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
+./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json
+python3 - <<'PY'
+import json
+x = json.load(open('/tmp/tesseraft-fragment-lint.json'))
+assert x['ok'] is True, x
+PY
+rm -f /tmp/tesseraft-fragment-lint.json
+
+printf '\nLinting fragment-including workflow fixtures...\n'
+./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn
+
+check_invalid_fragment () {
+  local fixture="$1"
+  local expected="$2"
+  local output="/tmp/tesseraft-${fixture}-lint.out"
+  set +e
+  ./bin/tesseraft fragment lint "test/fixtures/invalid/${fixture}/fragment.edn" --format json >"$output" 2>&1
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    cat "$output" >&2
+    echo "Expected invalid fragment fixture to fail: $fixture" >&2
+    exit 1
+  fi
+  if ! grep -q "$expected" "$output"; then
+    cat "$output" >&2
+    echo "Expected $fixture to report $expected" >&2
+    exit 1
+  fi
+  rm -f "$output"
+}
+
+check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch
+check_invalid_fragment fragment-unsafe-asset invalid-asset-path
+check_invalid_fragment fragment-missing-required-input fragment-missing-interface
+# P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is
+# proven once by lint-fragment-package. These fixtures exercise the checks
+# that were previously omitted (reachability, node-contract, template-var,
+# cycle) — see issues.json B1.
+check_invalid_fragment fragment-no-terminal missing-terminal-state
+check_invalid_fragment fragment-missing-prompt agent-missing-prompt-template
+check_invalid_fragment fragment-bad-template-var unknown-template-root
+# Unbounded internal cycle is a warning non-strict; under --strict it is an
+# error, so the broken fragment cannot pass lint.
+set +e
+./bin/tesseraft fragment lint test/fixtures/invalid/fragment-unbounded-cycle/fragment.edn --strict --format json >/tmp/tesseraft-fragment-cycle.out 2>&1
+_cycle_status=$?
+set -e
+if [[ "$_cycle_status" -eq 0 ]]; then
+  cat /tmp/tesseraft-fragment-cycle.out >&2
+  echo "Expected unbounded-cycle fragment to fail under --strict" >&2
+  exit 1
+fi
+if ! grep -q "cycle-without-explicit-limit" /tmp/tesseraft-fragment-cycle.out; then
+  cat /tmp/tesseraft-fragment-cycle.out >&2
+  echo "Expected fragment-unbounded-cycle to report cycle-without-explicit-limit" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-fragment-cycle.out
+
+check_invalid_fragment_workflow () {
+  local fixture="$1"
+  local expected="$2"
+  local output="/tmp/tesseraft-${fixture}-lint.out"
+  set +e
+  ./bin/tesseraft lint "test/fixtures/invalid/${fixture}.workflow.edn" --format json >"$output" 2>&1
+  local status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    cat "$output" >&2
+    echo "Expected invalid fragment workflow fixture to fail: $fixture" >&2
+    exit 1
+  fi
+  if ! grep -q "$expected" "$output"; then
+    cat "$output" >&2
+    echo "Expected $fixture to report $expected" >&2
+    exit 1
+  fi
+  rm -f "$output"
+}
+
+check_invalid_fragment_workflow fragment-missing-input fragment-input-binding-missing
+check_invalid_fragment_workflow fragment-unknown-outcome fragment-unknown-outcome
+
+# Uncovered outcome is a warning, not an error: assert it surfaces but lint passes (non-strict).
+./bin/tesseraft lint test/fixtures/invalid/fragment-uncovered-outcome.workflow.edn --format json >/tmp/tesseraft-fragment-uncovered.out
+if ! grep -q "fragment-uncovered-outcome" /tmp/tesseraft-fragment-uncovered.out; then
+  cat /tmp/tesseraft-fragment-uncovered.out >&2
+  echo "Expected fragment-uncovered-outcome warning" >&2
+  exit 1
+fi
+rm -f /tmp/tesseraft-fragment-uncovered.out
+
+printf '\nChecking fragment import into a workflow...\n'
+cat >"$TMP_DIR/fragment-import-target.workflow.edn" <<'EOF'
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-import-target"}
+ :inputs {:repo-root {:type :string :required true}
+          :test-cmd {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :run-tests
+ :states {:done {:type :terminal :status :success}}}
+EOF
+mkdir -p "$TMP_DIR/prompts"
+# Copy the fixture fragment into a temp project so import can find assets.
+TEMP_HOME="$TMP_DIR/home"
+TEMP_PROJECT="$TMP_DIR/project"
+mkdir -p "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop"
+cp examples/fragments/test-fix-loop/fragment.edn "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn"
+mkdir -p "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/prompts" "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/schemas"
+cp examples/fragments/test-fix-loop/prompts/fix.md.tmpl "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/prompts/fix.md.tmpl"
+cp examples/fragments/test-fix-loop/schemas/status.schema.json "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/schemas/status.schema.json"
+# Import into a workflow that lives next to the project fragment dir.
+cp "$TMP_DIR/fragment-import-target.workflow.edn" "$TEMP_PROJECT/workflow.edn"
+TESSERAFT_HOME="$TEMP_HOME" ./bin/tesseraft fragment import "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn" "$TEMP_PROJECT/workflow.edn" --as run-tests --next done
+# Import inserts a boundary node; the user still binds inputs/transitions next,
+# so we assert the node was written rather than requiring a fully green lint.
+WORKFLOW_FILE="$TEMP_PROJECT/workflow.edn" python3 - <<'PY'
+import os
+from pathlib import Path
+text = Path(os.environ['WORKFLOW_FILE']).read_text()
+assert ':run-tests' in text, text
+assert ':type :fragment' in text, text
+assert ':fragment "test-fix-loop"' in text, text
+PY
+
 echo "Checking CLI ergonomics..."
 VERSION_OUTPUT="$(./bin/tesseraft --version)"
 if [[ "$VERSION_OUTPUT" != "tesseraft 0.1.0" ]]; then

@@ -1,0 +1,16 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "bad-template-var-fixture"}
+ :interface {:inputs {}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :work
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:work {:type :deterministic
+                            :handler :noop/succeed
+                            ;; Unknown template root "nonsense" -> unknown-template-root.
+                            :runtime {:cwd "{{nonsense.foo}}" :timeout "1m"}
+                            :outputs {:status {:path "work/status.json" :required true}}
+                            :next :done}
+                     :done {:type :terminal :status :success}}}}

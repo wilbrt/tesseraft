@@ -1,0 +1,13 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "missing-interface-fixture"}
+ ;; :interface present but not a map -> fragment-missing-interface.
+ :interface :missing
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :work
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:work {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "work/status.json" :required true}}
+                            :next :done}
+                     :done {:type :terminal :status :success}}}}

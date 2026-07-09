@@ -1,0 +1,78 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "test-fix-loop"
+            :title "Test-fix loop"
+            :description "Lint, run tests, fix on failure, bounded rounds."
+            :version "0.1.0"
+            :authors ["Example Author"]
+            :tags ["test" "loop"]}
+ ;; Boundary contract: what the importing workflow must bind and what the
+ ;; fragment produces at exit. Internal subgraph proof is done once by
+ ;; lint-fragment-package; inclusion lints only this boundary.
+ :interface {:inputs {:repo-root {:type :string :required true}
+                      :test-cmd {:type :string :required true}}
+             :parameters {:max-rounds {:type :integer :default 3}
+                          :base-branch {:type :string :default "main"}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}
+                       :issues {:path "issues/issues.json" :required false}}
+             :outcomes #{:pass :fail}}
+ :requirements {:executors [:pi-cli]
+                :handlers [:git/ensure-branch]
+                :tools [:read :bash :write :grep]
+                :secrets []
+                :template-vars ["inputs.repo-root" "inputs.test-cmd"
+                                "parameters.max-rounds" "run.round"]
+                :resources {:requires [{:kind :input :name "repo-root" :mode :reusable}
+                                       {:kind :input :name "test-cmd" :mode :reusable}
+                                       {:kind :capability :name "pi-cli"}]
+                            :consumes []
+                            :produces [{:kind :artifact :name "status"
+                                        :path "status/status.json"}
+                                       {:kind :issue-file :name "issues"
+                                        :path "issues/issues.json"}]}}
+ :assets {:prompts ["prompts/fix.md.tmpl"]
+          :schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :lint
+            :defaults {:max-rounds 3 :state-timeout "10m"}
+            ;; entry inputs/parameters are names from :interface bound at
+            ;; inclusion time; they become template vars inside the fragment.
+            :entry {:inputs [:repo-root :test-cmd]
+                    :parameters [:max-rounds :base-branch]}
+            :exit [{:on :pass :produces {:status "status/status.json"}}
+                   {:on :fail :produces {:status "status/status.json"
+                                         :issues "issues/issues.json"}}]
+            :states
+            {:lint
+             {:type :deterministic
+              :title "Lint"
+              :handler :noop/succeed
+              :runtime {:timeout "1m"}
+              :outputs {:status {:path "lint/status.json" :required true}}
+              :next :test}
+
+             :test
+             {:type :deterministic
+              :title "Run tests"
+              :handler :noop/succeed
+              :runtime {:timeout "1m"}
+              :outputs {:status {:path "test/status.json" :required true}}
+              ;; Bounded loop: retry-fix up to max-rounds, else done/failed.
+              :transitions [{:when {:status "pass"} :next :done}
+                            {:when {:status "fail"} :effects [:inc-round] :next :fix}]}
+
+             :fix
+             {:type :agent
+              :title "Fix failures"
+              :executor :pi-cli
+              :prompt-template "prompts/fix.md.tmpl"
+              :tools [:read :bash :write :grep]
+              :runtime {:cwd "{{inputs.repo-root}}" :timeout "10m"}
+              :outputs {:status {:path "fix/status.json" :required true}}
+              :transitions [{:when {:status "pass"} :next :test}
+                            {:when {:status "fail"} :next :failed}]}
+
+             :done
+             {:type :terminal :status :success}
+
+             :failed
+             {:type :terminal :status :failure}}}}

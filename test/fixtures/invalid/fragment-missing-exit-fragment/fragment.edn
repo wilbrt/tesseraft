@@ -1,0 +1,16 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "missing-exit-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             ;; Declares :pass and :fail outcomes...
+             :outcomes #{:pass :fail}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :lint
+            ;; ...but only provides an exit for :pass -> :fail uncovered.
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:lint {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "lint/status.json" :required true}}
+                            :next :done}
+                     :done {:type :terminal :status :success}}}}

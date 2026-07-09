@@ -20,6 +20,11 @@ case "$cmd" in
     ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     exec bb --config "$ROOT_DIR/bb.edn" node "$@"
     ;;
+  fragment)
+    shift
+    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    exec bb --config "$ROOT_DIR/bb.edn" fragment "$@"
+    ;;
   control-plane)
     shift
     ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -42,13 +47,14 @@ case "$cmd" in
     echo "  lint      Validate workflow definitions"
     echo "  run       Run or inspect workflow executions"
     echo "  node      Validate and manage self-contained node packages"
+    echo "  fragment  Validate and manage self-contained fragment packages"
     echo "  control-plane  Inspect workflows and runs via the read-only local API"
     echo "  web       Serve the local read-only Web UI"
     echo "  version   Print version information"
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Usage: tesseraft <lint|run|node|control-plane|web|version> [args]" >&2
+    echo "Usage: tesseraft <lint|run|node|fragment|control-plane|web|version> [args]" >&2
     exit 2
     ;;
 esac

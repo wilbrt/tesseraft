@@ -1,0 +1,19 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "unbounded-cycle-fixture"}
+ :interface {:inputs {}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ ;; Deliberately no :defaults :max-rounds so the internal cycle is unbounded.
+ :fragment {:initial :a
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:a {:type :deterministic :handler :noop/succeed
+                         :runtime {:timeout "1m"}
+                         :outputs {:status {:path "a/status.json" :required true}}
+                         :next :b}
+                     :b {:type :deterministic :handler :noop/succeed
+                         :runtime {:timeout "1m"}
+                         :outputs {:status {:path "b/status.json" :required true}}
+                         :next :a}
+                     :done {:type :terminal :status :success}}}}

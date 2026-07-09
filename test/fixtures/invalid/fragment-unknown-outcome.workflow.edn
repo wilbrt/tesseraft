@@ -1,0 +1,19 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-unknown-outcome-fixture"}
+ :inputs {:repo-root {:type :string :required true}
+          :test-cmd {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :run-tests
+ :states
+ {:run-tests
+  {:type :fragment
+   :fragment "test-fix-loop"
+   :inputs {:repo-root "{{inputs.repo-root}}"
+            :test-cmd "{{inputs.test-cmd}}"}
+   ;; "maybe" is not a declared interface outcome -> error.
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "maybe"} :next :abort}]}
+  :done {:type :terminal :status :success}
+  :abort {:type :terminal :status :failure}}}

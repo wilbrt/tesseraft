@@ -94,6 +94,8 @@ Keep project-specific workflow packages under `.tesseraft/workflows/<name>/workf
 
 Keep reusable node packages beside them using the same scope convention: `.tesseraft/nodes/<name>/node.edn` for project nodes and `~/.tesseraft/nodes/<name>/node.edn` for global nodes. Node import/export commands still take explicit `node.edn` paths.
 
+Fragment packages (reusable multi-node subgraphs, `tesseraft.fragment/v1`) use the same scope: `.tesseraft/fragments/<name>/fragment.edn`, `~/.tesseraft/fragments/<name>/fragment.edn`, and `examples/fragments/<name>/fragment.edn`. A workflow includes a fragment via a `{:type :fragment}` boundary node; inclusion lints the boundary contract without re-running the internal subgraph proof. See [docs/FRAGMENTS.md](docs/FRAGMENTS.md).
+
 ## Git branch and worktree modes
 
 Tesseraft keeps the existing branch mode via `:git/ensure-branch`, which checks out the selected branch in `{{inputs.repo-root}}`. For isolated agent edits, use `:git/ensure-worktree` instead. It creates or reuses a deterministic worktree under `.agent-worktrees/<workflow>-<run-id>-<branch>`, writes the path artifact (default `worktree/path.txt`), and stores the path in `{{run.worktree-dir}}` for later nodes.
@@ -145,18 +147,20 @@ Implemented:
 
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.  
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
-- **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.  
-  _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
-- **blocked-run-state** (implemented) — Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments.  
-  _Evidence:_ schemas/run-state.schema.json enum "blocked", src/tesseraft/runtime/core.clj approval pause/resume, web/src/components/ApprovalPanel.tsx, web/src-server/lib/approvals.ts, docs/MERGE_PROTOCOL.md
-- **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
-  _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
-- **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
-  _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
 - **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.  
   _Evidence:_ src/tesseraft/runtime/core.clj mock-mode?/executor-mode, src/tesseraft/executors/mock.clj, examples/mock-run-workflow/workflow.edn, scripts/test.sh mock dry-run, README.md §Mock mode
 - **container-install** (implemented) — Containerized install path and install_deps script.  
   _Evidence:_ docs/CONTAINER_INSTALL.md, scripts/install.sh, test/container/
+- **blocked-run-state** (implemented) — Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments.  
+  _Evidence:_ schemas/run-state.schema.json enum "blocked", src/tesseraft/runtime/core.clj approval pause/resume, web/src/components/ApprovalPanel.tsx, web/src-server/lib/approvals.ts, docs/MERGE_PROTOCOL.md
+- **fragment-package-contract** (implemented) — First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof.  
+  _Evidence:_ src/tesseraft/fragment/cli.clj, src/tesseraft/lint/core.clj lint-fragment-package, docs/FRAGMENTS.md, schemas/fragment-package.schema.json, examples/fragments/test-fix-loop/fragment.edn, bb.edn :fragment
+- **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
+  _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
+- **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
+  _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
+- **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.  
+  _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
 
 Partial:
 
