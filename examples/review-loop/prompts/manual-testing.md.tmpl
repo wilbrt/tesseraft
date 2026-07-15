@@ -1,4 +1,4 @@
-Fresh Pi session: MANUAL TESTING.
+Fresh Pi session: FUNCTIONAL BROWSER TESTING.
 
 Inputs:
 - User prompt: {{run.dir}}/prompt/prompt.md
@@ -6,47 +6,43 @@ Inputs:
 - Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
 - Manual-testing spec: {{run.dir}}/manual-testing/spec.md
 - Test-server resource: {{run.dir}}/manual-testing/test-server-{{run.round}}.json
+- Deterministic UI evidence: {{run.dir}}/manual-testing/ui-evidence-{{run.round}}.json
 - Issues file: {{run.issues-file}}
-- Repository root: {{inputs.repo-root}}
 - Worktree root: {{run.worktree-dir}}
 
 Goal:
-Perform a focused browser-based product review of the implemented Web UI or user-facing surface before code review. Consume the design-produced manual-testing spec and the produced test-server resource; do not invent, reuse, or hardcode a localhost address.
+Functionally test the implemented user-facing surface. The deterministic gate has already captured required screenshots and geometry. Concentrate on real user tasks, state changes, accessibility, console/runtime errors, and whether visible controls actually work.
 
 Rules:
-- Do not edit source code.
-- Do not commit, push, create pull requests, or mutate workflow definitions.
-- Read `{{run.dir}}/manual-testing/spec.md` first. If it declares manual testing skipped, verify it includes an explicit design-produced skip rationale/gate, write the report/status explaining the skip, and do not run browser checks.
-- Read `{{run.dir}}/manual-testing/test-server-{{run.round}}.json` and use only its `url` field as the browser target.
-- Before opening the browser, verify the test-server artifact provenance: `cwd` or `worktree_root` must equal `{{run.worktree-dir}}`, `kind` should be `web-service`, and the host/port/url must agree. If provenance does not match, fail with an actionable stale-server issue.
-- Do not start a replacement server or choose a port yourself. If the produced server is unavailable, fail with an actionable setup/resource issue.
-- Prefer safe read-only inspection. Do not execute destructive or side-effecting UI actions unless the prompt explicitly requires them and the UI clearly confirms the action is safe.
-- Install or invoke Agent Browser with the published package when needed, for example: `npm exec --yes agent-browser@latest -- --help`.
-- Use an isolated Agent Browser session name for the run.
-- Collect evidence from snapshots, bounded DOM/text inspection, console/errors, screenshots when useful, and at least one narrow/mobile viewport check when the surface is web-based.
-- Avoid full snapshots of very large pages; use bounded `eval` metrics or filtered inspection when event logs or histories are large.
-- Produce actionable issues only. If the manual test finds UX, accessibility, responsiveness, runtime, or clarity problems that should be fixed before review, fail and write issues for the next execution round.
-- If no actionable manual-testing issues remain, pass so the workflow can continue to code review.
-
-Suggested Agent Browser commands:
-```bash
-SERVER_URL="$(node -e "const fs=require('fs'); const p='{{run.dir}}/manual-testing/test-server-{{run.round}}.json'; const x=JSON.parse(fs.readFileSync(p,'utf8')); if (x.worktree_root !== '{{run.worktree-dir}}' && x.cwd !== '{{run.worktree-dir}}') { throw new Error('test-server provenance does not match worktree'); } console.log(x.url);")"
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} doctor
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} open "$SERVER_URL"
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} snapshot --depth 6
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} console
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} errors
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} set viewport 390 844
-npm exec --yes agent-browser@latest -- --session review-loop-manual-{{run.round}} eval 'JSON.stringify({overflowX:document.documentElement.scrollWidth>document.documentElement.clientWidth, bodyChars:document.body.innerText.length})'
-```
+- Do not edit source code, commit, push, create pull requests, or mutate workflow definitions.
+- Read the spec, test-server artifact, and UI-evidence JSON before interacting.
+- Use only the server artifact's `url`; verify its worktree provenance before opening it.
+- Treat the UI-evidence checks as inputs, not as proof that the product is usable. Reproduce the primary tasks yourself.
+- Exercise every newly added or materially changed primary control, including opening menus/modals and completing a safe selection or cancellation path.
+- Check keyboard access, focus return after Escape, labels/roles, console errors, failed requests, state persistence, and narrow/mobile behavior.
+- Do not certify layout aesthetics here; the independent visual-review node owns pixel-based judgment.
+- Record every observed defect in the structured `findings` array. Do not hide defects in prose.
+- Severity rubric:
+  - blocker: a primary task cannot be completed, a primary control is inaccessible/clipped, data/security risk, or the test setup is invalid;
+  - major: a task requires DevTools/localStorage/manual file editing, a misleading or broken state, or a serious responsive/accessibility problem;
+  - minor: a real but non-blocking usability defect worth fixing;
+  - nit: purely optional polish with no meaningful user impact.
+- Every blocker, major, or minor finding is actionable. If any actionable finding exists, status MUST be `fail` and an issues file MUST be written. A workaround never converts a defect into a pass.
+- A passing report must contain no warning section, unresolved issue, workaround, or "minor/non-blocking issue" language.
 
 Write:
 - Report: {{run.dir}}/manual-testing/report-{{run.round}}.md
 - Status: {{run.dir}}/manual-testing/status-{{run.round}}.json
 - If failing: {{run.dir}}/manual-testing/issues-{{run.round}}.json
 
-Status JSON examples:
-{"status":"pass","summary":"manual browser testing passed","issues_file":null}
-{"status":"fail","summary":"manual browser testing found usability issues","issues_file":"manual-testing/issues-{{run.round}}.json"}
+Status JSON contract:
+```json
+{
+  "status": "pass",
+  "summary": "functional browser testing passed",
+  "issues_file": null,
+  "findings": []
+}
+```
 
-Failure issues should be JSON matching the issues schema and should contain only actionable manual-testing findings for the next execution round.
+Each finding must include `severity`, `category`, `actionable`, `title`, and an evidence path or precise interaction trace. Failure issues must also match the shared issues schema.

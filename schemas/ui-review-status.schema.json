@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/tesseraft/ui-review-status.schema.json",
+  "title": "Tesseraft UI Review Status",
+  "type": "object",
+  "required": ["status", "summary", "issues_file", "findings"],
+  "properties": {
+    "status": { "enum": ["pass", "fail"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "issues_file": { "type": ["string", "null"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "actionable", "title", "evidence"],
+        "properties": {
+          "severity": { "enum": ["blocker", "major", "minor", "nit"] },
+          "category": { "type": "string" },
+          "actionable": { "type": "boolean" },
+          "title": { "type": "string" },
+          "evidence": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

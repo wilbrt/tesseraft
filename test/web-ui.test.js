@@ -336,6 +336,23 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /Run start was guarded/);
 });
 
+test('project overlays portal outside clipping layout and Settings owns the full page surface', () => {
+  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
+  const selector = fs.readFileSync('web/src/components/ProjectSelector.tsx', 'utf8');
+  const popover = fs.readFileSync('web/src/components/Popover.tsx', 'utf8');
+  const settings = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
+  const styles = fs.readFileSync('web/src/style.css', 'utf8');
+  assert.match(popover, /createPortal/);
+  assert.match(popover, /position/);
+  assert.match(selector, /data-testid="project-selector-menu"/);
+  assert.match(selector, /aria-haspopup="listbox"/);
+  assert.doesNotMatch(styles, /\.header-topline[^\n]*overflow-x:\s*hidden/);
+  assert.match(styles, /\.popover-layer\s*\{[^}]*position:\s*fixed/);
+  assert.match(app, /<FullWidthPage><SettingsPanel\s*\/><\/FullWidthPage>/);
+  assert.match(settings, /settings-layout/);
+  assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
+});
+
 test('Workflow Studio UI source exposes canvas, toolbar, context menus, and save modes (design doc)', () => {
   const app = fs.readFileSync('web/src/App.tsx', 'utf8');
   const studio = fs.readFileSync('web/src/components/WorkflowStudio.tsx', 'utf8');

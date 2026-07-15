@@ -97,7 +97,7 @@ Do not let adapters or executors mutate global workflow behavior.
 - Prefer arrow-syntax functions and React components in TypeScript/React code.
 - Keep the local web server as the boundary for future Pi SDK integration; do not make Babashka own Pi SDK session lifecycle.
 - Render workflow graph data as an inspectable visual graph when presenting graph views. Node selection should expose node details through an explicit UI surface such as a modal or side panel.
-- Keep Web UI tests local-only and free of Pi, Jira, GitHub, browser automation, hosted services, or credentials unless a test is explicitly marked as integration-only.
+- Keep Web UI tests local-only and free of Pi, Jira, GitHub, hosted services, or credentials. Rendered-layout integration tests may use the pinned local `agent-browser` dependency and an ephemeral localhost server; they must not navigate to external origins.
 
 ## Clojure/Babashka style
 
@@ -114,7 +114,7 @@ Do not let adapters or executors mutate global workflow behavior.
 
 - Add lint coverage for new workflow features.
 - Add safe smoke tests before side-effectful integration tests.
-- Do not require Pi, Jira, GitHub, browser tools, or external credentials for default tests.
+- Do not require Pi, Jira, GitHub, hosted services, or external credentials for default tests. The pinned local browser gate is permitted for Web UI geometry and screenshot regressions.
 - Prefer fixtures and local-only workflows for regression coverage.
 
 ## Review checklist

@@ -317,7 +317,8 @@ export const SettingsPanel = () => {
         <dt>Source</dt><dd><span className="status-pill">{sourceLabel}</span></dd>
       </dl>
 
-      <div className="control-card settings-form">
+      <div className="settings-layout">
+      <div className="control-card settings-form settings-primary">
         <h3>Pi defaults</h3>
         <p className="muted">Default provider and model used when creating new Pi sessions.</p>
         <label>
@@ -371,10 +372,8 @@ export const SettingsPanel = () => {
         </div>
       </div>
 
-      <ConnectionsDoctorPanel />
-
       {/* ---- Project abstraction (surface 10) ---- */}
-      <div className="control-card settings-form" aria-label="Projects and connections">
+      <div className="control-card settings-form settings-projects" aria-label="Projects and connections">
         <h3>Projects</h3>
         <p className="muted">A first-class Project owns a workspace root, runs root, workflow discovery context, and project-specific Jira/GitHub connections. Raw credentials are kept out of repositories behind a <em>credential reference</em> (e.g. <code>env:GITHUB_TOKEN</code>); the browser never holds raw tokens. Manifests are safe to commit to <code>.tesseraft/projects/</code>.</p>
         {projectError && <div className="error">{projectError}</div>}
@@ -443,6 +442,8 @@ export const SettingsPanel = () => {
           <button type="button" disabled={projectBusy} onClick={() => void saveConnections()}>Save connections</button>
           <button type="button" disabled={projectBusy} onClick={() => void loadProjects()}>Refresh project</button>
         </div>
+      </div>
+      <ConnectionsDoctorPanel />
       </div>
     </section>
   );

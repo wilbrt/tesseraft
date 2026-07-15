@@ -19,7 +19,7 @@ header {
 
 header h1 { margin: 0; font-size: clamp(1.45rem, 4vw, 2rem); }
 header p { margin: 0; color: #cbd5e1; }
-.header-topline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; min-width: 0; overflow-x: hidden; }
+.header-topline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; min-width: 0; }
 .header-topline > * { min-width: 0; }
 .header-topline h1 { overflow-wrap: anywhere; }
 .header-topline .status-pill { margin-right: auto; }
@@ -50,6 +50,8 @@ main {
   padding: 1rem;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
+
+.full-width-page { grid-column: 1 / -1; min-width: 0; }
 
 .panel h2, .panel h3 { margin-top: 0; }
 .panel-heading-row { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
@@ -361,6 +363,10 @@ button.link { background: transparent; border: 0; color: #1d4ed8; text-decoratio
 @media (max-width: 700px) { .doctor-header { flex-direction: column; } .doctor-header button { width: 100%; } }
 
 /* Project/Connections selector pills in the Settings panel (surface 10). */
+.settings-panel { width: 100%; }
+.settings-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.settings-layout > .connections-doctor { grid-column: 1 / -1; }
+.settings-primary, .settings-projects { align-self: stretch; }
 .project-tab { background: transparent; border: 1px solid #cbd5e1; border-radius: 0.45rem; padding: 0.4rem 0.6rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; }
 .project-tab.active { border-color: #1d4ed8; background: #eff6ff; }
 .settings-panel .item-list .project-tab + .project-tab { margin-left: 0; }
@@ -368,14 +374,18 @@ button.link { background: transparent; border: 0; color: #1d4ed8; text-decoratio
 
 /* Global Project selector in the header topline (project-scoped operations). */
 .project-selector { position: relative; display: inline-flex; align-items: center; }
+.popover-layer { position: fixed; z-index: 1000; overflow: auto; }
+.project-selector-popover { color: #172033; }
 .project-selector-button { display: inline-flex; align-items: center; gap: 0.4rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 0.45rem; padding: 0.3rem 0.55rem; cursor: pointer; font: inherit; color: #0f172a; }
 .project-selector-button:hover { background: #eff6ff; border-color: #1d4ed8; }
 .project-selector-label { display: inline-flex; align-items: center; gap: 0.35rem; }
 .project-selector-caret { font-size: 0.7rem; color: #475569; }
-.project-selector-menu { position: absolute; top: 100%; left: 0; margin: 0.25rem 0 0; padding: 0.25rem; list-style: none; background: #fff; border: 1px solid #cbd5e1; border-radius: 0.45rem; box-shadow: 0 4px 10px rgba(15,23,42,0.12); min-width: 12rem; z-index: 20; }
+.project-selector-menu { margin: 0; padding: 0.25rem; list-style: none; background: #fff; border: 1px solid #cbd5e1; border-radius: 0.45rem; box-shadow: 0 4px 10px rgba(15,23,42,0.12); min-width: 12rem; }
 .project-selector-item { display: flex; flex-direction: column; width: 100%; text-align: left; background: transparent; border: 0; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: 0.3rem; font: inherit; }
 .project-selector-item:hover { background: #eff6ff; }
 .project-selector-item.active { background: #dbeafe; }
 .project-selector-id { font-weight: 600; }
 .project-selector-name { color: #475569; font-size: 0.82rem; }
 .project-selector-empty { padding: 0.4rem 0.5rem; color: #64748b; }
+
+@media (max-width: 900px) { .settings-layout { grid-template-columns: minmax(0, 1fr); } .settings-layout > .connections-doctor { grid-column: auto; } }

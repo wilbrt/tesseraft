@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/tesseraft/ui-evidence.schema.json",
+  "title": "Tesseraft UI Evidence",
+  "type": "object",
+  "required": ["version", "mode", "target_url", "worktree_root", "screenshots", "geometry", "checks", "findings"],
+  "properties": {
+    "version": { "const": 1 },
+    "mode": { "enum": ["executed", "skipped"] },
+    "target_url": { "type": "string" },
+    "worktree_root": { "type": "string" },
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "width", "height", "path", "state"],
+        "properties": {
+          "id": { "type": "string" }, "width": { "type": "integer" }, "height": { "type": "integer" },
+          "path": { "type": "string" }, "state": { "type": "string" }
+        }
+      }
+    },
+    "geometry": { "type": "object" },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "passed", "details"],
+        "properties": { "id": { "type": "string" }, "passed": { "type": "boolean" }, "details": {} }
+      }
+    },
+    "findings": { "type": "array" }
+  },
+  "additionalProperties": true
+}

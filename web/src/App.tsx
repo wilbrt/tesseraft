@@ -6,6 +6,7 @@ import { ApprovalPanel } from './components/ApprovalPanel';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { FullWidthPage } from './components/PageLayout';
 import { ProjectSelector } from './components/ProjectSelector';
 import { getJson } from './lib/api';
 import { isActiveRun } from './lib/runConsole';
@@ -218,7 +219,7 @@ export const App = () => {
           </>
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
-        {activeTab === 'settings' && <SettingsPanel />}
+        {activeTab === 'settings' && <FullWidthPage><SettingsPanel /></FullWidthPage>}
         {activeTab === 'studio' && <WorkflowStudio initialWorkflowName={studioWorkflowName} onExit={() => setActiveTab('workflows')} onWorkflowsChanged={refreshWorkflows} />}
         {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
