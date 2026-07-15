@@ -35,6 +35,15 @@
              (or (not (string? value)) (str/blank? value)))
     [(err code path (str "Agent node " field " must be a non-blank string when present"))]))
 
+(def ^:private pi-thinking-levels
+  #{"off" "minimal" "low" "medium" "high" "xhigh"})
+
+(defn agent-thinking-check [path value]
+  (when (and (some? value) (not (contains? pi-thinking-levels value)))
+    [(err :invalid-agent-thinking path
+          (str "Agent node :thinking must be one of "
+               (str/join ", " (sort pi-thinking-levels))))]))
+
 (defn top-level-checks [wf]
   (let [required [:api-version :kind :metadata :initial :states]]
     (concat
@@ -572,6 +581,7 @@
                            (str "Unknown agent executor: " (:executor n)))])
                    (optional-nonblank-string-check :invalid-agent-provider [:states id :provider] ":provider" (:provider n))
                    (optional-nonblank-string-check :invalid-agent-model [:states id :model] ":model" (:model n))
+                   (agent-thinking-check [:states id :thinking] (:thinking n))
                    (when-not (:prompt-template n)
                      [(err :agent-missing-prompt-template [:states id :prompt-template]
                            "Agent node must declare :prompt-template")])
@@ -831,6 +841,7 @@
                     (str "Unknown agent executor: " (:executor node)))])
             (optional-nonblank-string-check :invalid-agent-provider [:node :provider] ":provider" (:provider node))
             (optional-nonblank-string-check :invalid-agent-model [:node :model] ":model" (:model node))
+            (agent-thinking-check [:node :thinking] (:thinking node))
             (when-not (:prompt-template node)
               [(err :agent-missing-prompt-template [:node :prompt-template]
                     "Agent node must declare :prompt-template")])

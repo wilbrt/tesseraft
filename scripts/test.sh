@@ -52,6 +52,7 @@ cat >"$AGENT_MODEL_WORKFLOW" <<EOF
    :executor :pi-cli
    :provider "openai"
    :model "gpt-4o-mini"
+   :thinking "medium"
    :prompt-template "prompts/agent.md.tmpl"
    :runtime {:cwd "." :timeout "10s"}
    :outputs {:status {:path "agent/status.json" :required true}}
@@ -73,7 +74,7 @@ cp "$AGENT_MODEL_WORKFLOW" "$AGENT_MODEL_INVALID_WORKFLOW"
 python3 - <<PY
 from pathlib import Path
 p = Path('$AGENT_MODEL_INVALID_WORKFLOW')
-s = p.read_text().replace(':provider "openai"', ':provider ""').replace(':model "gpt-4o-mini"', ':model 123')
+s = p.read_text().replace(':provider "openai"', ':provider ""').replace(':model "gpt-4o-mini"', ':model 123').replace(':thinking "medium"', ':thinking "maximum"')
 p.write_text(s)
 PY
 set +e
@@ -85,7 +86,7 @@ if [[ "$agent_model_invalid_status" -eq 0 ]]; then
   echo "Expected invalid agent model/provider lint to fail" >&2
   exit 1
 fi
-if ! grep -q "invalid-agent-provider" /tmp/tesseraft-agent-model-invalid-lint.json || ! grep -q "invalid-agent-model" /tmp/tesseraft-agent-model-invalid-lint.json; then
+if ! grep -q "invalid-agent-provider" /tmp/tesseraft-agent-model-invalid-lint.json || ! grep -q "invalid-agent-model" /tmp/tesseraft-agent-model-invalid-lint.json || ! grep -q "invalid-agent-thinking" /tmp/tesseraft-agent-model-invalid-lint.json; then
   cat /tmp/tesseraft-agent-model-invalid-lint.json >&2
   echo "Expected invalid agent model/provider diagnostics" >&2
   exit 1
@@ -98,9 +99,12 @@ assert '--provider' in argv, argv
 assert argv[argv.index('--provider') + 1] == 'openai', argv
 assert '--model' in argv, argv
 assert argv[argv.index('--model') + 1] == 'gpt-4o-mini', argv
+assert '--thinking' in argv, argv
+assert argv[argv.index('--thinking') + 1] == 'medium', argv
 log = Path('$AGENT_MODEL_RUN_DIR/logs/agent-1.log').read_text()
 assert 'PROVIDER: openai' in log, log
 assert 'MODEL: gpt-4o-mini' in log, log
+assert 'THINKING: medium' in log, log
 PY
 rm -f /tmp/tesseraft-agent-model-lint.json /tmp/tesseraft-agent-model-invalid-lint.json /tmp/tesseraft-agent-model-run.json
 

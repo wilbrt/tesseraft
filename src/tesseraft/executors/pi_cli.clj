@@ -72,12 +72,14 @@
         tools (comma-tools (:tools node))
         provider (:provider node)
         model (:model node)
+        thinking (:thinking node)
         cred-error (check-pinned-provider-credentials! provider)
         log-file (str (fs/path run-dir "logs" (str (name state-id) "-" (get-in ctx [:run :attempt]) ".log")))
         args (cond-> [pi-bin "--approve" "--session-dir" session-dir "--name" session-name]
                tools (into ["--tools" tools])
                provider (into ["--provider" provider])
                model (into ["--model" model])
+               thinking (into ["--thinking" thinking])
                true (into ["-p" (str "@" prompt-file)]))]
     (fs/create-dirs (fs/parent log-file))
     (when (and provider (not (contains? provider-api-key-env provider)))
@@ -88,7 +90,8 @@
       (do
         (spit log-file
               (str "PROVIDER: " (or provider "<default>") "\n"
-                   "MODEL: " (or model "<default>") "\n\n"
+                   "MODEL: " (or model "<default>") "\n"
+                   "THINKING: " (or thinking "<default>") "\n\n"
                    "STATUS: credential-error\n\n"
                    cred-error "\n"))
         (cond-> {:executor "pi-cli"
@@ -99,13 +102,15 @@
                  :session-name session-name
                  :error cred-error}
           provider (assoc :provider provider)
-          model (assoc :model model)))
+          model (assoc :model model)
+          thinking (assoc :thinking thinking)))
       (do
         (spit log-file
               (str "COMMAND: " (str/join " " args) "\n\n"
                    "CWD: " repo-root "\n\n"
                    "PROVIDER: " (or provider "<default>") "\n"
-                   "MODEL: " (or model "<default>") "\n\n"
+                   "MODEL: " (or model "<default>") "\n"
+                   "THINKING: " (or thinking "<default>") "\n\n"
                    "PROMPT_FILE: " prompt-file "\n\n"
                    "STATUS: running\n\n"))
         (let [git-user (get-in ctx [:run :git-user])
@@ -134,4 +139,5 @@
                    :log-file log-file
                    :session-name session-name}
             provider (assoc :provider provider)
-            model (assoc :model model)))))))
+            model (assoc :model model)
+            thinking (assoc :thinking thinking)))))))
