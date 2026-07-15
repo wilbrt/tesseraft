@@ -114,11 +114,35 @@
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
                           {:kind :capability :name "web-start-test-server" :handler "web/start-test-server"}]
                :produces [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json"}]}
-   :next :manual-testing}
+   :next :ui-quality-gate}
+
+  :ui-quality-gate
+  {:type :deterministic
+   :title "Capture screenshots and verify rendered geometry"
+   :handler :web/capture-ui-evidence
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "10m"}
+   :inputs {:script "scripts/ui_quality_gate.mjs"}
+   :outputs {:evidence {:path "manual-testing/ui-evidence-{{run.round}}.json" :schema "../../schemas/ui-evidence.schema.json" :required true}
+             :desktop {:path "manual-testing/screenshots/round-{{run.round}}/desktop.png" :required false}
+             :desktop-menu {:path "manual-testing/screenshots/round-{{run.round}}/desktop-project-menu-open.png" :required false}
+             :desktop-settings {:path "manual-testing/screenshots/round-{{run.round}}/desktop-settings.png" :required false}
+             :compact-settings {:path "manual-testing/screenshots/round-{{run.round}}/compact-settings.png" :required false}
+             :mobile-settings {:path "manual-testing/screenshots/round-{{run.round}}/mobile-settings.png" :required false}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
+                          {:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :read}
+                          {:kind :capability :name "browser-geometry-gate" :handler "web/capture-ui-evidence"}]
+               :produces [{:kind :review-evidence :name "ui-evidence" :path "manual-testing/ui-evidence-{{run.round}}.json"}
+                          {:kind :review-evidence :name "desktop-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop.png"}
+                          {:kind :review-evidence :name "open-overlay-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop-project-menu-open.png"}
+                          {:kind :review-evidence :name "settings-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop-settings.png"}
+                          {:kind :review-evidence :name "compact-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/compact-settings.png"}
+                          {:kind :review-evidence :name "mobile-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/mobile-settings.png"}]}
+   :transitions [{:when {:status "pass"} :next :manual-testing}
+                 {:when {:status "fail"} :effects [:merge-issues] :next :stop-test-server-fail}]}
 
   :manual-testing
   {:type :agent
-   :title "Manual browser testing in worktree"
+   :title "Functional browser testing in worktree"
    :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.4"
@@ -128,17 +152,68 @@
    :session-name "review-loop-manual-testing-{{run.round}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
-   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/ui-review-status.schema.json" :required true}
              :report {:path "manual-testing/report-{{run.round}}.md" :required true}
              :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
                           {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md" :mode :read}
+                          {:kind :review-evidence :name "ui-evidence" :path "manual-testing/ui-evidence-{{run.round}}.json" :mode :read}
                           {:kind :capability :name "browser-manual-testing" :mode :read}
                           {:kind :capability :name "pi" :executor "pi-cli"}]
                :consumes [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :read}]
                :produces [{:kind :validation-report :name "manual-testing-status" :path "manual-testing/status-{{run.round}}.json"}
                           {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
                           {:kind :issue-file :name "manual-testing-issues" :path "manual-testing/issues-{{run.round}}.json"}]}
+   :transitions [{:when {:status "pass"} :next :visual-review}
+                 {:when {:status "fail"} :effects [:merge-issues] :next :stop-test-server-fail}]}
+
+  :visual-review
+  {:type :agent
+   :title "Independent screenshot-based visual review"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/visual-review.md.tmpl"
+   :prompt-output "prompts/generated/visual-review-{{run.round}}.md"
+   :session-name "review-loop-visual-review-{{run.round}}"
+   :tools [:read :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "30m"}
+   :outputs {:status {:path "visual-review/status-{{run.round}}.json" :schema "../../schemas/ui-review-status.schema.json" :required true}
+             :report {:path "visual-review/report-{{run.round}}.md" :required true}
+             :issues {:path "visual-review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :resources {:requires [{:kind :prompt :name "prompt-md" :path "prompt/prompt.md" :mode :read}
+                          {:kind :manual-testing-spec :name "manual-testing-spec" :path "manual-testing/spec.md" :mode :read}
+                          {:kind :review-evidence :name "ui-evidence" :path "manual-testing/ui-evidence-{{run.round}}.json" :mode :read}
+                          {:kind :review-evidence :name "desktop-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop.png" :mode :read}
+                          {:kind :review-evidence :name "open-overlay-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop-project-menu-open.png" :mode :read}
+                          {:kind :review-evidence :name "settings-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/desktop-settings.png" :mode :read}
+                          {:kind :review-evidence :name "compact-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/compact-settings.png" :mode :read}
+                          {:kind :review-evidence :name "mobile-screenshot" :path "manual-testing/screenshots/round-{{run.round}}/mobile-settings.png" :mode :read}
+                          {:kind :capability :name "pi" :executor "pi-cli"}]
+               :produces [{:kind :validation-report :name "visual-review-status" :path "visual-review/status-{{run.round}}.json"}
+                          {:kind :review-evidence :name "visual-review-report" :path "visual-review/report-{{run.round}}.md"}
+                          {:kind :issue-file :name "visual-review-issues" :path "visual-review/issues-{{run.round}}.json"}]}
+   :transitions [{:when {:status "pass"} :next :validate-ui-review}
+                 {:when {:status "fail"} :effects [:merge-issues] :next :stop-test-server-fail}]}
+
+  :validate-ui-review
+  {:type :deterministic
+   :title "Enforce UI evidence and verdict contract"
+   :handler :web/validate-ui-review
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "30s"}
+   :inputs {:evidence-file "manual-testing/ui-evidence-{{run.round}}.json"
+            :functional-status-file "manual-testing/status-{{run.round}}.json"
+            :functional-report-file "manual-testing/report-{{run.round}}.md"
+            :visual-status-file "visual-review/status-{{run.round}}.json"
+            :visual-report-file "visual-review/report-{{run.round}}.md"
+            :issues-file "visual-review/validation-issues-{{run.round}}.json"}
+   :outputs {:validation {:path "visual-review/validation-{{run.round}}.json" :required true}}
+   :resources {:requires [{:kind :review-evidence :name "ui-evidence" :path "manual-testing/ui-evidence-{{run.round}}.json" :mode :read}
+                          {:kind :validation-report :name "manual-testing-status" :path "manual-testing/status-{{run.round}}.json" :mode :read}
+                          {:kind :validation-report :name "visual-review-status" :path "visual-review/status-{{run.round}}.json" :mode :read}]
+               :produces [{:kind :validation-report :name "ui-contract-validation" :path "visual-review/validation-{{run.round}}.json"}
+                          {:kind :issue-file :name "ui-validation-issues" :path "visual-review/validation-issues-{{run.round}}.json"}]}
    :transitions [{:when {:status "pass"} :next :stop-test-server-pass}
                  {:when {:status "fail"} :effects [:merge-issues] :next :stop-test-server-fail}]}
 
@@ -180,12 +255,31 @@
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
                           {:kind :validation-report :name "execution-status" :path "execution/status-{{run.round}}.json"}
                           {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
+                          {:kind :review-evidence :name "visual-review-report" :path "visual-review/report-{{run.round}}.md"}
+                          {:kind :validation-report :name "ui-contract-validation" :path "visual-review/validation-{{run.round}}.json"}
                           {:kind :capability :name "pi" :executor "pi-cli"}]
                :produces [{:kind :validation-report :name "review-status" :path "review/status-{{run.round}}.json"}
                           {:kind :review-evidence :name "review-report" :path "review/report-{{run.round}}.md"}
                           {:kind :issue-file :name "review-issues" :path "review/issues-{{run.round}}.json"}]}
-   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :publish-visual-evidence}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :publish-visual-evidence
+  {:type :deterministic
+   :title "Publish screenshot set on the implementation branch"
+   :handler :git/publish-visual-evidence
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m"}
+   :inputs {:branch-file "design/branch-name.txt"
+            :evidence-file "manual-testing/ui-evidence-{{run.round}}.json"
+            :functional-report-file "manual-testing/report-{{run.round}}.md"
+            :visual-report-file "visual-review/report-{{run.round}}.md"}
+   :outputs {:published {:path "visual-review/published-{{run.round}}.json" :required true}}
+   :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read-write}
+                          {:kind :review-evidence :name "ui-evidence" :path "manual-testing/ui-evidence-{{run.round}}.json" :mode :read}
+                          {:kind :capability :name "git" :handler "git/publish-visual-evidence"}]
+               :produces [{:kind :review-evidence :name "published-visual-evidence" :path "visual-review/published-{{run.round}}.json"}
+                          {:kind :artifact :name "visual-evidence-commit" :source "worktree/path.txt"}]}
+   :next :pr-draft}
 
   :pr-draft
   {:type :agent
@@ -200,6 +294,7 @@
              :title {:path "pr/pr-title.txt" :required true}
              :body {:path "pr/pr-body.md" :required true}}
    :resources {:requires [{:kind :review-evidence :name "review-report" :path "review/report-{{run.round}}.md"}
+                          {:kind :review-evidence :name "published-visual-evidence" :path "visual-review/published-{{run.round}}.json"}
                           {:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
                           {:kind :capability :name "pi" :executor "pi-cli"}]
                :produces [{:kind :validation-report :name "pr-draft-status" :path "pr/draft-status.json"}

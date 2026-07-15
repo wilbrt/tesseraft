@@ -291,7 +291,11 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.ok(startServerState.resources.produces.some((resource) => resource.kind === 'web-service'));
   const manualTestingState = reviewLoopDetail.workflow.normalized.states['manual-testing'];
   assert.ok(manualTestingState.resources.requires.some((resource) => resource.kind === 'manual-testing-spec'));
+  assert.ok(manualTestingState.resources.requires.some((resource) => resource.name === 'ui-evidence'));
   assert.ok(manualTestingState.resources.consumes.some((resource) => resource.kind === 'web-service'));
+  const visualReviewState = reviewLoopDetail.workflow.normalized.states['visual-review'];
+  assert.equal(visualReviewState.model, 'gpt-5.6-sol');
+  assert.ok(visualReviewState.resources.requires.some((resource) => resource.name === 'open-overlay-screenshot'));
 
   const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
   assert.equal(graphResponse.status, 200);
@@ -308,7 +312,11 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.equal(executeNode.resources.requires[0].kind, 'worktree');
   assert.ok(executeNode.resources.produces.some((resource) => resource.name === 'execution-status'));
   assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'execute' && edge.to === 'start-test-server'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'start-test-server' && edge.to === 'manual-testing'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'start-test-server' && edge.to === 'ui-quality-gate'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'ui-quality-gate' && edge.to === 'manual-testing'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'manual-testing' && edge.to === 'visual-review'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'visual-review' && edge.to === 'validate-ui-review'));
+  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'validate-ui-review' && edge.to === 'stop-test-server-pass'));
 
   const runsResponse = await fetch(`${base}/api/runs`);
   assert.equal(runsResponse.status, 200);

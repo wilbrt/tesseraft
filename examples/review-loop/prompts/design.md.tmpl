@@ -16,7 +16,9 @@ Rules:
 - Keep the design focused enough for a bounded execution session.
 - Choose a short, safe branch name for the work.
 - Write the initial manual-testing spec artifact. It must say whether manual testing is required or may be skipped. If skipped, include an explicit skip rationale/gate that downstream review can inspect.
-- The manual-testing spec must cover: surfaces to test, expected evidence, setup requirements, stale-server hazards, responsive/console checks, acceptance criteria, and provenance expectations for the worktree-rooted test server.
+- The manual-testing spec must cover: surfaces to test, primary user tasks, setup requirements, stale-server hazards, functional/accessibility/console checks, acceptance criteria, and provenance expectations for the worktree-rooted test server.
+- For every changed UI surface, name the exact desktop, compact, mobile, and open-overlay states that must be captured. The workflow-wide visual rubric still applies when the task prompt is silent about layout.
+- Treat primary-control clipping, DevTools/localStorage workarounds, unexplained desktop-width waste, and accidental narrow forms as release-blocking usability defects rather than optional polish.
 - Branch names should use lowercase letters, numbers, slashes, and hyphens only.
 - Prefer semantic prefixes such as `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`.
 - Do not use `agent/` as the branch prefix.

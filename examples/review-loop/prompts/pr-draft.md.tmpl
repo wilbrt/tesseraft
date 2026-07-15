@@ -4,6 +4,7 @@ Inputs:
 - User prompt: {{run.dir}}/prompt/prompt.md
 - Design doc: {{run.dir}}/design/design.md
 - Execution summaries and review reports under: {{run.dir}}
+- Published visual evidence: {{run.dir}}/visual-review/published-{{run.round}}.json
 - Repository root: {{inputs.repo-root}}
 
 Goal:
@@ -14,6 +15,7 @@ Rules:
 - Do not push.
 - Do not edit source code.
 - Summarize the user-facing change, validation performed, and any notable risks.
+- Read the published visual-evidence JSON and append its `markdown` field verbatim to the PR body. The PR is not ready without its Visual evidence section and screenshot links.
 - If the change adds, removes, or alters a Tesseraft capability, update
   `STATUS.edn`, run `bb status`, and commit the `STATUS.edn` + `README.md`
   diff in the **same commit** as the source change. Do not commit a stale
@@ -32,3 +34,4 @@ The PR body should include:
 - Implementation notes
 - Validation/tests
 - Risks or follow-up
+- Visual evidence (the exact generated markdown from the published evidence artifact)

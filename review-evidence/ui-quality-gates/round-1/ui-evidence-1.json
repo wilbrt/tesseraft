@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "mode": "executed",
+  "target_url": "http://127.0.0.1:7341",
+  "worktree_root": "/Users/wilbrt/projects/pi-loop",
+  "generated_at": "2026-07-15T15:33:25.259Z",
+  "screenshots": [
+    {
+      "id": "desktop",
+      "width": 1440,
+      "height": 900,
+      "path": "manual-testing/screenshots/round-1/desktop.png",
+      "state": "default"
+    },
+    {
+      "id": "desktop-project-menu-open",
+      "width": 1440,
+      "height": 900,
+      "path": "manual-testing/screenshots/round-1/desktop-project-menu-open.png",
+      "state": "project-menu-open"
+    },
+    {
+      "id": "desktop-settings",
+      "width": 1440,
+      "height": 900,
+      "path": "manual-testing/screenshots/round-1/desktop-settings.png",
+      "state": "settings"
+    },
+    {
+      "id": "compact-settings",
+      "width": 1024,
+      "height": 768,
+      "path": "manual-testing/screenshots/round-1/compact-settings.png",
+      "state": "settings"
+    },
+    {
+      "id": "mobile-settings",
+      "width": 390,
+      "height": 844,
+      "path": "manual-testing/screenshots/round-1/mobile-settings.png",
+      "state": "settings"
+    }
+  ],
+  "geometry": {
+    "desktop": {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontal_overflow": false,
+      "scroll_width": 1440,
+      "client_width": 1440
+    },
+    "project_menu": {
+      "visible": true,
+      "within_viewport": true,
+      "pointer_target": true,
+      "clipping_ancestors": [],
+      "rect": {
+        "left": 312.6875,
+        "top": 61.796875,
+        "right": 504.6875,
+        "bottom": 116.984375,
+        "width": 192,
+        "height": 55.1875
+      }
+    },
+    "settings_desktop": {
+      "visible": true,
+      "main_width": 1440,
+      "panel_width": 1408,
+      "width_utilization": 0.9777777777777777,
+      "unused_right_px": 16,
+      "horizontal_overflow": false
+    },
+    "settings_compact": {
+      "visible": true,
+      "main_width": 1024,
+      "panel_width": 992,
+      "width_utilization": 0.96875,
+      "unused_right_px": 16,
+      "horizontal_overflow": false
+    },
+    "settings_mobile": {
+      "visible": true,
+      "main_width": 390,
+      "panel_width": 366,
+      "width_utilization": 0.9384615384615385,
+      "unused_right_px": 12,
+      "horizontal_overflow": false
+    }
+  },
+  "checks": [
+    {
+      "id": "desktop-screenshot",
+      "passed": true,
+      "details": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "horizontal_overflow": false,
+        "scroll_width": 1440,
+        "client_width": 1440
+      },
+      "screenshot": "manual-testing/screenshots/round-1/desktop.png"
+    },
+    {
+      "id": "overlay-open-screenshot",
+      "passed": true,
+      "details": {
+        "visible": true,
+        "within_viewport": true,
+        "pointer_target": true,
+        "clipping_ancestors": [],
+        "rect": {
+          "left": 312.6875,
+          "top": 61.796875,
+          "right": 504.6875,
+          "bottom": 116.984375,
+          "width": 192,
+          "height": 55.1875
+        }
+      },
+      "screenshot": "manual-testing/screenshots/round-1/desktop-project-menu-open.png"
+    },
+    {
+      "id": "settings-width-utilization",
+      "passed": true,
+      "details": {
+        "visible": true,
+        "main_width": 1440,
+        "panel_width": 1408,
+        "width_utilization": 0.9777777777777777,
+        "unused_right_px": 16,
+        "horizontal_overflow": false
+      },
+      "screenshot": "manual-testing/screenshots/round-1/desktop-settings.png"
+    },
+    {
+      "id": "compact-screenshot",
+      "passed": true,
+      "details": {
+        "visible": true,
+        "main_width": 1024,
+        "panel_width": 992,
+        "width_utilization": 0.96875,
+        "unused_right_px": 16,
+        "horizontal_overflow": false
+      },
+      "screenshot": "manual-testing/screenshots/round-1/compact-settings.png"
+    },
+    {
+      "id": "mobile-screenshot",
+      "passed": true,
+      "details": {
+        "visible": true,
+        "main_width": 390,
+        "panel_width": 366,
+        "width_utilization": 0.9384615384615385,
+        "unused_right_px": 12,
+        "horizontal_overflow": false
+      },
+      "screenshot": "manual-testing/screenshots/round-1/mobile-settings.png"
+    },
+    {
+      "id": "console-clean",
+      "passed": true,
+      "details": {
+        "errors": ""
+      }
+    },
+    {
+      "id": "primary-task",
+      "passed": true,
+      "details": {
+        "exercised": [
+          "open project selector",
+          "open settings"
+        ]
+      }
+    }
+  ],
+  "console": {
+    "errors": "",
+    "messages": ""
+  },
+  "findings": []
+}

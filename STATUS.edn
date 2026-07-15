@@ -38,6 +38,10 @@
    {:status :implemented
     :summary "Project-scoped local-first Connections Doctor: `tesseraft control-plane --project-id <id> doctor`, `GET /api/projects/:projectId/doctor`, and a Settings panel report bounded static/read-only readiness for GitHub/Jira credential refs, gh auth, Pi provider/model local catalog, Git author identity, repo/runs roots, Pinga config, and workflow discovery. Reports use fixed statuses/remediation and never return raw secrets, token previews, command environments, or stdout/stderr."
     :evidence ["src/tesseraft/control_plane/doctor.clj" "src/tesseraft/control_plane/cli.clj doctor" "web/src-server/routes/api.ts /api/projects/:projectId/doctor" "web/src/components/ConnectionsDoctorPanel.tsx" "test/web-server.test.js doctor endpoint" "test/web-ui.test.js ConnectionsDoctorPanel" "scripts/test.sh control-plane doctor" "docs/CONTROL_PLANE_API.md Connections Doctor response" "manual-testing/connections-doctor.md"]}
+   :ui-quality-gates
+   {:status :implemented
+    :summary "Rendered UI quality gates for review-loop: portal-based overlays and full-width page primitives, deterministic desktop/compact/mobile/open-overlay screenshots with geometry assertions, separate functional and independent visual-review agents, machine-enforced evidence/verdict validation, and branch-committed screenshot sets linked from PR descriptions."
+    :evidence ["web/src/components/Popover.tsx" "web/src/components/PageLayout.tsx" "examples/review-loop/scripts/ui_quality_gate.mjs" "examples/review-loop/prompts/visual-review.md.tmpl" "src/tesseraft/adapters/builtin.clj validate-ui-review!/publish-visual-evidence!" "schemas/ui-evidence.schema.json" "schemas/ui-review-status.schema.json" "test/ui-quality-gate.test.js"]}
    :mock-executor
    {:status :implemented
     :summary "Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state."
