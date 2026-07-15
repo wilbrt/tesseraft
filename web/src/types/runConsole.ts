@@ -86,6 +86,46 @@ export type MutationResult = { operation?: string; status?: string; code?: strin
 
 /** Git author identity for a run's agent commits. Both fields present or both absent. */
 export type GitUser = { name: string; email: string };
+
+// ---- Project abstraction types (design §4.1) ----
+// A first-class Project owns a workspace root, run root, workflow discovery
+// context, non-secret settings, and project-specific Jira/GitHub connections.
+// Raw credentials never appear here; connections carry only a `credential_ref`
+// plus masked present/absent state.
+
+/** Credential reference of the form `<store>:<path>` (e.g. `env:GITHUB_TOKEN`). */
+export type CredentialRef = string;
+/** Masked token state: never contains the raw secret. */
+export type MaskedCredential = { present: boolean; credential_ref?: CredentialRef; preview?: string; unresolved?: string; error?: string };
+
+export type ProjectDiscovery = { workflow_roots?: string[] | null; tesseraft_home?: string | null };
+export type ProjectSettings = {
+  pi_default_provider?: string | null;
+  pi_default_model?: string | null;
+  default_repo_root?: string | null;
+  github_token?: MaskedCredential | null;
+  jira_token?: MaskedCredential | null;
+};
+export type ProjectConnection = {
+  base_url?: string;
+  credential_ref?: CredentialRef;
+  credential_state?: MaskedCredential | null;
+};
+export type ProjectConnections = { jira?: ProjectConnection; github?: ProjectConnection };
+
+export type ProjectSummary = { project_id: string; name?: string; source?: 'manifest' | 'implicit' };
+export type ProjectDetail = {
+  project_id: string;
+  name?: string;
+  workspace_root?: string;
+  runs_root?: string;
+  discovery?: ProjectDiscovery;
+  settings?: ProjectSettings;
+  connections?: ProjectConnections;
+  migrated_from?: string;
+};
+export type ProjectsResponse = { projects: ProjectSummary[] };
+export type ProjectConnectionsResponse = { connections: ProjectConnections };
 export type StartRunPayload = { workflow_name: string | null; run_id: string; inputs: Record<string, string>; max_steps: number; git_user?: GitUser };
 export type LoadState<T> = { data: T; error: string | null };
 export type WorkflowGraphState = { nodes: GraphNode[]; edges: GraphEdge[] };

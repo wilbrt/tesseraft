@@ -3,6 +3,13 @@
 .agent-runs/
 node_modules/
 
+# Resolved credential store (design §4.2) lives out-of-repo at
+# ~/.tesseraft/credentials.json (or $TESSERAFT_HOME/credentials.json), which is
+# outside the repo and therefore never tracked. Within the repo, the existing
+# .tesseraft/ rule above already ignores any accidental .tesseraft/credentials.json.
+# Project manifests under .tesseraft/projects/*.json store only credential
+# references, never raw tokens; a linter guard rejects raw *_token values.
+
 # Python cache files
 __pycache__/
 *.py[cod]

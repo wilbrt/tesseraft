@@ -32,7 +32,8 @@
         git-user-email (some-> (get-in opts [:git-user :email]) str/trim not-empty)
         git-user (when (and git-user-name git-user-email)
                    {:name git-user-name :email git-user-email})
-        executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))]
+        executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))
+        project-id (or (:project-id opts) "default")]
     {:workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
@@ -40,6 +41,7 @@
      :inputs inputs
      :run (cond-> {:id run-id
                   :dir run-dir
+                  :project-id project-id
                   :state (:initial wf)
                   :status "running"
                   :round 1
@@ -566,6 +568,8 @@
   (assert-lint-ok! workflow-file)
   (let [wf (spec/read-workflow workflow-file)
         ctx (-> (init-context wf opts) store/ensure-run-dirs! store/save-context!)]
+    (store/event! ctx {:event "project.resolved"
+                       :project_id (get-in ctx [:run :project-id])})
     (store/event! ctx {:event "run.started"})
     ctx))
 

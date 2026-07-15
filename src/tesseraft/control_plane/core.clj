@@ -58,23 +58,474 @@
       (System/getenv "TESSERAFT_HOME")
       (str (fs/path (System/getProperty "user.home") ".tesseraft"))))
 
-(defn discovery-roots [options kind]
-  (let [{:keys [workspace-root workflow-roots]} (opts options)
-        root-name (name kind)]
-    (vec
-      (concat
-        (map-indexed
-          (fn [idx root]
-            {:root (abs-path workspace-root root)
-             :source :configured
-             :precedence idx})
-          workflow-roots)
-        [{:root (fs/path (tesseraft-home options) root-name)
-          :source :global
-          :precedence 100}
-         {:root (abs-path workspace-root (fs/path ".tesseraft" root-name))
-          :source :project
-          :precedence 200}]))))
+;; ============================================================
+;; First-class Project abstraction (design §4)
+;; ============================================================
+;; A Project is a named configuration record addressed by a stable `project_id`
+;; slug. It owns a workspace root, run root, workflow discovery context,
+;; non-secret settings, and project-specific Jira/GitHub connection config.
+;; Raw credentials are kept OUT of repositories behind `credential-ref`s that
+;; resolve from an out-of-repo store (`~/.tesseraft/credentials.json`). Project
+;; manifests live under `.tesseraft/projects/<slug>.json` and are safe to commit.
+;;
+;; Backward compatibility: when no project manifests exist, a *default* project
+;; is synthesized from the current `default-options` + legacy
+;; `.tesseraft/settings.json`/`git-user.json`. Legacy files remain a read
+;; fallback (migration, not cutover).
+
+(def ^:private project-id-re #"^[a-z0-9][a-z0-9-]{0,62}$")
+
+(def ^:private credential-ref-re #"^(env|github-actions):([^\s]+)$")
+
+(defn valid-project-id? [s]
+  (and (string? s) (re-matches project-id-re s)))
+
+(defn slugify-project-name
+  "Derive a stable lowercase `[a-z0-9-]` slug from a project name. Falls back
+  to `project` when the input cannot be reduced to a usable slug."
+  [name]
+  (let [base (-> (str name)
+                 (str/lower-case)
+                 (str/replace #"[^a-z0-9]+" "-")
+                 (str/replace #"^-+|-+$" ""))]
+    (if (and (seq base) (re-matches project-id-re base))
+      base
+      "project")))
+
+(defn credential-ref?
+  "True if `s` is a credential reference of the form `<store>:<path>`. Only
+  `env:` and `github-actions:` stores are recognized shape-wise; resolution is
+  only wired for `env:` in the initial implementation."
+  [s]
+  (and (string? s) (re-find credential-ref-re s)))
+
+(defn projects-dir [options]
+  (fs/path (:workspace-root (opts options)) ".tesseraft" "projects"))
+
+(defn project-manifest-path [options project-id]
+  (fs/path (projects-dir options) (str project-id ".json")))
+
+(defn credentials-file [options]
+  (fs/path (tesseraft-home options) "credentials.json"))
+
+(defn read-project-manifest [options project-id]
+  (let [p (project-manifest-path options project-id)]
+    (when (fs/exists? p)
+      (try (store/read-json p) (catch Throwable _ nil)))))
+
+(defn list-project-manifests [options]
+  (let [dir (projects-dir options)]
+    (if-not (fs/exists? dir)
+      []
+      (->> (for [f (file-seq (fs/file dir))
+                 :when (and (.isFile f)
+                            (str/ends-with? (.getName f) ".json"))]
+             (let [slug (str/replace (.getName f) #"\.json$" "")]
+               (try (let [m (store/read-json (fs/path f))]
+                      {:project_id slug
+                       :name (or (:name m) slug)
+                       :source "manifest"})
+                    (catch Throwable _ nil))))
+           (remove nil?)
+           vec))))
+
+(defn read-credentials [options]
+  (let [p (credentials-file options)]
+    (when (fs/exists? p)
+      (try (store/read-json p) (catch Throwable _ nil)))))
+
+(defn- norm-discovery [raw]
+  (cond
+    (nil? raw) nil
+    (map? raw)
+    (into {} (for [k [:workflow-roots :tesseraft-home]
+                   :when (contains? raw k)]
+               [k (get raw k)]))
+    :else nil))
+
+(defn- norm-connections [raw]
+  (if (or (nil? raw) (not (map? raw))) {}
+    (into {} (for [[k v] raw
+                   :when (#{:jira :github :jira/* :github/* "jira" "github"} k)
+                   :when (map? v)]
+               [(if (keyword? k) k (keyword k)) v]))))
+
+;; ---- settings config (source of truth: .tesseraft/settings.json) ----
+;; Defined early so the default-project synthesizer (below) can resolve these
+;; symbols at sci analysis time. The full settings read/mutate surface
+;; (`get-settings`/`set-settings`/`validate-settings-field`/`mask-settings`)
+;; remains further down; only the small read + mask helpers needed by project
+;; synthesis are hoisted here. Mirrors git-user precedence (project then global).
+;; Tokens are returned masked so secrets never leave the process; the file is
+;; plaintext (local-only, no auth model) under the already-gitignored
+;; .tesseraft/ directory.
+
+(def ^:private settings-fields
+  [:pi_default_provider :pi_default_model :github_token
+   :jira_token :default_repo_root])
+
+;; Sentinel for "leave this token field as-is" (used by the web API to round-trip
+;; masked tokens safely). See docs in `set-settings`.
+(def settings-unchanged "__unchanged__")
+
+(defn settings-paths [options]
+  (let [{:keys [workspace-root]} (opts options)
+        home (tesseraft-home options)]
+    {:project (fs/path workspace-root ".tesseraft" "settings.json")
+     :global (fs/path home "settings.json")}))
+
+(defn read-settings-file [p]
+  (when (fs/exists? p)
+    (try (store/read-json p) (catch Throwable _ nil))))
+
+(defn coerce-settings
+  "Keep only the known settings fields from a parsed config map. Unknown
+  fields are dropped (ignored on read)."
+  [raw]
+  (if (map? raw)
+    (into {} (for [k settings-fields :when (contains? raw k)] [k (get raw k)]))
+    {}))
+
+(defn mask-token [v]
+  (if (or (nil? v) (not (string? v)) (str/blank? v))
+    {:present false}
+    {:present true :preview (subs (str v) (max 0 (- (count (str v)) 4)))}))
+
+(defn synthesize-default-project
+  "Build the implicit default project from `default-options` + legacy
+  `.tesseraft/settings.json`/`git-user.json`. Returns a map with `:source
+  :implicit`. This is the migration fallback: existing behavior is preserved
+  unchanged when no project manifests exist."
+  [options]
+  (let [{:keys [workspace-root runs-root workflow-roots tesseraft-home]} (opts options)
+        settings (coerce-settings (read-settings-file (:project (settings-paths options))))
+        conn-jira (when (:jira_token settings) {:credential-ref (str "env:JIRA_TOKEN")})
+        conn-github (when (:github_token settings) {:credential-ref (str "env:GITHUB_TOKEN")})
+        connections (cond-> {}
+                       (seq conn-jira) (assoc :jira conn-jira)
+                       (seq conn-github) (assoc :github conn-github))]
+    {:project_id "default"
+     :name "Default"
+     :workspace_root (str (abs-path workspace-root "."))
+     :runs_root runs-root
+     :discovery {:workflow-roots (vec workflow-roots)
+                 :tesseraft-home tesseraft-home}
+     :settings (let [base {:pi-default-provider (or (:pi_default_provider settings) nil)
+                           :pi-default-model (or (:pi_default_model settings) nil)
+                           :default-repo-root (or (:default_repo_root settings) nil)}]
+                 (-> base
+                     (api-value)
+                     (assoc :github-token (mask-token (:github_token settings))
+                            :jira-token (mask-token (:jira_token settings)))))
+     :connections connections
+     :source :implicit}))
+
+(defn resolve-project
+  "Single entry point for project resolution. If project_id is nil or the
+  literal `default`, resolve the default project: prefer a persisted
+  `.tesseraft/projects/default.json`; else synthesize from legacy config
+  (`:source :implicit`). Any missing manifest returns 404 for an explicit id."
+  ([options] (resolve-project options nil))
+  ([options project-id]
+   (let [pid (or project-id "default")]
+     (if-not (valid-project-id? pid)
+       (error-response 400 "bad_request" "Invalid project_id"
+                       {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+       (if-let [m (read-project-manifest options pid)]
+         (assoc m :source :manifest :project_id pid)
+         (if (= "default" pid)
+           (synthesize-default-project options)
+           (error-response 404 "not_found" "Project not found"
+                           {:project_id pid})))))))
+
+(defn list-projects
+  ([] (list-projects {}))
+  ([options]
+   (let [manifests (list-project-manifests options)
+         has-default? (some #(= "default" (:project_id %)) manifests)]
+     (if (or (seq manifests) has-default?)
+       {:projects (mapv api-value manifests)}
+       ;; No manifests at all: synthesize the implicit default so the list is
+       ;; never empty (preserves current single-project behavior).
+       {:projects [(-> (synthesize-default-project options)
+                       (api-value)
+                       (select-keys ["project_id" "name" "source"]))]}))))
+
+(defn get-project
+  ([] (get-project {} nil))
+  ([options project-id]
+   (let [resolved (resolve-project options project-id)]
+     (if (:error resolved)
+       resolved
+;; Secrets never leave `get-project`: tokens are already masked in
+;; `synthesize-default-project`; persisted manifests store only credential
+;; refs (never raw tokens). Connections expose `:credential-ref` and masked
+;; state only.
+       (let [p resolved
+             connections (into {}
+                              (for [[k v] (:connections p {})]
+                                [k (api-value v)]))]
+         (api-value (-> p
+                        (dissoc :source)
+                        (assoc :connections connections))))))))
+
+(defn- path-escape-component?
+  "True if the relative path string contains a `..` path component or an
+  absolute path, i.e. could resolve outside its intended root. Accepts a
+  workspace root to interpret relative vs absolute inputs."
+  [workspace-root p]
+  (let [parts (if (str/blank? p) [] (str/split (str p) #"/"))]
+    (or (fs/absolute? (fs/path p))
+        (some #(= % "..") parts))))
+
+(defn- validate-project-spec
+  "Validate a project create/update spec. Returns a string error or nil."
+  [options project-id spec]
+  ;; Absolutize the workspace root so confinement checks are well-defined even
+  ;; when the configured `:workspace-root` is the relative default `"."`.
+  ;; `abs-path` only absolutizes *its input* when it is already absolute, so a
+  ;; relative workspace root would otherwise yield empty/relative `abs-path`
+  ;; results and let absolute escapes (e.g. `/tmp/escape`) through.
+  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))]
+    (cond
+      (not (valid-project-id? project-id))
+      (str "Invalid project_id (expected " project-id-re ")")
+
+      (and (contains? spec :workspace_root) (not (string? (:workspace_root spec))))
+      "workspace_root must be a string"
+
+      (and (contains? spec :runs_root) (not (string? (:runs_root spec))))
+      "runs_root must be a string"
+
+      (and (contains? spec :workspace_root)
+           (not (path-prefix? (abs-path wr ".")
+                             (abs-path wr (:workspace_root spec)))))
+      "workspace_root must be under the current workspace"
+
+      ;; runs_root is resolved relative to the workspace root and must stay
+      ;; confined under it: reject any `..` component or absolute path outside
+      ;; the workspace. This is the control-plane-level confinement that
+      ;; prevents run artifacts from being written to arbitrary filesystem
+      ;; locations (design §6 path-confinement risk).
+      (and (contains? spec :runs_root)
+           (or (path-escape-component? wr (:runs_root spec))
+               (not (path-prefix? (abs-path wr ".")
+                                 (abs-path wr (:runs_root spec))))))
+      "runs_root must be a relative path under the current workspace"
+
+      :else
+      (let [discovery (:discovery spec)
+            conn (:connections spec)]
+        (cond
+          (and (some? discovery) (not (map? discovery)))
+          "discovery must be an object"
+
+          (and (some? (:workflow-roots discovery))
+               (or (not (sequential? (:workflow-roots discovery)))
+                   (not-every? string? (:workflow-roots discovery))))
+          "discovery.workflow-roots must be an array of strings"
+
+          (and (some? (:tesseraft-home discovery))
+               (not (string? (:tesseraft-home discovery))))
+          "discovery.tesseraft-home must be a string"
+
+          (and (some? conn) (not (map? conn)))
+          "connections must be an object"
+
+          :else
+          (let [bad-conn (some (fn [[_k v]]
+                                 (when (map? v)
+                                   (when-let [r (:credential-ref v)]
+                                     (when-not (credential-ref? r)
+                                       (:credential-ref v)))))
+                               conn)]
+            (when bad-conn
+              (str "Invalid credential-ref: " bad-conn))))))))
+
+(defn create-project
+  ([options project-id spec] (create-project options project-id spec false))
+  ([options project-id spec _global?] ; kept for API symmetry; manifests are project-scoped
+   (let [spec (or spec {})]
+     (cond
+       (not (valid-project-id? project-id))
+       (error-response 400 "bad_request" "Invalid project_id"
+                       {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+
+       (fs/exists? (project-manifest-path options project-id))
+       (error-response 409 "conflict" "A project with that id already exists"
+                       {:project_id project-id})
+
+       :else
+       (if-let [err (validate-project-spec options project-id spec)]
+         (error-response 400 "bad_request" err)
+         (let [name (or (:name spec) project-id)
+               manifest (cond->
+                          {:project_id project-id
+                           :name name
+                           :workspace_root (or (:workspace_root spec)
+                                               (str (abs-path (:workspace-root (opts options)) ".")))
+                           :runs_root (or (:runs_root spec) (:runs-root (opts options)))
+                           :discovery (or (:discovery spec)
+                                          {:workflow-roots (:workflow-roots (opts options))
+                                           :tesseraft-home (:tesseraft-home (opts options))})}
+                          (seq (:settings spec)) (assoc :settings (:settings spec))
+                          (seq (:connections spec)) (assoc :connections (:connections spec)))
+               target (project-manifest-path options project-id)]
+           (fs/create-dirs (fs/parent target))
+           (store/write-json! target manifest)
+           (get-project options project-id)))))))
+
+(defn update-project
+  ([options project-id spec] (update-project options project-id spec false))
+  ([options project-id spec _global?]
+   (let [spec (or spec {})]
+     (cond
+       (not (valid-project-id? project-id))
+       (error-response 400 "bad_request" "Invalid project_id"
+                       {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+
+       (not (fs/exists? (project-manifest-path options project-id)))
+       (error-response 404 "not_found" "Project not found" {:project_id project-id})
+
+       :else
+       (if-let [err (validate-project-spec options project-id spec)]
+         (error-response 400 "bad_request" err)
+         (let [current (or (read-project-manifest options project-id) {})
+               merged (merge current spec)]
+           (store/write-json! (project-manifest-path options project-id) merged)
+           (get-project options project-id)))))))
+
+(defn migrate-project
+  "Write the synthesized default project to `.tesseraft/projects/default.json`,
+  stamped with `:migrated-from :legacy-settings`. Legacy files are NOT deleted
+  in this phase (read-only fallback remains)."
+  ([options] (migrate-project options "default"))
+  ([options project-id]
+   (let [pid (or project-id "default")]
+     (cond
+       (not (= "default" pid))
+       (error-response 400 "bad_request" "Only the default project can be migrated in this phase")
+
+       (fs/exists? (project-manifest-path options pid))
+       (error-response 409 "conflict" "Default project already exists; remove the manifest to re-migrate"
+                       {:project_id pid})
+
+       :else
+       (let [synth (synthesize-default-project options)
+             manifest (-> synth
+                         (dissoc :source)
+                         (assoc :migrated-from :legacy-settings))
+             target (project-manifest-path options pid)]
+         (fs/create-dirs (fs/parent target))
+         (store/write-json! target manifest)
+         (get-project options pid))))))
+
+(defn mask-credential
+  "Resolve a credential-ref against the out-of-repo store and return a masked
+  state (present/absent) WITHOUT ever returning the raw token. `env:` refs are
+  resolved from the process environment; `github-actions:` refs are validated
+  but not resolved locally (reported as :unresolved)."
+  [options ref]
+  (cond
+    (or (nil? ref) (str/blank? (str ref))) {:present false}
+    (not (credential-ref? ref)) {:present false :error "invalid credential-ref"}
+    :else
+    (let [[_ store-name path] (re-matches credential-ref-re ref)]
+      (case store-name
+        "env"
+        (let [v (System/getenv path)]
+          (if (str/blank? v)
+            {:present false :credential-ref ref}
+            {:present true :credential-ref ref :preview (subs v (max 0 (- (count v) 4)))}))
+        "github-actions"
+        {:present false :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
+        {:present false :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
+
+(defn get-project-connections
+  ([] (get-project-connections {} nil))
+  ([options project-id]
+   (let [resolved (resolve-project options project-id)]
+     (if (:error resolved)
+       resolved
+       (let [creds (or (read-credentials options) {})]
+         {:connections
+          (into {} (for [[k v] (:connections resolved {})]
+                     (let [ref (:credential-ref v)
+                           masked (if (and ref (get creds (str ref)))
+                                    {:present true :credential-ref ref}
+                                    (mask-credential options ref))]
+                       [k (api-value (merge v {:credential-state masked}))])))})))))
+
+(defn update-project-connections
+  ([] (update-project-connections {} nil nil))
+  ([options project-id updates]
+   (let [updates (or updates {})]
+     (cond
+       (not (map? updates))
+       (error-response 400 "bad_request" "connections update must be an object")
+
+       (some (fn [[_ v]]
+               (and (map? v)
+                    (some #(contains? v %) [:token :github_token :jira_token :secret :password])))
+             updates)
+       ;; Raw token payloads are NEVER accepted; only refs + base-url.
+       (error-response 400 "bad_request"
+                      "Raw token payloads are not accepted; provide a credential-ref instead")
+
+       :else
+       (let [resolved (resolve-project options project-id)]
+         (if (:error resolved)
+           resolved
+           (let [bad-ref (some (fn [[_k v]]
+                                 (when (and (map? v) (:credential-ref v))
+                                   (when-not (credential-ref? (:credential-ref v))
+                                     (:credential-ref v))))
+                               updates)]
+             (if bad-ref
+               (error-response 400 "bad_request" (str "Invalid credential-ref: " bad-ref))
+               (let [current (or (read-project-manifest options (or project-id "default"))
+                                (-> (synthesize-default-project options)
+                                    (dissoc :source)))
+                     merged-conn (merge (:connections current {}) updates)
+                     manifest (assoc current :connections merged-conn)
+                     target (project-manifest-path options (or project-id "default"))]
+                 (fs/create-dirs (fs/parent target))
+                 (store/write-json! target manifest)
+                 (get-project-connections options project-id))))))))))
+
+(defn discovery-roots
+  "Discover workflow/package roots with precedence `configured < global <
+  project`. Optional `project-id` threads the resolved project's
+  `workspace-root`/`discovery` so project-scoped discovery is honored; the
+  1-arity form keeps existing behavior by resolving the default project."
+  ([options kind] (discovery-roots options kind nil))
+  ([options kind project-id]
+   (let [project (resolve-project options project-id)
+         resolved (if (:error project)
+                    ;; Unresolvable project id: fall back to defaults so a
+                    ;; missing manifest never breaks discovery (defensive).
+                    (opts options)
+                    project)
+         workspace-root (or (:workspace_root resolved) (:workspace-root (opts options)))
+         workflow-roots (or (get-in resolved [:discovery :workflow-roots])
+                            (:workflow-roots (opts options)))
+         home (or (get-in resolved [:discovery :tesseraft-home])
+                  (:tesseraft-home (opts options)))
+         root-name (name kind)]
+     (vec
+       (concat
+         (map-indexed
+           (fn [idx root]
+             {:root (abs-path workspace-root root)
+              :source :configured
+              :precedence idx})
+           workflow-roots)
+         [{:root (fs/path (tesseraft-home options) root-name)
+           :source :global
+           :precedence 100}
+          {:root (abs-path workspace-root (fs/path ".tesseraft" root-name))
+           :source :project
+           :precedence 200}])))))
 
 (defn package-files [options kind file-name]
   (->> (discovery-roots options kind)
@@ -422,6 +873,7 @@
         run (:run ctx)
         workflow (:workflow ctx)
         summary {:run_id (or (:id run) (str (fs/file-name (run-dir-from-state-file state-file))))
+                 :project_id (or (:project-id run) "default")
                  :workflow_name (:name workflow)
                  :workflow_version (:version workflow)
                  :state (:state run)
@@ -1026,15 +1478,13 @@
       (store/write-json! target {:name name :email email})
       (get-git-user options))))
 
-;; ---- settings config (source of truth: .tesseraft/settings.json) ----
-;; Mirrors git-user precedence (project then global). Tokens are returned
-;; masked so the browser DOM never holds the full secret; the file itself is
-;; plaintext (local-only, no auth model) under the already-gitignored
-;; .tesseraft/ directory.
-
-(def ^:private settings-fields
-  [:pi_default_provider :pi_default_model :github_token
-   :jira_token :default_repo_root])
+;; ---- settings read/mutate surface ----
+;; `settings-fields`, `settings-unchanged`, `settings-paths`,
+;; `read-settings-file`, `coerce-settings`, and `mask-token` are hoisted above
+;; (near the project aggregate) so `synthesize-default-project` can resolve them
+;; at sci analysis time. The remaining settings surface — token-field set,
+;; length limits, per-field validation, full mask, and get/set endpoints — lives
+;; here.
 
 (def ^:private settings-token-fields
   #{:github_token :jira_token})
@@ -1042,28 +1492,6 @@
 (def ^:private settings-length-limits
   {:pi_default_provider 100 :pi_default_model 200
    :github_token 500 :jira_token 500 :default_repo_root 1000})
-
-;; Sentinel for "leave this token field as-is" (used by the web API to round-trip
-;; masked tokens safely). See docs in `set-settings`.
-(def settings-unchanged "__unchanged__")
-
-(defn settings-paths [options]
-  (let [{:keys [workspace-root]} (opts options)
-        home (tesseraft-home options)]
-    {:project (fs/path workspace-root ".tesseraft" "settings.json")
-     :global (fs/path home "settings.json")}))
-
-(defn read-settings-file [p]
-  (when (fs/exists? p)
-    (try (store/read-json p) (catch Throwable _ nil))))
-
-(defn coerce-settings
-  "Keep only the known settings fields from a parsed config map. Unknown
-  fields are dropped (ignored on read)."
-  [raw]
-  (if (map? raw)
-    (into {} (for [k settings-fields :when (contains? raw k)] [k (get raw k)]))
-    {}))
 
 (defn validate-settings-field [k v]
   (cond
@@ -1076,11 +1504,6 @@
       (if (and limit (> (count v) limit))
         (str (name k) " must be at most " limit " characters")
         nil))))
-
-(defn mask-token [v]
-  (if (or (nil? v) (not (string? v)) (str/blank? v))
-    {:present false}
-    {:present true :preview (subs (str v) (max 0 (- (count (str v)) 4)))}))
 
 (defn mask-settings [settings]
   (let [base {:pi_default_provider (or (:pi_default_provider settings) nil)

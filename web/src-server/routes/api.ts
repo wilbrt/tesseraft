@@ -12,6 +12,16 @@ import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
 type JsonRecord = Record<string, unknown>;
 
+/** Optional `?project_id=` query param threaded to project-scoped routes. */
+const projectFromQuery = (searchParams: URLSearchParams): string | undefined => {
+  const v = searchParams.get('project_id');
+  return v && v.trim() !== '' ? v : undefined;
+};
+const projectArgs = (searchParams: URLSearchParams): string[] => {
+  const pid = projectFromQuery(searchParams);
+  return pid ? ['--project-id', pid] : [];
+};
+
 export const routeApi = (pathname: string, searchParams: URLSearchParams = new URLSearchParams()): ApiRoute => {
   const parts = pathname.split('/').filter(Boolean);
   if (parts[0] !== 'api') return null;
@@ -68,6 +78,16 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
   if (parts.length === 4 && parts[1] === 'runs' && parts[3] === 'comments') {
     const runId = safeDecode(parts[2]);
     return runId === null ? { badRequest: 'Malformed run id' } : ['comments', runId];
+  }
+  // ---- Project abstraction routes (design §4.6) ----
+  if (parts.length === 2 && parts[1] === 'projects') return ['projects'];
+  if (parts.length === 3 && parts[1] === 'projects') {
+    const id = safeDecode(parts[2]);
+    return id === null ? { badRequest: 'Malformed project id' } : ['project', id];
+  }
+  if (parts.length === 4 && parts[1] === 'projects' && parts[3] === 'connections') {
+    const id = safeDecode(parts[2]);
+    return id === null ? { badRequest: 'Malformed project id' } : ['project-connections', id];
   }
   return { notFound: true };
 };
@@ -202,6 +222,110 @@ const validateSettingsField = (field: string, value: unknown): string | null => 
 
 const handleGetSettings = async (res: Response): Promise<void> => {
   const result = await runControlPlane(['settings', 'get']);
+  return jsonResponse(res, result.status, result.body);
+};
+
+// ---- Project abstraction handlers (design §4.6) ----
+// These shell to `tesseraft control-plane project*` subcommands. Secrets never
+// leave the process: the control plane returns masked/absent token state only.
+const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const CREDENTIAL_REF_RE = /^(env|github-actions):\S+$/;
+
+// Collect workflow roots from a request body, honoring both the flat
+// `workflow_roots` field and the nested design-doc shape
+// `discovery.workflow-roots` (hyphenated) or `discovery.workflow_roots`
+// (underscored). The CLI subcommand accepts `--workflow-root <path>` repeated.
+const collectWorkflowRoots = (body: JsonRecord): string[] => {
+  const roots: string[] = [];
+  if (Array.isArray(body.workflow_roots)) for (const r of body.workflow_roots) if (typeof r === 'string') roots.push(r);
+  const discovery = body.discovery;
+  if (discovery && typeof discovery === 'object' && !Array.isArray(discovery)) {
+    const d = discovery as Record<string, unknown>;
+    for (const key of ['workflow-roots', 'workflow_roots']) {
+      const v = d[key];
+      if (Array.isArray(v)) for (const r of v) if (typeof r === 'string') roots.push(r);
+    }
+  }
+  return roots;
+};
+
+const handleListProjects = async (res: Response): Promise<void> => {
+  const result = await runControlPlane(['projects']);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleGetProject = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const result = await runControlPlane(['project', projectId]);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
+  const body = (req.body || {}) as JsonRecord;
+  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : '';
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_id must match /^[a-z0-9][a-z0-9-]{0,62}$/'));
+  const args = ['project', 'create', projectId];
+  if (typeof body.name === 'string' && body.name.trim() !== '') args.push('--name', body.name.trim());
+  if (typeof body.workspace_root === 'string' && body.workspace_root.trim() !== '') args.push('--workspace-root', body.workspace_root.trim());
+  if (typeof body.runs_root === 'string' && body.runs_root.trim() !== '') args.push('--runs-root', body.runs_root.trim());
+  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
+  const conns = body.connections;
+  if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
+    const c = conns as Record<string, JsonRecord>;
+    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') args.push('--jira-credential-ref', c.jira.credential_ref); }
+    if (c.github && typeof c.github.credential_ref === 'string') args.push('--github-credential-ref', c.github.credential_ref);
+  }
+  const result = await runControlPlane(args);
+  return jsonResponse(res, result.status === 200 ? 201 : result.status, result.body);
+};
+
+const handleUpdateProject = async (req: Request, res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const body = (req.body || {}) as JsonRecord;
+  const args = ['project', 'update', projectId];
+  if (typeof body.name === 'string') args.push('--name', body.name);
+  if (typeof body.workspace_root === 'string') args.push('--workspace-root', body.workspace_root);
+  if (typeof body.runs_root === 'string') args.push('--runs-root', body.runs_root);
+  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
+  const result = await runControlPlane(args);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleMigrateProject = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const result = await runControlPlane(['project', 'migrate', projectId]);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const result = await runControlPlane(['project', 'connections', projectId]);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleUpdateProjectConnections = async (req: Request, res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const body = (req.body || {}) as JsonRecord;
+  // NEVER accept raw token payloads; only refs + base-url.
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    for (const v of Object.values(body as Record<string, JsonRecord>)) {
+      if (v && typeof v === 'object' && Array.isArray(v)) continue;
+      if (v && typeof v === 'object') {
+        const vs = v as Record<string, unknown>;
+        if (['token', 'github_token', 'jira_token', 'secret', 'password'].some((k) => k in vs)) {
+          return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw token payloads are not accepted; provide a credential_ref instead'));
+        }
+      }
+    }
+  }
+  const args = ['project', 'connections', projectId];
+  const conns = body;
+  if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
+    const c = conns as Record<string, JsonRecord>;
+    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', c.jira.credential_ref); } }
+    if (c.github && typeof c.github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', c.github.credential_ref); }
+  }
+  const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -763,6 +887,37 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
   router.get('/settings', (_req, res, next) => { void handleGetSettings(res).catch(next); });
   router.put('/settings', (req, res, next) => { void handleSetSettings(req, res).catch(next); });
+
+  // ---- Project abstraction routes (design §4.6) ----
+  // Secrets never leave the process: handlers return masked/absent token state.
+  // Raw token payloads are rejected on write; only credential refs are accepted.
+  router.get('/projects', (_req, res, next) => { void handleListProjects(res).catch(next); });
+  router.post('/projects', (req, res, next) => { void handleCreateProject(req, res).catch(next); });
+  router.get('/projects/:projectId', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleGetProject(res, id).catch(next);
+  });
+  router.put('/projects/:projectId', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleUpdateProject(req, res, id).catch(next);
+  });
+  router.post('/projects/:projectId/migrate', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleMigrateProject(res, id).catch(next);
+  });
+  router.get('/projects/:projectId/connections', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleGetProjectConnections(res, id).catch(next);
+  });
+  router.put('/projects/:projectId/connections', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleUpdateProjectConnections(req, res, id).catch(next);
+  });
 
   // Workflow Studio authoring routes (see design doc). These write workflow
   // definition files under .tesseraft/workflows/ and run the linter as the

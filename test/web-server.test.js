@@ -101,6 +101,9 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
   assert.deepEqual(routeApi('/api/git-user'), ['git-user']);
   assert.deepEqual(routeApi('/api/settings'), ['settings']);
+  assert.deepEqual(routeApi('/api/projects'), ['projects']);
+  assert.deepEqual(routeApi('/api/projects/default'), ['project', 'default']);
+  assert.deepEqual(routeApi('/api/projects/acme/connections'), ['project-connections', 'acme']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
@@ -988,5 +991,174 @@ test('control-plane comment add appends a second comment to the same artifact (R
     assert.match(persisted[1].body, /Second comment/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: routeApi + read-only HTTP + masked connections (design §4.6)', async () => {
+  // routeApi project entries (covered above for the pure router; here also via
+  // the live server for GET surfaces that never write to disk).
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    // GET /api/projects returns a non-empty list (implicit default synthesized).
+    const listRes = await fetch(`${base}/api/projects`);
+    assert.equal(listRes.status, 200);
+    const list = await listRes.json();
+    assert.ok(Array.isArray(list.projects) && list.projects.length >= 1);
+    assert.ok(list.projects.some((p) => p.project_id === 'default'), 'default project present');
+
+    // GET /api/projects/default returns the aggregate without raw tokens.
+    const detailRes = await fetch(`${base}/api/projects/default`);
+    assert.equal(detailRes.status, 200);
+    const detail = await detailRes.json();
+    assert.equal(detail.project_id, 'default');
+    // settings tokens must be masked objects, never raw strings.
+    if (detail.settings && detail.settings.github_token) {
+      assert.equal(typeof detail.settings.github_token, 'object');
+      assert.ok(!('preview' in detail.settings.github_token) || typeof detail.settings.github_token.preview !== 'string' || detail.settings.github_token.preview.length <= 4);
+      assert.ok(!('token' in detail.settings.github_token));
+    }
+
+    // GET /api/projects/<malformed> is a 400 (bad_request), not a 500.
+    const badRes = await fetch(`${base}/api/projects/Bad-Id`);
+    assert.ok(badRes.status === 400 || badRes.status === 404);
+
+    // PUT connections with a raw token payload is rejected (400) without
+    // shelling out, so no secret ever reaches the control plane.
+    const rawTokenRes = await fetch(`${base}/api/projects/default/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jira: { token: 'ghp_supersecret' } })
+    });
+    assert.equal(rawTokenRes.status, 400);
+    const rawTokenBody = await rawTokenRes.json();
+    assert.match(rawTokenBody.error.message, /credential/i);
+  } finally {
+    await close(server);
+  }
+});
+
+test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
+  try {
+    const cp = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8' }));
+
+    // List synthesizes the implicit default when no manifests exist.
+    const listed = cp(['projects']);
+    assert.ok(listed.projects.some((p) => p.project_id === 'default'));
+
+    // Create a project with connection credential-refs.
+    const created = cp(['project', 'create', 'acme', '--name', 'Acme', '--jira-credential-ref', 'env:JIRA_TOKEN', '--github-credential-ref', 'env:GITHUB_TOKEN']);
+    assert.equal(created.project_id, 'acme');
+    assert.equal(created.connections.jira['credential-ref'], 'env:JIRA_TOKEN');
+
+    // Duplicate create exits nonzero (control plane emits an :error body).
+    let dupThrew = false;
+    try { cp(['project', 'create', 'acme']); } catch { dupThrew = true; }
+    assert.equal(dupThrew, true);
+
+    // Get returns the persisted manifest (no raw tokens present).
+    const got = cp(['project', 'acme']);
+    assert.equal(got.name, 'Acme');
+    assert.equal(got.connections.github['credential-ref'], 'env:GITHUB_TOKEN');
+
+    // Connections endpoint returns masked state and never the raw token.
+    const conns = cp(['project', 'connections', 'acme']);
+    assert.ok(conns.connections.jira || conns.connections.github);
+
+    // Migrate the default project from legacy settings works only when no
+    // default manifest exists yet.
+    const migrated = cp(['project', 'migrate']);
+    assert.equal(migrated.project_id, 'default');
+    assert.match(String(migrated['migrated-from'] || ''), /legacy-settings/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: path-confinement rejects runs_root and workspace_root escapes (review issues 1 & 2)', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-confinement-'));
+  try {
+    const cp = (args) => {
+      try {
+        return { out: JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8', stdio: 'pipe' })), threw: false };
+      } catch (e) {
+        return { out: JSON.parse(String(e.stdout || '{}')), threw: true, stderr: String(e.stderr || '') };
+      }
+    };
+
+    // runs_root traversal escapes are rejected and not persisted.
+    const rr = cp(['project', 'create', 'escape-runs', '--runs-root', '../../../tmp/escape']);
+    assert.equal(rr.threw, true, 'runs_root escape must exit nonzero');
+    assert.equal(rr.out.status, 400, rr.out);
+    assert.match(rr.out.error.message, /runs_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-runs.json')), 'escaped runs_root manifest must not be written');
+
+    // workspace_root relative escape is rejected and not persisted.
+    const wr = cp(['project', 'create', 'escape-ws-rel', '--workspace-root', '../etc/passwd']);
+    assert.equal(wr.threw, true, 'relative workspace_root escape must exit nonzero');
+    assert.equal(wr.out.status, 400, wr.out);
+    assert.match(wr.out.error.message, /workspace_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-rel.json')), 'escaped workspace_root manifest must not be written');
+
+    // workspace_root absolute escape is rejected and not persisted.
+    const wa = cp(['project', 'create', 'escape-ws-abs', '--workspace-root', '/tmp/escape']);
+    assert.equal(wa.threw, true, 'absolute workspace_root escape must exit nonzero');
+    assert.equal(wa.out.status, 400, wa.out);
+    assert.match(wa.out.error.message, /workspace_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-abs.json')), 'absolute escaped workspace_root manifest must not be written');
+
+    // Sanity: a legitimately scoped project still creates.
+    const ok = cp(['project', 'create', 'ok-proj', '--runs-root', '.agent-runs']);
+    assert.equal(ok.threw, false, ok.out && ok.out.error);
+    assert.equal(ok.out.project_id, 'ok-proj');
+    assert.ok(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'ok-proj.json')));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP create rejects path escapes with 400 and honors nested discovery.workflow-roots (review issues 1, 2, 3)', async () => {
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    // POST /api/projects with an escaping runs_root returns 400, never 201.
+    const escapeRes = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: 'http-escape', runs_root: '../../../tmp/escape' })
+    });
+    assert.equal(escapeRes.status, 400, 'escaped runs_root must be 400, not 201');
+    const escapeBody = await escapeRes.json();
+    assert.match(escapeBody.error.message, /runs_root|workspace_root|path/i, escapeBody);
+    // A follow-up GET must 404 (no manifest created).
+    const gone = await fetch(`${base}/api/projects/http-escape`);
+    assert.equal(gone.status, 404, 'escaped project must not have been persisted');
+
+    // POST with the design-doc nested discovery shape is honored.
+    const nested = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: 'nested-discovery', name: 'Nested', discovery: { 'workflow-roots': ['examples/smoke'] } })
+    });
+    assert.equal(nested.status, 201, 'nested discovery create should succeed');
+    const nestedBody = await nested.json();
+    assert.deepEqual(nestedBody.discovery['workflow-roots'], ['examples/smoke'], 'nested discovery.workflow-roots must be honored');
+
+    // A follow-up GET confirms the nested roots were persisted.
+    const refetch = await fetch(`${base}/api/projects/nested-discovery`);
+    assert.equal(refetch.status, 200);
+    const refetched = await refetch.json();
+    assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
+  } finally {
+    await close(server);
+    // Clean up created manifests so listProjects synthesizes the implicit
+    // default for later tests (default is only implicit when no manifests exist).
+    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+    for (const id of ['nested-discovery', 'http-escape']) {
+      fs.rmSync(path.join(projectsDir, `${id}.json`), { force: true });
+    }
   }
 });

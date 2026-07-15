@@ -24,6 +24,7 @@
           "decide" (recur rest-xs (assoc acc :command "decide"))
           "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
+          "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
           "--executor" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))
           "--mode" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))

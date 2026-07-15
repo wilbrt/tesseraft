@@ -30,6 +30,10 @@
    {:status :implemented
     :summary "Workflow discovery (list + detail) exposes scope (configured/global/project), precedence, and shadowing metadata (duplicates lowered by precedence; conflicts at equal precedence) so the UI can show when a project workflow overrides a global/example one. Discovery precedence semantics are unchanged; metadata is purely inspectable."
     :evidence ["src/tesseraft/control_plane/core.clj list-workflows/get-workflow" "test/discovery-scope.test.js" "web/src/types/runConsole.ts" "scripts/test.sh scope-shadow block"]}
+   :project-abstraction
+   {:status :implemented
+    :summary "First-class Project abstraction: a named aggregate owning workspace root, run root, workflow discovery context, non-secret settings, and project-specific Jira/GitHub connection config. Raw credentials kept out of repos behind credential-refs resolved from ~/.tesseraft/credentials.json. Control-plane CRUD + resolve-project + default-project fallback (legacy settings/git-user read fallback), run-state project_id stamping with project.resolved event, and /api/projects* HTTP routes (secrets never returned; raw token writes rejected)."
+    :evidence ["src/tesseraft/control_plane/core.clj resolve-project/list-projects/get-project/create-project/update-project/migrate-project/get-project-connections/update-project-connections" "src/tesseraft/control_plane/cli.clj project-command" "src/tesseraft/runtime/core.clj init-context/start! project-id stamping" "schemas/run-state.schema.json project_id" "schemas/project.schema.json" "schemas/credential-ref.schema.json" "web/src-server/routes/api.ts /api/projects" "web/src/types/runConsole.ts Project/ProjectConnection" "docs/PROJECTS.md" "docs/CONTROL_PLANE_API.md project section"]}
    :mock-executor
    {:status :implemented
     :summary "Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state."

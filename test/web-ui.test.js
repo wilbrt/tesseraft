@@ -363,6 +363,36 @@ test('Workflow Studio UI source exposes canvas, toolbar, context menus, and save
   assert.match(types, /:router/);
 });
 
+test('Settings UI source exposes Projects list and Connections editor with masked tokens (surface 10)', () => {
+  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
+  // The Settings area renders a first-class Projects surface consuming the
+  // /api/projects* endpoints, with masked credential state and credential-ref
+  // editing that never sends raw tokens.
+  assert.match(panel, /Projects/);
+  assert.match(panel, /Connections/);
+  assert.match(panel, /\/api\/projects/);
+  assert.match(panel, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}/);
+  assert.match(panel, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}\/connections/);
+  assert.match(panel, /loadProjects/);
+  assert.match(panel, /ProjectsResponse/);
+  assert.match(panel, /ProjectConnectionsResponse/);
+  // Masked credential state is rendered (never raw tokens).
+  assert.match(panel, /credential_state/);
+  assert.match(panel, /credential-ref/);
+  assert.match(panel, /status-pill connected/);
+  assert.match(panel, /status-pill disconnected/);
+  // The connections editor only ever sends credential_ref / base_url, never raw
+  // token payloads (the server rejects them — surface-4 gate).
+  assert.match(panel, /NEVER send raw token payloads/);
+  assert.match(panel, /credential_ref/);
+  assert.match(panel, /saveConnections/);
+  assert.match(panel, /env:GITHUB_TOKEN/);
+  assert.match(panel, /env:JIRA_TOKEN/);
+  assert.match(panel, /aria-label="Projects and connections"/);
+  assert.match(panel, /aria-label="Projects list"/);
+  assert.match(panel, /aria-label="Project metadata"/);
+});
+
 test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
   const onStart = async () => ({ operation: 'start' });
   const markup = renderToStaticMarkup(React.createElement(StartWorkflowWizard, {
