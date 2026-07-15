@@ -36,6 +36,12 @@
     (println "  tesseraft control-plane approval <run-id> <approval-id>")
     (println "  tesseraft control-plane comments <run-id> --path <artifact>")
     (println "  tesseraft control-plane comment add <run-id> --path <artifact> --body <text> [--start-line N --end-line M]")
+    (println "  tesseraft control-plane projects")
+    (println "  tesseraft control-plane project <project-id>")
+    (println "  tesseraft control-plane project create <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
+    (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
+    (println "  tesseraft control-plane project migrate [<project-id>]")
+    (println "  tesseraft control-plane project connections <project-id>")
     (println)
     (println "Options:")
     (println "  --workspace-root <dir>   Workspace root (default: .)")
@@ -132,6 +138,62 @@
           "--end-line" (recur more (assoc acc :end-line (parse-long b)))
           (recur (rest xs) acc))))))
 
+(defn parse-project-create-args [args]
+  (loop [xs args acc {:spec {}}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--name" (recur more (assoc-in acc [:spec :name] b))
+          "--workspace-root" (recur more (assoc-in acc [:spec :workspace_root] b))
+          "--runs-root" (recur more (assoc-in acc [:spec :runs_root] b))
+          "--workflow-root" (let [roots (get-in acc [:spec :discovery :workflow-roots] [])]             (recur more (assoc-in acc [:spec :discovery :workflow-roots] (conj roots b))))
+          "--tesseraft-home" (recur more (assoc-in acc [:spec :discovery :tesseraft-home] b))
+          "--jira-base-url" (recur more (assoc-in acc [:spec :connections :jira :base-url] b))
+          "--jira-credential-ref" (recur more (assoc-in acc [:spec :connections :jira :credential-ref] b))
+          "--github-credential-ref" (recur more (assoc-in acc [:spec :connections :github :credential-ref] b))
+          (recur (rest xs) acc))))))
+
+(defn parse-project-connections-args [args]
+  (loop [xs args acc {}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--jira-base-url" (recur more (assoc-in acc [:jira :base-url] b))
+          "--jira-credential-ref" (recur more (assoc-in acc [:jira :credential-ref] b))
+          "--github-credential-ref" (recur more (assoc-in acc [:github :credential-ref] b))
+          (recur (rest xs) acc))))))
+
+(defn project-command [options args]
+  (let [[sub & rest] (if (empty? args) ["list"] args)]
+    (case sub
+      "create" (let [[project-id & more] rest]
+                  (if (str/blank? project-id)
+                    (control-plane/error-response 400 "bad_request" "project create requires <project-id>")
+                    (control-plane/create-project options project-id (:spec (parse-project-create-args more)))))
+      "update" (let [[project-id & more] rest]
+                 (if (str/blank? project-id)
+                   (control-plane/error-response 400 "bad_request" "project update requires <project-id>")
+                   (control-plane/update-project options project-id (:spec (parse-project-create-args more)))))
+      "migrate" (let [pid (first rest)]
+                  (control-plane/migrate-project options (or pid "default")))
+      "connections" (let [[project-id & more] rest]
+                      (if (str/blank? project-id)
+                        (control-plane/error-response 400 "bad_request" "project connections requires <project-id>")
+                        (if (empty? (remove nil? more))
+                          (control-plane/get-project-connections options project-id)
+                          (control-plane/update-project-connections options project-id
+                            (parse-project-connections-args more)))))
+      ;; The aggregate list/detail also accepts ``projects`` form below; here
+      ;; ``project`` without a sub or with an id is a detail.
+      (if (some #(#{"-h" "--help" "help" "list" "ls"} %) [sub])
+        (control-plane/list-projects options)
+        (control-plane/get-project options sub)))))
+
+(defn projects-command [options _args]
+  (control-plane/list-projects options))
+
 (defn exit-status [result]
   (if (:error result) 1 0))
 
@@ -172,6 +234,8 @@
                                     (control-plane/add-run-comment options run-id body)))))
                    "git-user" (git-user-command options (:args opts))
                    "settings" (settings-command options (:args opts))
+                   "projects" (projects-command options (:args opts))
+                   "project" (project-command options (:args opts))
                    (usage!))]
 
       (print-json! result)

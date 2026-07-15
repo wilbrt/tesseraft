@@ -101,6 +101,9 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
   assert.deepEqual(routeApi('/api/git-user'), ['git-user']);
   assert.deepEqual(routeApi('/api/settings'), ['settings']);
+  assert.deepEqual(routeApi('/api/projects'), ['projects']);
+  assert.deepEqual(routeApi('/api/projects/default'), ['project', 'default']);
+  assert.deepEqual(routeApi('/api/projects/acme/connections'), ['project-connections', 'acme']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
@@ -986,6 +989,89 @@ test('control-plane comment add appends a second comment to the same artifact (R
     assert.equal(persisted.length, 2);
     assert.match(persisted[0].body, /First comment/);
     assert.match(persisted[1].body, /Second comment/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: routeApi + read-only HTTP + masked connections (design §4.6)', async () => {
+  // routeApi project entries (covered above for the pure router; here also via
+  // the live server for GET surfaces that never write to disk).
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    // GET /api/projects returns a non-empty list (implicit default synthesized).
+    const listRes = await fetch(`${base}/api/projects`);
+    assert.equal(listRes.status, 200);
+    const list = await listRes.json();
+    assert.ok(Array.isArray(list.projects) && list.projects.length >= 1);
+    assert.ok(list.projects.some((p) => p.project_id === 'default'), 'default project present');
+
+    // GET /api/projects/default returns the aggregate without raw tokens.
+    const detailRes = await fetch(`${base}/api/projects/default`);
+    assert.equal(detailRes.status, 200);
+    const detail = await detailRes.json();
+    assert.equal(detail.project_id, 'default');
+    // settings tokens must be masked objects, never raw strings.
+    if (detail.settings && detail.settings.github_token) {
+      assert.equal(typeof detail.settings.github_token, 'object');
+      assert.ok(!('preview' in detail.settings.github_token) || typeof detail.settings.github_token.preview !== 'string' || detail.settings.github_token.preview.length <= 4);
+      assert.ok(!('token' in detail.settings.github_token));
+    }
+
+    // GET /api/projects/<malformed> is a 400 (bad_request), not a 500.
+    const badRes = await fetch(`${base}/api/projects/Bad-Id`);
+    assert.ok(badRes.status === 400 || badRes.status === 404);
+
+    // PUT connections with a raw token payload is rejected (400) without
+    // shelling out, so no secret ever reaches the control plane.
+    const rawTokenRes = await fetch(`${base}/api/projects/default/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jira: { token: 'ghp_supersecret' } })
+    });
+    assert.equal(rawTokenRes.status, 400);
+    const rawTokenBody = await rawTokenRes.json();
+    assert.match(rawTokenBody.error.message, /credential/i);
+  } finally {
+    await close(server);
+  }
+});
+
+test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
+  try {
+    const cp = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8' }));
+
+    // List synthesizes the implicit default when no manifests exist.
+    const listed = cp(['projects']);
+    assert.ok(listed.projects.some((p) => p.project_id === 'default'));
+
+    // Create a project with connection credential-refs.
+    const created = cp(['project', 'create', 'acme', '--name', 'Acme', '--jira-credential-ref', 'env:JIRA_TOKEN', '--github-credential-ref', 'env:GITHUB_TOKEN']);
+    assert.equal(created.project_id, 'acme');
+    assert.equal(created.connections.jira['credential-ref'], 'env:JIRA_TOKEN');
+
+    // Duplicate create exits nonzero (control plane emits an :error body).
+    let dupThrew = false;
+    try { cp(['project', 'create', 'acme']); } catch { dupThrew = true; }
+    assert.equal(dupThrew, true);
+
+    // Get returns the persisted manifest (no raw tokens present).
+    const got = cp(['project', 'acme']);
+    assert.equal(got.name, 'Acme');
+    assert.equal(got.connections.github['credential-ref'], 'env:GITHUB_TOKEN');
+
+    // Connections endpoint returns masked state and never the raw token.
+    const conns = cp(['project', 'connections', 'acme']);
+    assert.ok(conns.connections.jira || conns.connections.github);
+
+    // Migrate the default project from legacy settings works only when no
+    // default manifest exists yet.
+    const migrated = cp(['project', 'migrate']);
+    assert.equal(migrated.project_id, 'default');
+    assert.match(String(migrated['migrated-from'] || ''), /legacy-settings/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

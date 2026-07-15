@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft Project Manifest",
+  "description": "Committed-safe project manifest. Contains everything NON-SECRET: workspace root, run root, workflow discovery context, non-secret settings, and project-specific Jira/GitHub connection configuration. Raw credentials live out-of-repo (e.g. ~/.tesseraft/credentials.json) and are referenced here only via credential-ref strings of the form `<store>:<path>`. A manifest MUST NOT contain raw token values.",
+  "type": "object",
+  "required": ["project_id", "name", "workspace_root", "runs_root"],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "Stable slug addressing the project."
+    },
+    "name": { "type": "string", "description": "Human-readable project name." },
+    "workspace_root": { "type": "string", "description": "Absolute or workspace-relative root; normalized and confined to the current workspace." },
+    "runs_root": { "type": "string", "description": "Run root relative to the workspace root (default .agent-runs)." },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "workflow-roots": { "type": "array", "items": { "type": "string" } },
+        "tesseraft-home": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "pi-default-provider": { "type": ["string", "null"] },
+        "pi-default-model": { "type": ["string", "null"] },
+        "default-repo-root": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "connections": {
+      "type": "object",
+      "properties": {
+        "jira": {
+          "type": "object",
+          "properties": {
+            "base-url": { "type": "string" },
+            "credential-ref": { "$ref": "credential-ref.schema.json" }
+          },
+          "additionalProperties": false
+        },
+        "github": {
+          "type": "object",
+          "properties": {
+            "credential-ref": { "$ref": "credential-ref.schema.json" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "migrated-from": { "type": "string", "description": "Provenance stamp, e.g. legacy-settings." }
+  },
+  "additionalProperties": false
+}

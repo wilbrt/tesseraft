@@ -48,6 +48,12 @@ The current Web UI server implements:
   prompt-like workflow package assets.
 - `GET /api/git-user`, `PUT /api/git-user`, `GET /api/settings`,
   `PUT /api/settings`, and `GET /api/browse`.
+- Project abstraction routes (design §4.6): `GET /api/projects`,
+  `GET /api/projects/{id}`, `POST /api/projects`,
+  `PUT /api/projects/{id}`, `POST /api/projects/{id}/migrate`,
+  `GET /api/projects/{id}/connections`, and
+  `PUT /api/projects/{id}/connections` through `routeApi` → control-plane CLI.
+  Secrets never leave the process; raw token payloads are rejected on write.
 - Pi-session routes: list/create/get/send prompt/events/SSE stream.
 
 The implemented route set is covered by web-server and Studio tests in
@@ -107,6 +113,32 @@ composition and safe rehearsal fast while preserving source-of-truth rules:
 | Node attempts | Runtime attempt records when present, plus event/state-derived summaries | Runtime files |
 | Artifacts | Declared outputs and files under the run directory | Runtime artifact files and workflow output contracts |
 | Git user/settings | Project/global `.tesseraft` config files | Local configuration files |
+
+## Project abstraction contract
+
+A first-class [Project](PROJECTS.md) is a named aggregate owning a workspace
+root, run root, workflow discovery context, non-secret settings, and
+project-specific Jira/GitHub connection configuration. Raw credentials are kept
+out of repositories behind `credential-ref` strings of the form `<store>:<path>`
+(only `env:` is wired for local resolution; `github-actions:` is
+validated-but-unresolved locally).
+
+| Method | Path | Maps to | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/projects` | `projects` | List project summaries (synthesizes implicit default when no manifests). |
+| GET | `/api/projects/{id}` | `project {id}` | Full aggregate; secrets masked/absent. 404 for unknown non-default id. |
+| POST | `/api/projects` | `project create {id}` | 201 on create, 409 on duplicate slug. |
+| PUT | `/api/projects/{id}` | `project update {id}` | Partial update of non-secret fields. |
+| POST | `/api/projects/{id}/migrate` | `project migrate {id}` | Legacy→default migration; 409 if default already exists. |
+| GET | `/api/projects/{id}/connections` | `project connections {id}` | Connection metadata + masked state; no raw tokens. |
+| PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update `base_url` / `credential-ref`; **never** accepts raw token payloads. |
+
+Existing routes accept an optional `?project_id=` query param; the default
+project is used when absent (non-breaking). Run state persists `project_id`
+(absent means `"default"`); a `project.resolved` event is emitted at run start.
+Project manifests live under `.tesseraft/projects/<slug>.json` and are safe to
+commit. Resolved secrets live out-of-repo at
+`~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`).
 
 ## Common conventions
 
