@@ -104,7 +104,7 @@ const workflowPath = (body: unknown): string | null => {
   return workflow && typeof workflow.path === 'string' ? workflow.path : null;
 };
 
-const refreshedRun = async (runId: string, projectId?: string): Promise<ControlPlaneResult> => runControlPlane(['run', runId, ...(projectId ? ['--project-id', projectId] : [])]);
+const refreshedRun = async (runId: string, projectId?: string): Promise<ControlPlaneResult> => runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'run', runId]);
 
 const inspectRuntime = async (runDir: string): Promise<unknown> => {
   const inspected = await runRuntime(['inspect', '--run-dir', runDir, '--format', 'json']);
@@ -114,10 +114,10 @@ const inspectRuntime = async (runDir: string): Promise<unknown> => {
 const runSnapshot = async (runId: string, projectId?: string): Promise<unknown> => {
   const pid = projectId ? ['--project-id', projectId] : [];
   const [detail, events, artifacts, runs] = await Promise.all([
-    runControlPlane(['run', runId, ...pid]),
-    runControlPlane(['events', runId, ...pid]),
-    runControlPlane(['artifacts', runId, ...pid]),
-    runControlPlane(['runs', ...pid])
+    runControlPlane([...pid, 'run', runId]),
+    runControlPlane([...pid, 'events', runId]),
+    runControlPlane([...pid, 'artifacts', runId]),
+    runControlPlane([...pid, 'runs'])
   ]);
   if (detail.status !== 200) return detail.body;
   return {
@@ -180,7 +180,7 @@ const handleBrowse = async (req: Request, res: Response): Promise<void> => {
 };
 
 const handleGetGitUser = async (res: Response, projectId?: string): Promise<void> => {
-  const result = await runControlPlane(['git-user', ...(projectId ? ['--project-id', projectId] : [])]);
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'git-user']);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -192,7 +192,7 @@ const handleSetGitUser = async (req: Request, res: Response, projectId?: string)
   if (name.length > 200) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must be at most 200 characters'));
   if (/\n/.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must not contain newlines'));
   if (!isNonEmptyString(email) || !isBasicEmail(email)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'email is required and must be a valid address'));
-  const result = await runControlPlane(['git-user', 'set', '--name', name, '--email', email, ...(projectId ? ['--project-id', projectId] : [])]);
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'git-user', 'set', '--name', name, '--email', email]);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -222,7 +222,7 @@ const validateSettingsField = (field: string, value: unknown): string | null => 
 };
 
 const handleGetSettings = async (res: Response, projectId?: string): Promise<void> => {
-  const result = await runControlPlane(['settings', 'get', ...(projectId ? ['--project-id', projectId] : [])]);
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'settings', 'get']);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -349,7 +349,7 @@ const handleSetSettings = async (req: Request, res: Response, projectId?: string
     if (err) return jsonResponse(res, 400, errorBody(400, 'bad_request', err));
     updates[field] = raw;
   }
-  const args = ['settings', 'set', ...(projectId ? ['--project-id', projectId] : [])];
+  const args = [...(projectId ? ['--project-id', projectId] : []), 'settings', 'set'];
   for (const [field, value] of Object.entries(updates)) {
     const flag = `--${field.replace(/_/g, '-')}`;
     if (value === null) args.push(`--clear-${field.replace(/_/g, '-')}`);
@@ -650,7 +650,7 @@ const handleStartRun = async (req: Request, res: Response, projectId?: string): 
   const existing = await refreshedRun(runId, projectId);
   if (existing.status === 200) return jsonResponse(res, 409, errorBody(409, 'conflict', 'Run id already exists', { run_id: runId }));
 
-  const workflow = await runControlPlane(['workflow', workflowName, ...pid]);
+  const workflow = await runControlPlane([...pid, 'workflow', workflowName]);
   if (workflow.status !== 200) return jsonResponse(res, workflow.status, workflow.body);
   const filePath = workflowPath(workflow.body);
   if (!filePath) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Workflow detail did not include a path'));
@@ -796,7 +796,7 @@ const handleRunStream = async (req: Request, res: Response, runId: string, proje
 };
 
 const handleDeleteRun = async (res: Response, runId: string, projectId?: string): Promise<void> => {
-  const result = await runControlPlane(['delete-run', runId, ...(projectId ? ['--project-id', projectId] : [])]);
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'delete-run', runId]);
   if (result.status !== 200) return jsonResponse(res, result.status, result.body);
   const body = result.body as { run_id?: string; deleted?: boolean; liveness?: string; path?: string } | undefined;
   return jsonResponse(res, 200, {
@@ -814,7 +814,7 @@ const handleApprovalDecision = async (req: Request, res: Response, runId: string
   const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
   if (!decision) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'decision is required'));
   const summary = typeof body.summary === 'string' ? body.summary : undefined;
-  const detail = await runControlPlane(['run', runId]);
+  const detail = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'run', runId]);
   if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
   const runDir = runDetailPath(detail.body);
   if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
@@ -840,7 +840,7 @@ const handleAddComment = async (req: Request, res: Response, runId: string, proj
   if (!path) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'path is required'));
   if (!text) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'body is required'));
   const anchor = body.anchor && typeof body.anchor === 'object' && !Array.isArray(body.anchor) ? body.anchor : undefined;
-  const args = ['comment', 'add', runId, '--path', path, '--body', text, ...(projectId ? ['--project-id', projectId] : [])];
+  const args = [...(projectId ? ['--project-id', projectId] : []), 'comment', 'add', runId, '--path', path, '--body', text];
   if (anchor && typeof anchor === 'object') {
     const a = anchor as { start_line?: unknown; end_line?: unknown };
     if (typeof a.start_line === 'number' && typeof a.end_line === 'number') {
@@ -959,59 +959,59 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
 
   router.get('/projects/:projectId/workflows', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
-    return void runControlPlane(['workflows', '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'workflows']).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/workflows/:name', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const name = safeDecode(req.params.name); if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
-    return void runControlPlane(['workflow', name, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'workflow', name]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/workflows/:name/graph', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const name = safeDecode(req.params.name); if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
-    return void runControlPlane(['graph', name, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'graph', name]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
-    return void runControlPlane(['runs', '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'runs']).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
-    return void runControlPlane(['run', runId, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'run', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/events', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
-    return void runControlPlane(['events', runId, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'events', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/artifacts', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
-    return void runControlPlane(['artifacts', runId, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'artifacts', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/artifact', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     const artifactPath = req.query.path; if (typeof artifactPath !== 'string' || artifactPath === '') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Missing artifact path'));
-    return void runControlPlane(['artifact', runId, artifactPath, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'artifact', runId, artifactPath]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/approvals', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
-    return void runControlPlane(['approvals', runId, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'approvals', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/approval/:approvalId', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     const approvalId = safeDecode(req.params.approvalId); if (approvalId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed approval id'));
-    return void runControlPlane(['approval', runId, approvalId, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'approval', runId, approvalId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/runs/:runId/comments', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     const artifactPath = typeof req.query.path === 'string' ? req.query.path : '';
-    return void runControlPlane(['comments', runId, '--path', artifactPath, '--project-id', id!]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+    return void runControlPlane(['--project-id', id!, 'comments', runId, '--path', artifactPath]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
   });
   router.get('/projects/:projectId/settings', (req, res, next) => {
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
