@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { deleteJson, postJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 import { snippet } from '../lib/runConsole';
 import { StartWorkflowWizard, type StartPayload } from './StartWorkflowWizard';
 import type { MutationResult, RunDetail, WorkflowSummary } from '../types/runConsole';
@@ -17,6 +18,7 @@ type Props = {
 };
 
 export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selectedRun, runDetail, onRefresh, wizardOpen: wizardOpenProp, onWizardOpenChange }: Props) => {
+  const { projectId } = useProject();
   const [wizardOpenInternal, setWizardOpenInternal] = useState(false);
   const wizardOpen = wizardOpenProp ?? wizardOpenInternal;
   const setWizardOpen = (open: boolean): void => { setWizardOpenInternal(open); onWizardOpenChange?.(open); };
@@ -55,7 +57,7 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
     setError(null);
     setResult(null);
     try {
-      const data = await postJson<MutationResult>('/api/runs', { workflow_name: payload.workflow_name, run_id: payload.run_id, inputs: payload.inputs, max_steps: payload.max_steps, ...(payload.git_user ? { git_user: payload.git_user } : {}) });
+      const data = await postJson<MutationResult>(projectApiUrl('/api/runs', projectId), { workflow_name: payload.workflow_name, run_id: payload.run_id, inputs: payload.inputs, max_steps: payload.max_steps, ...(payload.git_user ? { git_user: payload.git_user } : {}) });
       setResult(data);
       await onRefresh(payload.run_id);
       // Surface non-success outcomes (e.g. a guarded start) to the wizard so it
@@ -101,19 +103,19 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
           <h3>Delete selected run</h3>
           <p className="muted">Removes the run directory from <code>.agent-runs/</code>. Local and irreversible. Disabled while a run is executing.</p>
           <label className="check"><input type="checkbox" checked={confirmDelete} onChange={(event) => setConfirmDelete(event.target.checked)} /> Confirm permanent deletion of this run's directory.</label>
-          <button type="button" disabled={!selectedRun || !isDeletableLiveness(runDetail?.liveness) || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}`), undefined)}>Delete run</button>
+          <button type="button" disabled={!selectedRun || !isDeletableLiveness(runDetail?.liveness) || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}`, projectId)), undefined)}>Delete run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>
           <p className="muted">Executes exactly one node when possible; exit code 0 can still leave the run running.</p>
           <label className="check"><input type="checkbox" checked={confirmStep} onChange={(event) => setConfirmStep(event.target.checked)} /> Confirm one local node execution.</label>
-          <button type="button" disabled={!selectedRun || !confirmStep || busy} onClick={() => mutate('step', () => postJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}/step`, {}), selectedRun || undefined)}>Step one node</button>
+          <button type="button" disabled={!selectedRun || !confirmStep || busy} onClick={() => mutate('step', () => postJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}/step`, projectId), {}), selectedRun || undefined)}>Step one node</button>
         </div>
         <div className="control-card">
           <h3>Resume selected run</h3>
           <label>Max steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={confirmResume} onChange={(event) => setConfirmResume(event.target.checked)} /> Confirm bounded local execution.</label>
-          <button type="button" disabled={!selectedRun || !confirmResume || busy} onClick={() => mutate('resume', () => postJson<MutationResult>(`/api/runs/${encodeURIComponent(selectedRun || '')}/resume`, { max_steps: maxSteps }), selectedRun || undefined)}>Resume run</button>
+          <button type="button" disabled={!selectedRun || !confirmResume || busy} onClick={() => mutate('resume', () => postJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}/resume`, projectId), { max_steps: maxSteps }), selectedRun || undefined)}>Resume run</button>
         </div>
       </div>
       {error && <div className="error">{error}</div>}

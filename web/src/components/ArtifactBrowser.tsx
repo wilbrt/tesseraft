@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { getJson, postJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 import type { Artifact, ArtifactRead, Comment, CommentsResponse } from '../types/runConsole';
 import { FieldList } from './FieldList';
 
 type Props = { runId: string | null; artifacts: Artifact[]; selectedNodeId: string | null };
 
 export const ArtifactBrowser = ({ runId, artifacts, selectedNodeId }: Props) => {
+  const { projectId } = useProject();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ArtifactRead | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +21,7 @@ export const ArtifactBrowser = ({ runId, artifacts, selectedNodeId }: Props) => 
 
   const loadComments = async (rid: string, path: string): Promise<void> => {
     try {
-      const data = await getJson<CommentsResponse>(`/api/runs/${encodeURIComponent(rid)}/comments?path=${encodeURIComponent(path)}`);
+      const data = await getJson<CommentsResponse>(projectApiUrl(`/api/runs/${encodeURIComponent(rid)}/comments?path=${encodeURIComponent(path)}`, projectId));
       setComments(data.comments || []);
       setCommentsError(null);
     } catch (err) {
@@ -34,7 +36,7 @@ export const ArtifactBrowser = ({ runId, artifacts, selectedNodeId }: Props) => 
     setPreview(null);
     setError(null);
     try {
-      const data = await getJson<ArtifactRead>(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`);
+      const data = await getJson<ArtifactRead>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`, projectId));
       setPreview(data);
       void loadComments(runId, artifact.path);
     } catch (err) {
@@ -49,7 +51,7 @@ export const ArtifactBrowser = ({ runId, artifacts, selectedNodeId }: Props) => 
       const sl = startLine.trim() ? Number(startLine) : null;
       const el = endLine.trim() ? Number(endLine) : null;
       const anchor = (sl != null && el != null) ? { start_line: sl, end_line: el } : undefined;
-      await postJson(`/api/runs/${encodeURIComponent(runId)}/comments`, { path: selectedPath, body: commentBody, ...(anchor ? { anchor } : {}) });
+      await postJson(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/comments`, projectId), { path: selectedPath, body: commentBody, ...(anchor ? { anchor } : {}) });
       setCommentBody('');
       setStartLine('');
       setEndLine('');

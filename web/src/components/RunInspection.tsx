@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 import { eventName, isActiveRun, nodeForEvent, snippet, stalenessLabel } from '../lib/runConsole';
 import { livenessPillClass } from '../lib/runConsole';
 import type { Artifact, ArtifactRead, Attempt, EventRecord, RunDetail, RunSummary, WorkflowGraphState } from '../types/runConsole';
@@ -16,6 +17,7 @@ import { FieldList } from './FieldList';
  * `artifacts` is the per-node filtered list; if the selected path disappears
  * (e.g. during streaming), the preview auto-clears to avoid stale views. */
 const NodeArtifactViewer = ({ runId, artifacts }: { runId: string; artifacts: Artifact[] }) => {
+  const { projectId } = useProject();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ArtifactRead | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +40,7 @@ const NodeArtifactViewer = ({ runId, artifacts }: { runId: string; artifacts: Ar
     setError(null);
     setLoading(true);
     try {
-      const data = await getJson<ArtifactRead>(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`);
+      const data = await getJson<ArtifactRead>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`, projectId));
       setPreview(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -92,25 +94,27 @@ type Props = {
 const graphCache = new Map<string, WorkflowGraphState>();
 
 const useWorkflowGraph = (workflowName: string | null | undefined): { graph: WorkflowGraphState; error: string | null } => {
-  const [graph, setGraph] = useState<WorkflowGraphState>(() => (workflowName ? graphCache.get(workflowName) : undefined) || { nodes: [], edges: [] });
+  const { projectId } = useProject();
+  const cacheKey = workflowName ? `${projectId}:${workflowName}` : null;
+  const [graph, setGraph] = useState<WorkflowGraphState>(() => (cacheKey ? graphCache.get(cacheKey) : undefined) || { nodes: [], edges: [] });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!workflowName) return;
-    const cached = graphCache.get(workflowName);
+    if (!workflowName || !cacheKey) return;
+    const cached = graphCache.get(cacheKey);
     if (cached) { setGraph(cached); setError(null); return; }
     let cancelled = false;
     setGraph({ nodes: [], edges: [] });
     setError(null);
-    getJson<WorkflowGraphState>(`/api/workflows/${encodeURIComponent(workflowName)}/graph`)
+    getJson<WorkflowGraphState>(projectApiUrl(`/api/workflows/${encodeURIComponent(workflowName)}/graph`, projectId))
       .then((data) => {
         const normalized = { nodes: data.nodes || [], edges: data.edges || [] };
-        graphCache.set(workflowName, normalized);
+        graphCache.set(cacheKey, normalized);
         if (!cancelled) { setGraph(normalized); setError(null); }
       })
       .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
     return () => { cancelled = true; };
-  }, [workflowName]);
+  }, [workflowName, cacheKey, projectId]);
 
   return { graph, error };
 };

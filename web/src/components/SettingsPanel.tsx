@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getJson, putJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 
 type TokenMask = { present: boolean; preview?: string };
 type Settings = {
@@ -79,6 +80,7 @@ const isBasicEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.te
 const tokenInputValue = (mask: TokenMask): string => '';
 
 export const SettingsPanel = () => {
+  const { projectId: globalProjectId } = useProject();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
@@ -107,8 +109,8 @@ export const SettingsPanel = () => {
   const load = async (): Promise<void> => {
     try {
       const [settingsData, gitUserData] = await Promise.all([
-        getJson<SettingsResponse>('/api/settings'),
-        getJson<GitUserResponse>('/api/git-user')
+        getJson<SettingsResponse>(projectApiUrl('/api/settings', globalProjectId)),
+        getJson<GitUserResponse>(projectApiUrl('/api/git-user', globalProjectId))
       ]);
       setSettings(settingsData.settings);
       setProvider(settingsData.settings.pi_default_provider || '');
@@ -125,7 +127,7 @@ export const SettingsPanel = () => {
     }
   };
 
-  useEffect(() => { void load(); void loadProjects(); }, []);
+  useEffect(() => { void load(); void loadProjects(); }, [globalProjectId]);
 
   const loadProjects = async (): Promise<void> => {
     setProjectError(null);
@@ -244,7 +246,7 @@ export const SettingsPanel = () => {
     try {
       const tasks: Promise<unknown>[] = [];
       if (Object.keys(updates).length > 0) {
-        tasks.push(putJson<SettingsResponse>('/api/settings', updates).then((data) => {
+        tasks.push(putJson<SettingsResponse>(projectApiUrl('/api/settings', globalProjectId), updates).then((data) => {
           setSettings(data.settings);
           setProvider(data.settings.pi_default_provider || '');
           setModel(data.settings.pi_default_model || '');
@@ -252,7 +254,7 @@ export const SettingsPanel = () => {
         }));
       }
       if (isNonEmpty(gitName) && isNonEmpty(gitEmail) && isBasicEmail(gitEmail)) {
-        tasks.push(putJson<GitUserResponse>('/api/git-user', { name: gitName, email: gitEmail }).then((data) => {
+        tasks.push(putJson<GitUserResponse>(projectApiUrl('/api/git-user', globalProjectId), { name: gitName, email: gitEmail }).then((data) => {
           setGitUser(data.git_user);
         }));
       }
