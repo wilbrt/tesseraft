@@ -86,7 +86,7 @@
         ref (conn-val c :credential-ref)]
     (cond
       (blank? ref) {:status "not-configured" :summary (str (str/capitalize (name service)) " credential reference is not configured.") :remediation "Configure a credential reference such as env:NAME."}
-      (not (re-matches credential-ref-re (str ref))) {:status "invalid" :summary (str "Credential reference " ref " has invalid syntax.") :remediation "Use env:NAME or github-actions:NAME; do not store raw secrets."}
+      (not (re-matches credential-ref-re (str ref))) {:status "invalid" :summary "Credential reference has invalid syntax." :remediation "Use env:NAME or github-actions:NAME; do not store raw secrets."}
       (resolved-token options ref) {:status "ready" :summary (str "Credential reference " ref " resolves locally.") :remediation nil}
       :else {:status "not-configured" :summary (str "Credential reference " ref " does not resolve locally.") :remediation "Set the referenced environment variable or local credential-store entry."})))
 
@@ -110,7 +110,7 @@
       :else (try
               (let [uri (java.net.URI. (str u))]
                 (cond
-                  (not (#{{"http" "https"}} (.getScheme uri))) {:status "invalid" :summary "Jira base URL must use http or https." :remediation "Use an absolute HTTPS URL such as https://example.atlassian.net."}
+                  (not (#{"http" "https"} (.getScheme uri))) {:status "invalid" :summary "Jira base URL must use http or https." :remediation "Use an absolute HTTPS URL such as https://example.atlassian.net."}
                   (blank? (.getHost uri)) {:status "invalid" :summary "Jira base URL must be absolute." :remediation "Use an absolute HTTPS URL."}
                   (not (blank? (.getUserInfo uri))) {:status "invalid" :summary "Jira base URL must not include user info." :remediation "Remove embedded credentials from the URL."}
                   :else {:status "ready" :summary "Jira base URL is configured (static check only)." :remediation nil}))
