@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { getJson, postJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 import type { ApprovalRequest, ApprovalsResponse, MutationResult } from '../types/runConsole';
 
 type Props = { runId: string | null; onRefresh: (runId?: string) => Promise<void> };
 
 /** Returns the latest pending approval (if any) for the run, or null. */
 const usePendingApproval = (runId: string | null): { approval: ApprovalRequest | null; loading: boolean; error: string | null; reload: () => Promise<void> } => {
+  const { projectId } = useProject();
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +17,7 @@ const usePendingApproval = (runId: string | null): { approval: ApprovalRequest |
     setLoading(true);
     setError(null);
     try {
-      const data = await getJson<ApprovalsResponse>(`/api/runs/${encodeURIComponent(runId)}/approvals`);
+      const data = await getJson<ApprovalsResponse>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/approvals`, projectId));
       const pending = (data.approvals || []).find((a) => !a.decision);
       setApproval(pending || null);
     } catch (err) {
@@ -26,7 +28,7 @@ const usePendingApproval = (runId: string | null): { approval: ApprovalRequest |
     }
   };
 
-  useEffect(() => { void reload(); }, [runId]);
+  useEffect(() => { void reload(); }, [runId, projectId]);
 
   return { approval, loading, error, reload };
 };
@@ -47,6 +49,7 @@ const decodeDecisionLabels = (approval: ApprovalRequest | null): { decision: str
 };
 
 export const ApprovalPanel = ({ runId, onRefresh }: Props) => {
+  const { projectId } = useProject();
   const { approval, loading, error, reload } = usePendingApproval(runId);
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
@@ -61,7 +64,7 @@ export const ApprovalPanel = ({ runId, onRefresh }: Props) => {
     setBusy(true);
     setDecisionError(null);
     try {
-      await postJson<{ operation?: string; status?: string }>(`/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.approval_id)}`, { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) });
+      await postJson<{ operation?: string; status?: string }>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.approval_id)}`, projectId), { decision, ...(summary.trim() ? { summary: summary.trim() } : {}) });
       setSummary('');
       await reload();
       await onRefresh(runId);

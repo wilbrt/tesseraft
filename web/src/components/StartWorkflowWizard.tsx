@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { browsePath, getJson, type BrowseResult } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 import type { MutationResult, WorkflowDetail, WorkflowInputDefinition, WorkflowSummary } from '../types/runConsole';
 
 type WorkflowInputField = { name: string; definition: WorkflowInputDefinition };
@@ -107,6 +108,7 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
   onClose: () => void;
   onStart: (payload: StartPayload) => Promise<MutationResult>;
 }) => {
+  const { projectId } = useProject();
   const [step, setStep] = useState<'pick' | 'fill'>('pick');
   const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(initialWorkflow || null);
   const [workflowDetail, setWorkflowDetail] = useState<WorkflowDetail | null>(null);
@@ -168,7 +170,7 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
     setDetailLoading(true);
     setDetailError(null);
     try {
-      const data = await getJson<{ workflow: WorkflowDetail }>(`/api/workflows/${encodeURIComponent(name)}`);
+      const data = await getJson<{ workflow: WorkflowDetail }>(projectApiUrl(`/api/workflows/${encodeURIComponent(name)}`, projectId));
       setWorkflowDetail(data.workflow);
       const nextValues: Record<string, string> = {};
       for (const field of Object.entries(data.workflow.normalized?.inputs || {}).map(([fn, fd]) => ({ name: fn, definition: fd })) as WorkflowInputField[]) nextValues[field.name] = stringifyDefault(field.definition.default);

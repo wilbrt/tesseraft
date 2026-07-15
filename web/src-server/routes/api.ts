@@ -104,19 +104,20 @@ const workflowPath = (body: unknown): string | null => {
   return workflow && typeof workflow.path === 'string' ? workflow.path : null;
 };
 
-const refreshedRun = async (runId: string): Promise<ControlPlaneResult> => runControlPlane(['run', runId]);
+const refreshedRun = async (runId: string, projectId?: string): Promise<ControlPlaneResult> => runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'run', runId]);
 
 const inspectRuntime = async (runDir: string): Promise<unknown> => {
   const inspected = await runRuntime(['inspect', '--run-dir', runDir, '--format', 'json']);
   return inspected.status === 200 ? inspected.body : null;
 };
 
-const runSnapshot = async (runId: string): Promise<unknown> => {
+const runSnapshot = async (runId: string, projectId?: string): Promise<unknown> => {
+  const pid = projectId ? ['--project-id', projectId] : [];
   const [detail, events, artifacts, runs] = await Promise.all([
-    runControlPlane(['run', runId]),
-    runControlPlane(['events', runId]),
-    runControlPlane(['artifacts', runId]),
-    runControlPlane(['runs'])
+    runControlPlane([...pid, 'run', runId]),
+    runControlPlane([...pid, 'events', runId]),
+    runControlPlane([...pid, 'artifacts', runId]),
+    runControlPlane([...pid, 'runs'])
   ]);
   if (detail.status !== 200) return detail.body;
   return {
@@ -128,8 +129,8 @@ const runSnapshot = async (runId: string): Promise<unknown> => {
   };
 };
 
-const mutationResponse = async (operation: string, runId: string, cli: RuntimeResult, runDir?: string): Promise<{ status: number; body: unknown }> => {
-  const detail = await refreshedRun(runId);
+const mutationResponse = async (operation: string, runId: string, cli: RuntimeResult, runDir?: string, projectId?: string): Promise<{ status: number; body: unknown }> => {
+  const detail = await refreshedRun(runId, projectId);
   return { status: cli.status, body: { operation, status: cli.status === 200 ? 'ok' : 'error', run_id: runId, cli: { exit_code: cli.exitCode, stderr: cli.stderr || undefined, result: cli.body }, latest_runtime: runDir ? await inspectRuntime(runDir) : null, run_detail: detail.status === 200 ? detail.body : null } };
 };
 
@@ -178,12 +179,12 @@ const handleBrowse = async (req: Request, res: Response): Promise<void> => {
   return jsonResponse(res, 200, { root, path: real, is_file: false, is_dir: true, entries });
 };
 
-const handleGetGitUser = async (res: Response): Promise<void> => {
-  const result = await runControlPlane(['git-user']);
+const handleGetGitUser = async (res: Response, projectId?: string): Promise<void> => {
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'git-user']);
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleSetGitUser = async (req: Request, res: Response): Promise<void> => {
+const handleSetGitUser = async (req: Request, res: Response, projectId?: string): Promise<void> => {
   const body = req.body as JsonRecord;
   const name = body.name;
   const email = body.email;
@@ -191,7 +192,7 @@ const handleSetGitUser = async (req: Request, res: Response): Promise<void> => {
   if (name.length > 200) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must be at most 200 characters'));
   if (/\n/.test(name)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'name must not contain newlines'));
   if (!isNonEmptyString(email) || !isBasicEmail(email)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'email is required and must be a valid address'));
-  const result = await runControlPlane(['git-user', 'set', '--name', name, '--email', email]);
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'git-user', 'set', '--name', name, '--email', email]);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -220,8 +221,8 @@ const validateSettingsField = (field: string, value: unknown): string | null => 
   return null;
 };
 
-const handleGetSettings = async (res: Response): Promise<void> => {
-  const result = await runControlPlane(['settings', 'get']);
+const handleGetSettings = async (res: Response, projectId?: string): Promise<void> => {
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'settings', 'get']);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -329,7 +330,7 @@ const handleUpdateProjectConnections = async (req: Request, res: Response, proje
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleSetSettings = async (req: Request, res: Response): Promise<void> => {
+const handleSetSettings = async (req: Request, res: Response, projectId?: string): Promise<void> => {
   const body = req.body as JsonRecord;
   const updates: JsonRecord = {};
   for (const [field, raw] of Object.entries(body)) {
@@ -348,7 +349,7 @@ const handleSetSettings = async (req: Request, res: Response): Promise<void> => 
     if (err) return jsonResponse(res, 400, errorBody(400, 'bad_request', err));
     updates[field] = raw;
   }
-  const args = ['settings', 'set'];
+  const args = [...(projectId ? ['--project-id', projectId] : []), 'settings', 'set'];
   for (const [field, value] of Object.entries(updates)) {
     const flag = `--${field.replace(/_/g, '-')}`;
     if (value === null) args.push(`--clear-${field.replace(/_/g, '-')}`);
@@ -622,7 +623,7 @@ const readGitUser = (value: unknown): { name: string; email: string } | undefine
   return 'invalid';
 };
 
-const handleStartRun = async (req: Request, res: Response): Promise<void> => {
+const handleStartRun = async (req: Request, res: Response, projectId?: string): Promise<void> => {
   const body = req.body as JsonRecord;
   const workflowName = body.workflow_name;
   const runId = body.run_id;
@@ -635,26 +636,50 @@ const handleStartRun = async (req: Request, res: Response): Promise<void> => {
   if (maxSteps === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
   if (gitUser === 'invalid') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'git_user requires both name and a valid email, or neither'));
 
-  const existing = await refreshedRun(runId);
+  const pid = projectId ? ['--project-id', projectId] : [];
+
+  // Validate the project exists (404 → 404) before starting, so a typo'd
+  // project id is surfaced rather than silently falling back to default.
+  if (projectId) {
+    const project = await runControlPlane(['project', projectId]);
+    if (project.status !== 200) return jsonResponse(res, project.status, project.body);
+  }
+
+  // Existing-run check is project-scoped: a run_id reused in another project
+  // is allowed (identity = (project_id, run_id)).
+  const existing = await refreshedRun(runId, projectId);
   if (existing.status === 200) return jsonResponse(res, 409, errorBody(409, 'conflict', 'Run id already exists', { run_id: runId }));
 
-  const workflow = await runControlPlane(['workflow', workflowName]);
+  const workflow = await runControlPlane([...pid, 'workflow', workflowName]);
   if (workflow.status !== 200) return jsonResponse(res, workflow.status, workflow.body);
   const filePath = workflowPath(workflow.body);
   if (!filePath) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Workflow detail did not include a path'));
 
-  const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json'];
+  // Resolve the project's runs-root/workspace-root so the runtime writes the
+  // run dir under the selected project rather than the ambient cwd. The
+  // default project uses cwd('.') + '.agent-runs' (existing behavior).
+  let runtimeRoots: string[] = [];
+  if (projectId) {
+    const project = await runControlPlane(['project', projectId]);
+    if (project.status === 200 && project.body && typeof project.body === 'object') {
+      const p = project.body as { workspace_root?: unknown; runs_root?: unknown };
+      if (typeof p.workspace_root === 'string' && p.workspace_root.trim() !== '') runtimeRoots.push('--workspace-root', p.workspace_root);
+      if (typeof p.runs_root === 'string' && p.runs_root.trim() !== '') runtimeRoots.push('--runs-root', p.runs_root);
+    }
+  }
+
+  const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json', ...pid, ...runtimeRoots];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);
   if (gitUser) { startArgs.push('--git-user-name', gitUser.name, '--git-user-email', gitUser.email); }
   const started = await runRuntime(startArgs);
   const runDir = started.body && typeof started.body === 'object' ? (started.body as { run?: { dir?: unknown } }).run?.dir : undefined;
   if (started.status !== 200 || typeof runDir !== 'string') {
-    const result = await mutationResponse('start', runId, started, typeof runDir === 'string' ? runDir : undefined);
+    const result = await mutationResponse('start', runId, started, typeof runDir === 'string' ? runDir : undefined, projectId);
     return jsonResponse(res, result.status, result.body);
   }
 
   const background = startRuntime(['resume', '--run-dir', runDir, '--max-steps', String(maxSteps), '--format', 'json']);
-  const detail = await refreshedRun(runId);
+  const detail = await refreshedRun(runId, projectId);
   jsonResponse(res, 202, { operation: 'start', status: 'running', code: 'background_started', run_id: runId, background, cli: { exit_code: started.exitCode, result: started.body }, latest_runtime: await inspectRuntime(runDir), run_detail: detail.status === 200 ? detail.body : null });
 };
 
@@ -731,7 +756,7 @@ const handlePiSessionStream = async (req: Request, res: Response, adapter: PiSes
   req.on('close', closeStream);
 };
 
-const handleRunStream = async (req: Request, res: Response, runId: string): Promise<void> => {
+const handleRunStream = async (req: Request, res: Response, runId: string, projectId?: string): Promise<void> => {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
@@ -754,7 +779,7 @@ const handleRunStream = async (req: Request, res: Response, runId: string): Prom
   };
   const sendSnapshot = async (): Promise<void> => {
     if (closed) return;
-    const snapshot = await runSnapshot(runId);
+    const snapshot = await runSnapshot(runId, projectId);
     const payload = JSON.stringify(snapshot);
     if (payload !== lastPayload) {
       lastPayload = payload;
@@ -770,8 +795,8 @@ const handleRunStream = async (req: Request, res: Response, runId: string): Prom
   req.on('close', closeStream);
 };
 
-const handleDeleteRun = async (res: Response, runId: string): Promise<void> => {
-  const result = await runControlPlane(['delete-run', runId]);
+const handleDeleteRun = async (res: Response, runId: string, projectId?: string): Promise<void> => {
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'delete-run', runId]);
   if (result.status !== 200) return jsonResponse(res, result.status, result.body);
   const body = result.body as { run_id?: string; deleted?: boolean; liveness?: string; path?: string } | undefined;
   return jsonResponse(res, 200, {
@@ -784,12 +809,12 @@ const handleDeleteRun = async (res: Response, runId: string): Promise<void> => {
   });
 };
 
-const handleApprovalDecision = async (req: Request, res: Response, runId: string, approvalId: string): Promise<void> => {
+const handleApprovalDecision = async (req: Request, res: Response, runId: string, approvalId: string, projectId?: string): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
   const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
   if (!decision) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'decision is required'));
   const summary = typeof body.summary === 'string' ? body.summary : undefined;
-  const detail = await runControlPlane(['run', runId]);
+  const detail = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'run', runId]);
   if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
   const runDir = runDetailPath(detail.body);
   if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
@@ -804,18 +829,18 @@ const handleApprovalDecision = async (req: Request, res: Response, runId: string
     const status = (cli.body && typeof cli.body === 'object' && 'status' in cli.body && typeof (cli.body as { status?: unknown }).status === 'number') ? (cli.body as { status: number }).status : 409;
     return jsonResponse(res, status, errBody);
   }
-  const refreshed = await refreshedRun(runId);
+  const refreshed = await refreshedRun(runId, projectId);
   return jsonResponse(res, 200, { operation: 'decide', status: 'ok', run_id: runId, approval_id: approvalId, decision, cli: { exit_code: cli.exitCode, result: cli.body }, run_detail: refreshed.status === 200 ? refreshed.body : null });
 };
 
-const handleAddComment = async (req: Request, res: Response, runId: string): Promise<void> => {
+const handleAddComment = async (req: Request, res: Response, runId: string, projectId?: string): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
   const path = typeof body.path === 'string' ? body.path.trim() : '';
   const text = typeof body.body === 'string' ? body.body.trim() : '';
   if (!path) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'path is required'));
   if (!text) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'body is required'));
   const anchor = body.anchor && typeof body.anchor === 'object' && !Array.isArray(body.anchor) ? body.anchor : undefined;
-  const args = ['comment', 'add', runId, '--path', path, '--body', text];
+  const args = [...(projectId ? ['--project-id', projectId] : []), 'comment', 'add', runId, '--path', path, '--body', text];
   if (anchor && typeof anchor === 'object') {
     const a = anchor as { start_line?: unknown; end_line?: unknown };
     if (typeof a.start_line === 'number' && typeof a.end_line === 'number') {
@@ -826,9 +851,9 @@ const handleAddComment = async (req: Request, res: Response, runId: string): Pro
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume'): Promise<void> => {
+const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume', projectId?: string): Promise<void> => {
   const body = req.body as JsonRecord;
-  const detail = await refreshedRun(runId);
+  const detail = await refreshedRun(runId, projectId);
   if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
   const runDir = runDetailPath(detail.body);
   if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
@@ -837,12 +862,12 @@ const handleExistingRunMutation = async (req: Request, res: Response, runId: str
 
   if (operation === 'resume') {
     const background = startRuntime(['resume', '--run-dir', runDir, '--max-steps', String(maxSteps), '--format', 'json']);
-    const refreshed = await refreshedRun(runId);
+    const refreshed = await refreshedRun(runId, projectId);
     return jsonResponse(res, 202, { operation, status: 'running', code: 'background_started', run_id: runId, background, latest_runtime: await inspectRuntime(runDir), run_detail: refreshed.status === 200 ? refreshed.body : null });
   }
 
   const cli = await runRuntime(['step', '--run-dir', runDir, '--format', 'json']);
-  const result = await mutationResponse(operation, runId, cli, runDir);
+  const result = await mutationResponse(operation, runId, cli, runDir, projectId);
   jsonResponse(res, result.status, result.body);
 };
 
@@ -919,6 +944,92 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     return void handleUpdateProjectConnections(req, res, id).catch(next);
   });
 
+  // ---- Project-scoped operations (design §5.3) ----
+  // Each routes workflows/runs/settings/git-identity to the selected project by
+  // threading `--project-id` to the control plane and runtime. `projectId` is
+  // validated against the same id regex used by the project routes so a
+  // malformed id is a 400 rather than a control-plane error. Read fallbacks in
+  // the control plane keep discovery working when a project is implicit.
+  const projectIdParam = (req: Request): string | null => safeDecode(req.params.projectId as string);
+  const badProjectId = (res: Response, id: string | null): boolean => {
+    if (id === null) { jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id')); return true; }
+    if (!PROJECT_NAME_RE.test(id)) { jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id')); return true; }
+    return false;
+  };
+
+  router.get('/projects/:projectId/workflows', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void runControlPlane(['--project-id', id!, 'workflows']).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/workflows/:name', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const name = safeDecode(req.params.name); if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    return void runControlPlane(['--project-id', id!, 'workflow', name]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/workflows/:name/graph', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const name = safeDecode(req.params.name); if (name === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed workflow name'));
+    return void runControlPlane(['--project-id', id!, 'graph', name]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void runControlPlane(['--project-id', id!, 'runs']).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void runControlPlane(['--project-id', id!, 'run', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/events', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void runControlPlane(['--project-id', id!, 'events', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/artifacts', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void runControlPlane(['--project-id', id!, 'artifacts', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/artifact', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    const artifactPath = req.query.path; if (typeof artifactPath !== 'string' || artifactPath === '') return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Missing artifact path'));
+    return void runControlPlane(['--project-id', id!, 'artifact', runId, artifactPath]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/approvals', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void runControlPlane(['--project-id', id!, 'approvals', runId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/approval/:approvalId', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    const approvalId = safeDecode(req.params.approvalId); if (approvalId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed approval id'));
+    return void runControlPlane(['--project-id', id!, 'approval', runId, approvalId]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/comments', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    const artifactPath = typeof req.query.path === 'string' ? req.query.path : '';
+    return void runControlPlane(['--project-id', id!, 'comments', runId, '--path', artifactPath]).then((r) => jsonResponse(res, r.status, r.body)).catch(next);
+  });
+  router.get('/projects/:projectId/settings', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void handleGetSettings(res, id!).catch(next);
+  });
+  router.put('/projects/:projectId/settings', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void handleSetSettings(req, res, id!).catch(next);
+  });
+  router.get('/projects/:projectId/git-user', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void handleGetGitUser(res, id!).catch(next);
+  });
+  router.put('/projects/:projectId/git-user', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void handleSetGitUser(req, res, id!).catch(next);
+  });
+
   // Workflow Studio authoring routes (see design doc). These write workflow
   // definition files under .tesseraft/workflows/ and run the linter as the
   // save-completed gate. They are registered before the generic GET fallback.
@@ -991,6 +1102,42 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     if (operation !== 'step' && operation !== 'resume') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
     return void handleExistingRunMutation(req, res, runId, operation).catch(next);
+  });
+
+  // ---- Project-scoped run mutations, streams, and deletes (design §5.3) ----
+  // Start, step/resume, decide, comment, stream, and delete under a project
+  // prefix, threading projectId to the project-aware handlers above.
+  router.post('/projects/:projectId/runs', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    return void handleStartRun(req, res, id!).catch(next);
+  });
+  router.get('/projects/:projectId/runs/:runId/stream', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleRunStream(req, res, runId, id!).catch(next);
+  });
+  router.delete('/projects/:projectId/runs/:runId', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleDeleteRun(res, runId, id!).catch(next);
+  });
+  router.post('/projects/:projectId/runs/:runId/approvals/:approvalId', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    const approvalId = safeDecode(req.params.approvalId); if (approvalId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed approval id'));
+    return void handleApprovalDecision(req, res, runId, approvalId, id!).catch(next);
+  });
+  router.post('/projects/:projectId/runs/:runId/comments', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    return void handleAddComment(req, res, runId, id!).catch(next);
+  });
+  router.post('/projects/:projectId/runs/:runId/:operation', (req, res, next) => {
+    const id = projectIdParam(req); if (badProjectId(res, id)) return;
+    const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
+    const operation = req.params.operation;
+    if (operation !== 'step' && operation !== 'resume') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
+    return void handleExistingRunMutation(req, res, runId, operation, id!).catch(next);
   });
 
   router.use((req, res, next) => {

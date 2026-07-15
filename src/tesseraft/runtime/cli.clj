@@ -25,6 +25,8 @@
           "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
           "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
+          "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
+          "--workspace-root" (recur more (assoc acc :workspace-root (cli-args/require-value a b)))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
           "--executor" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))
           "--mode" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))

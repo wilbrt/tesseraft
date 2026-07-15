@@ -667,15 +667,42 @@
            (seq conflicts) (assoc :conflicts conflicts)
            (seq duplicates) (assoc :duplicates duplicates))]))))
 
+(defn project-scoped-opts
+  "Build per-call options resolved from a project. The project's
+  `:workspace_root`/`:runs_root`/discovery roots are relative to the control
+  workspace (where project manifests live), so `:workspace_root` is resolved
+  against `(:workspace-root opts)` via `abs-path` — never replaced with a
+  bare relative path that would silently relocate discovery to the process
+  cwd. `:runs_root` stays relative (resolved by `run-state-files` against
+  the now-absolutized workspace root). If the project can't be resolved,
+  returns `opts` unchanged (defensive fallback). The `default` project's
+  `workspace_root` is `.` (the control workspace), preserving existing
+  single-project behavior."
+  ([options] (project-scoped-opts options nil))
+  ([options project-id]
+   (let [project (resolve-project options project-id)]
+     (if (:error project)
+       (opts options)
+       (let [control-ws (:workspace-root (opts options))]
+         (-> (opts options)
+             (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
+                    :runs-root (:runs_root project))
+             (assoc :workflow-roots (or (get-in project [:discovery :workflow-roots])
+                                       (:workflow-roots (opts options)))
+                    :tesseraft-home (or (get-in project [:discovery :tesseraft-home])
+                                        (:tesseraft-home (opts options))))))))))
+
 (defn list-workflows
   ([] (list-workflows {}))
-  ([options]
-   (let [entries (workflow-file-entries options)
+  ([options] (list-workflows options nil))
+  ([options project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         entries (workflow-file-entries sopts)
          visible (select-visible-workflow-entries entries)
-         meta (shadowing-for-visible options entries visible)]
+         meta (shadowing-for-visible sopts entries visible)]
      {:workflows (mapv (fn [v]
                          (api-value
-                           (merge (read-workflow-entry options v)
+                           (merge (read-workflow-entry sopts v)
                                   (get meta (str (:file v))))))
                        visible)})))
 
@@ -703,12 +730,14 @@
       :else (first visible-matches))))
 
 (defn get-workflow
-  ([] (get-workflow {} nil))
-  ([options name]
-   (let [resolved (resolve-workflow options name)]
+  ([] (get-workflow {} nil nil))
+  ([options name] (get-workflow options name nil))
+  ([options name project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         resolved (resolve-workflow sopts name)]
      (if (:error resolved)
        resolved
-       (let [{:keys [workspace-root]} (opts options)
+       (let [{:keys [workspace-root]} sopts
              {:keys [file workflow source precedence]} resolved
              lint-result (lint/lint-file file)
              ;; Shadowing context for the detail view. `resolve-workflow`
@@ -718,7 +747,7 @@
              ;; and `duplicates` lists the lower-precedence same-name entries
              ;; this workflow overrides. Precedence/selection semantics are
              ;; untouched — this only attaches inspection metadata.
-             matches (workflow-candidates options name)
+             matches (workflow-candidates sopts name)
              others (remove #(= (:file %) file) matches)
              conflicts (mapv #(workflow-meta-item workspace-root %)
                              (filter #(= (:precedence %) precedence) others))
@@ -742,9 +771,11 @@
     (:effects tr) (assoc :effects (:effects tr))))
 
 (defn get-workflow-graph
-  ([] (get-workflow-graph {} nil))
-  ([options name]
-   (let [resolved (resolve-workflow options name)]
+  ([] (get-workflow-graph {} nil nil))
+  ([options name] (get-workflow-graph options name nil))
+  ([options name project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         resolved (resolve-workflow sopts name)]
      (if (:error resolved)
        resolved
        (let [{:keys [file workflow]} resolved
@@ -763,16 +794,19 @@
                           (edge-from-transition from tr)))
             :diagnostics (:diagnostics lint-result)}))))))
 
-(defn run-state-files [options]
-  (let [{:keys [workspace-root runs-root]} (opts options)
-        root (abs-path workspace-root runs-root)]
-    (if-not (fs/exists? root)
-      []
-      (->> (for [p (file-seq (fs/file root))
-                 :when (and (.isFile p) (= "state.edn" (.getName p)))]
-             (fs/path p))
-           (sort-by str)
-           vec))))
+(defn run-state-files
+  ([options] (run-state-files options nil))
+  ([options project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         {:keys [workspace-root runs-root]} sopts
+         root (abs-path workspace-root runs-root)]
+     (if-not (fs/exists? root)
+       []
+       (->> (for [p (file-seq (fs/file root))
+                  :when (and (.isFile p) (= "state.edn" (.getName p)))]
+              (fs/path p))
+            (sort-by str)
+            vec)))))
 
 (defn run-dir-from-state-file [state-file]
   (fs/parent state-file))
@@ -895,38 +929,59 @@
 
 (defn list-runs
   ([] (list-runs {}))
-  ([options]
-   (let [entries (mapv (fn [state-file]
+  ([options] (list-runs options nil))
+  ([options project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         entries (mapv (fn [state-file]
                          (try
-                           {:run (api-value (run-summary options state-file))}
+                           {:run (api-value (run-summary sopts state-file))}
                            (catch Throwable t
                              {:error {:code "parse_error"
                                       :message (.getMessage t)
-                                      :details {:path (relative-path (:workspace-root (opts options)) state-file)}}})))
-                       (run-state-files options))]
+                                      :details {:path (relative-path (:workspace-root sopts) state-file)}}})))
+                       (run-state-files options project-id))]
      {:runs (mapv :run (filter :run entries))
       :errors (mapv :error (filter :error entries))})))
 
-(defn matching-run-files [options run-id]
-  (->> (run-state-files options)
-       (keep (fn [state-file]
-               (try
-                 (let [ctx (store/load-context (run-dir-from-state-file state-file))
-                       recorded-id (get-in ctx [:run :id])
-                       dir-id (str (fs/file-name (run-dir-from-state-file state-file)))]
-                   (when (or (= (str run-id) (str recorded-id)) (= (str run-id) dir-id))
-                     {:state-file state-file :run-dir (run-dir-from-state-file state-file) :context ctx}))
-                 (catch Throwable _ nil))))
-       vec))
+(defn matching-run-files
+  ([options run-id] (matching-run-files options run-id nil))
+  ([options run-id project-id]
+   (let [pid (or project-id "default")]
+     (->> (run-state-files options project-id)
+          (keep (fn [state-file]
+                  (try
+                    (let [ctx (store/load-context (run-dir-from-state-file state-file))
+                          recorded-id (get-in ctx [:run :id])
+                          dir-id (str (fs/file-name (run-dir-from-state-file state-file)))
+                          id-match? (or (= (str run-id) (str recorded-id))
+                                        (= (str run-id) dir-id))
+                          ;; Run identity is (project_id, run_id): a run matches
+                          ;; only when its recorded :project-id equals the
+                          ;; requested project, OR the run predates project
+                          ;; stamping and the request is for the default project.
+                          ;; This lets two projects share the same run_id without
+                          ;; colliding even when they share a runs-root.
+                          recorded-pid (get-in ctx [:run :project-id])
+                          pid-match? (or (= pid (str recorded-pid))
+                                        (and (nil? recorded-pid)
+                                             (= "default" pid)))]
+                      (when (and id-match? pid-match?)
+                        {:state-file state-file :run-dir (run-dir-from-state-file state-file) :context ctx}))
+                  (catch Throwable _ nil))))
+          vec))))
 
-(defn resolve-run [options run-id]
-  (let [matches (matching-run-files options run-id)]
-    (cond
-      (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id})
-      (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
-                                            {:run_id run-id
-                                             :paths (mapv #(relative-path (:workspace-root (opts options)) (:run-dir %)) matches)})
-      :else (first matches))))
+(defn resolve-run
+  ([options run-id] (resolve-run options run-id nil))
+  ([options run-id project-id]
+   (let [pid (or project-id "default")
+         sopts (project-scoped-opts options project-id)
+         matches (matching-run-files options run-id project-id)]
+     (cond
+       (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id :project_id pid})
+       (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
+                                             {:run_id run-id
+                                              :paths (mapv #(relative-path (:workspace-root sopts) (:run-dir %)) matches)})
+       :else (first matches)))))
 
 (defn events-file [run-dir]
   (fs/path run-dir "events.jsonl"))
@@ -1182,9 +1237,10 @@
                             (scan-artifacts run-dir))))
 
 (defn get-run-artifacts
-  ([] (get-run-artifacts {} nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run-artifacts {} nil nil))
+  ([options run-id] (get-run-artifacts options run-id nil))
+  ([options run-id project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [events (read-events-file (events-file (:run-dir resolved)))]
@@ -1193,9 +1249,10 @@
            (api-value {:run_id run-id :artifacts (list-artifacts* (:context resolved) (:run-dir resolved) events)})))))))
 
 (defn read-run-artifact
-  ([] (read-run-artifact {} nil nil))
-  ([options run-id artifact-path]
-   (let [resolved (resolve-run options run-id)]
+  ([] (read-run-artifact {} nil nil nil))
+  ([options run-id artifact-path] (read-run-artifact options run-id artifact-path nil))
+  ([options run-id artifact-path project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [safe (existing-safe-file (:run-dir resolved) artifact-path)]
@@ -1252,13 +1309,15 @@
            {:source "artifact" :path (:path artifact) :message "Issues artifact present"}))))
 
 (defn get-run
-  ([] (get-run {} nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run {} nil nil))
+  ([options run-id] (get-run options run-id nil))
+  ([options run-id project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [{:keys [context state-file run-dir]} resolved
-             summary (run-summary options state-file)
+             summary (run-summary sopts state-file)
              run-id (:run_id summary)
              events (read-events-file (events-file run-dir))
              attempts (if (:error events) [] (attempts-from-context context events))
@@ -1280,9 +1339,10 @@
                                     :artifacts (str "/runs/" run-id "/artifacts")}))}))))))
 
 (defn get-run-events
-  ([] (get-run-events {} nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run-events {} nil nil))
+  ([options run-id] (get-run-events options run-id nil))
+  ([options run-id project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [events (read-events-file (events-file (:run-dir resolved)))]
@@ -1295,13 +1355,15 @@
   `executing` (returns 409 conflict). Only deletes the run directory returned by
   `resolve-run`, which is confined to the configured `runs-root` tree, so there
   is no arbitrary-path delete surface."
-  ([] (delete-run {} nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (delete-run {} nil nil))
+  ([options run-id] (delete-run options run-id nil))
+  ([options run-id project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [{:keys [state-file run-dir context]} resolved
-             summary (run-summary options state-file)
+             summary (run-summary sopts state-file)
              events (read-events-file (events-file run-dir))
              attempts (if (:error events) [] (attempts-from-context context events))
              last-activity (when-not (:error events) (latest-event-at events))
@@ -1315,7 +1377,7 @@
               :run_id run-id
               :deleted true
               :liveness (:liveness live)
-              :path (relative-path (:workspace-root (opts options)) run-dir)})))))))
+              :path (relative-path (:workspace-root sopts) run-dir)})))))))
 
 ;; ---- approvals (manual-input :approval pause/resume) ----
 ;; Run-relative read surfaces for the manual-input node feature. The runtime
@@ -1366,26 +1428,29 @@
                       decision (assoc "decision" (api-value decision)))}))))
 
 (defn get-run-approvals
-  ([] (get-run-approvals {} nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run-approvals {} nil nil))
+  ([options run-id] (get-run-approvals options run-id nil))
+  ([options run-id project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (api-value {:run_id run-id :approvals (or (load-approval-summary (:run-dir resolved)) [])})))))
 
 (defn get-run-approval
-  ([] (get-run-approval {} nil nil))
-  ([options run-id approval-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run-approval {} nil nil nil))
+  ([options run-id approval-id] (get-run-approval options run-id approval-id nil))
+  ([options run-id approval-id project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [result (load-approval (:run-dir resolved) approval-id)]
          (if (:error result) result (api-value result)))))))
 
 (defn get-run-comments
-  ([] (get-run-comments {} nil nil))
-  ([options run-id]
-   (let [resolved (resolve-run options run-id)]
+  ([] (get-run-comments {} nil nil nil))
+  ([options run-id] (get-run-comments options run-id nil))
+  ([options run-id project-id]
+   (let [resolved (resolve-run options run-id project-id)]
      (if (:error resolved)
        resolved
        (let [artifact-path (or (some-> options :query :path) "")
@@ -1398,11 +1463,12 @@
 (defn random-id [] (str "c" (System/nanoTime)))
 
 (defn add-run-comment
-  ([] (add-run-comment {} nil nil nil))
-  ([options run-id body]
+  ([] (add-run-comment {} nil nil nil nil))
+  ([options run-id body] (add-run-comment options run-id body nil))
+  ([options run-id body project-id]
    (let [{:keys [run-id-in-body]} (opts options)
          body (or body {})]
-     (let [resolved (resolve-run options (or run-id run-id-in-body))]
+     (let [resolved (resolve-run options (or run-id run-id-in-body) project-id)]
        (if (:error resolved)
          resolved
          (let [artifact-path (or (get body :path) (get body "path"))
@@ -1459,9 +1525,11 @@
     :else nil))
 
 (defn get-git-user
-  ([] (get-git-user {}))
-  ([options]
-   (let [{:keys [project global]} (git-user-paths options)
+  ([] (get-git-user {} nil))
+  ([options] (get-git-user options nil))
+  ([options project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         {:keys [project global]} (git-user-paths sopts)
          project-user (read-git-user-file project)
          global-user (read-git-user-file global)]
      (cond
@@ -1469,14 +1537,17 @@
        global-user {:git_user (assoc global-user :source "global")}
        :else {:git_user {:name nil :email nil :source "none"}}))))
 
-(defn set-git-user [options name email global?]
-  (if-let [err (validate-git-user name email)]
-    (error-response 400 "bad_request" err)
-    (let [paths (git-user-paths options)
-          target (if global? (:global paths) (:project paths))]
-      (fs/create-dirs (fs/parent target))
-      (store/write-json! target {:name name :email email})
-      (get-git-user options))))
+(defn set-git-user
+  ([options name email global?] (set-git-user options name email global? nil))
+  ([options name email global? project-id]
+   (if-let [err (validate-git-user name email)]
+     (error-response 400 "bad_request" err)
+     (let [sopts (project-scoped-opts options project-id)
+           paths (git-user-paths sopts)
+           target (if global? (:global paths) (:project paths))]
+       (fs/create-dirs (fs/parent target))
+       (store/write-json! target {:name name :email email})
+       (get-git-user sopts project-id)))))
 
 ;; ---- settings read/mutate surface ----
 ;; `settings-fields`, `settings-unchanged`, `settings-paths`,
@@ -1515,9 +1586,11 @@
                :jira_token (mask-token (:jira_token settings))))))
 
 (defn get-settings
-  ([] (get-settings {}))
-  ([options]
-   (let [{:keys [project global]} (settings-paths options)
+  ([] (get-settings {} nil))
+  ([options] (get-settings options nil))
+  ([options project-id]
+   (let [sopts (project-scoped-opts options project-id)
+         {:keys [project global]} (settings-paths sopts)
          project-settings (coerce-settings (read-settings-file project))
          global-settings (coerce-settings (read-settings-file global))
          [source raw] (cond
@@ -1532,23 +1605,25 @@
   maps known field keywords to their new values. Entries may be nil (clear the
   field) or, for token fields, the `settings-unchanged` sentinel to preserve.
   Unknown keys are rejected. Returns the masked `get-settings` view."
-  ([options updates] (set-settings options updates false))
-  ([options updates global?]
-   (if (empty? updates)
-     (get-settings options)
-     (let [unknown (remove (set settings-fields) (keys updates))]
-       (if (seq unknown)
-         (error-response 400 "bad_request"
-                         (str "Unknown settings fields: "
-                              (str/join ", " (map name (sort unknown)))))
-         (let [errs (reduce (fn [acc [k v]]
-                              (if-let [e (validate-settings-field k v)]
-                                (conj acc e) acc))
-                            [] updates)]
-           (if (seq errs)
-             (error-response 400 "bad_request" (str/join "; " errs))
-             (let [paths (settings-paths options)
-                   target (if global? (:global paths) (:project paths))
+  ([options updates] (set-settings options updates false nil))
+  ([options updates global?] (set-settings options updates global? nil))
+  ([options updates global? project-id]
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (empty? updates)
+       (get-settings sopts project-id)
+       (let [unknown (remove (set settings-fields) (keys updates))]
+         (if (seq unknown)
+           (error-response 400 "bad_request"
+                           (str "Unknown settings fields: "
+                                (str/join ", " (map name (sort unknown)))))
+           (let [errs (reduce (fn [acc [k v]]
+                                (if-let [e (validate-settings-field k v)]
+                                  (conj acc e) acc))
+                              [] updates)]
+             (if (seq errs)
+               (error-response 400 "bad_request" (str/join "; " errs))
+               (let [paths (settings-paths sopts)
+                     target (if global? (:global paths) (:project paths))
                    current (coerce-settings (read-settings-file target))
                    merged (reduce
                               (fn [acc [k v]]
@@ -1573,4 +1648,4 @@
                  (do
                    (fs/create-dirs (fs/parent target))
                    (store/write-json! target merged)
-                   (get-settings options)))))))))))
+                   (get-settings sopts project-id))))))))))))

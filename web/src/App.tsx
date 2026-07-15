@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
 import { WorkflowStudio } from './components/WorkflowStudio';
 import { RunListTable } from './components/RunListTable';
@@ -6,8 +6,10 @@ import { ApprovalPanel } from './components/ApprovalPanel';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { ProjectSelector } from './components/ProjectSelector';
 import { getJson } from './lib/api';
 import { isActiveRun } from './lib/runConsole';
+import { ProjectContext, loadProjectId, storeProjectId, projectApiUrl } from './lib/project';
 import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowDetail, WorkflowGraphState, WorkflowSummary } from './types/runConsole';
 import './style.css';
 
@@ -15,6 +17,9 @@ type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'settings' | 'studio';
 type RunSnapshot = { run?: RunDetail; events?: EventRecord[]; artifacts?: Artifact[]; runs?: RunSummary[] };
 
 export const App = () => {
+  const [projectId, setProjectIdState] = useState<string>(loadProjectId);
+  const setProjectId = (id: string): void => { storeProjectId(id); setProjectIdState(id); };
+  const projectContextValue = useMemo(() => ({ projectId, setProjectId }), [projectId]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('workflows');
   const [workflows, setWorkflows] = useState<LoadState<WorkflowSummary[]>>({ data: [], error: null });
   const [runs, setRuns] = useState<LoadState<RunSummary[]>>({ data: [], error: null });
@@ -34,23 +39,29 @@ export const App = () => {
 
   const loadRuns = async (): Promise<void> => {
     try {
-      const data = await getJson<{ runs: RunSummary[] }>('/api/runs');
+      const data = await getJson<{ runs: RunSummary[] }>(projectApiUrl('/api/runs', projectId));
       setRuns({ data: data.runs || [], error: null });
     } catch (error) {
       setRuns({ data: [], error: error instanceof Error ? error.message : String(error) });
     }
   };
 
+  // Reload everything when the selected project changes; clear stale selections
+  // so a run/workflow from one project never appears in another.
   useEffect(() => {
-    getJson<{ workflows: WorkflowSummary[] }>('/api/workflows')
+    setSelectedWorkflow(null); setSelectedNodeId(null); setWorkflowDetail(null);
+    setWorkflowError(null); setGraph({ nodes: [], edges: [] });
+    setSelectedRun(null); setRunDetail(null); setEvents([]); setArtifacts([]);
+    setRunError(null); setLastRunRefresh(null);
+    getJson<{ workflows: WorkflowSummary[] }>(projectApiUrl('/api/workflows', projectId))
       .then((data) => setWorkflows({ data: data.workflows || [], error: null }))
       .catch((error: Error) => setWorkflows({ data: [], error: error.message }));
     void loadRuns();
-  }, []);
+  }, [projectId]);
 
   const refreshWorkflows = async (): Promise<void> => {
     try {
-      const data = await getJson<{ workflows: WorkflowSummary[] }>('/api/workflows');
+      const data = await getJson<{ workflows: WorkflowSummary[] }>(projectApiUrl('/api/workflows', projectId));
       setWorkflows({ data: data.workflows || [], error: null });
     } catch (error) {
       setWorkflows({ data: [], error: error instanceof Error ? error.message : String(error) });
@@ -65,8 +76,8 @@ export const App = () => {
     setGraph({ nodes: [], edges: [] });
     try {
       const [detail, graphData] = await Promise.all([
-        getJson<{ workflow: WorkflowDetail }>(`/api/workflows/${encodeURIComponent(name)}`),
-        getJson<WorkflowGraphState>(`/api/workflows/${encodeURIComponent(name)}/graph`)
+        getJson<{ workflow: WorkflowDetail }>(projectApiUrl(`/api/workflows/${encodeURIComponent(name)}`, projectId)),
+        getJson<WorkflowGraphState>(projectApiUrl(`/api/workflows/${encodeURIComponent(name)}/graph`, projectId))
       ]);
       setWorkflowDetail(detail.workflow);
       setGraph({ nodes: graphData.nodes || [], edges: graphData.edges || [] });
@@ -92,9 +103,9 @@ export const App = () => {
     setLastRunRefresh(null);
     try {
       const [detail, eventData, artifactData] = await Promise.all([
-        getJson<{ run: RunDetail }>(`/api/runs/${encodeURIComponent(runId)}`),
-        getJson<{ events: EventRecord[] }>(`/api/runs/${encodeURIComponent(runId)}/events`),
-        getJson<{ artifacts: Artifact[] }>(`/api/runs/${encodeURIComponent(runId)}/artifacts`)
+        getJson<{ run: RunDetail }>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}`, projectId)),
+        getJson<{ events: EventRecord[] }>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/events`, projectId)),
+        getJson<{ artifacts: Artifact[] }>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}/artifacts`, projectId))
       ]);
       applyRunSnapshot({ run: detail.run, events: eventData.events || [], artifacts: artifactData.artifacts || [] });
     } catch (error) {
@@ -104,7 +115,7 @@ export const App = () => {
 
   useEffect(() => {
     if (!selectedRun || !isActiveRun(runDetail)) return undefined;
-    const source = new EventSource(`/api/runs/${encodeURIComponent(selectedRun)}/stream`);
+    const source = new EventSource(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun)}/stream`, projectId));
     const onSnapshot = (event: MessageEvent): void => {
       const snapshot = JSON.parse(event.data) as RunSnapshot;
       applyRunSnapshot(snapshot);
@@ -114,7 +125,7 @@ export const App = () => {
     source.addEventListener('snapshot', onSnapshot as EventListener);
     source.addEventListener('error', onError);
     return () => source.close();
-  }, [selectedRun, runDetail?.status]);
+  }, [selectedRun, runDetail?.status, projectId]);
 
   const collapseRun = (): void => {
     setSelectedRun(null);
@@ -156,10 +167,12 @@ export const App = () => {
   const streamFreshness = runDetail && isActiveRun(runDetail) ? `Streaming · ${lastRunRefresh || 'pending'}` : 'Stream idle';
 
   return (
+    <ProjectContext.Provider value={projectContextValue}>
     <>
       <header>
         <div className="header-topline">
           <h1>Tesseraft Console</h1>
+          <ProjectSelector />
           <span className="status-pill">{activeSectionLabel[activeTab]}</span>
           {(activeTab === 'workflows' || activeTab === 'runs') && (
             <button type="button" className="header-start-button" onClick={() => setWizardOpen(true)}>Start workflow</button>
@@ -172,6 +185,7 @@ export const App = () => {
           <span className="context-chip"><strong>Workflow</strong>{selectedWorkflow || 'No workflow selected'}</span>
           <span className="context-chip"><strong>Run</strong>{selectedRun ? `${selectedRun}${runStatus ? ` · ${runStatus}` : ''}` : 'No run selected'}</span>
           <span className="context-chip"><strong>Graph node</strong>{selectedNodeId || 'No node selected'}</span>
+          <span className="context-chip"><strong>Project</strong>{projectId}</span>
           <span className="context-chip"><strong>Refresh</strong>{streamFreshness}</span>
         </div>
         <nav className="tabs" aria-label="Run Console sections">
@@ -209,5 +223,6 @@ export const App = () => {
         {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
     </>
+    </ProjectContext.Provider>
   );
 };

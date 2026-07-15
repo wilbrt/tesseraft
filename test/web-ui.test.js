@@ -167,7 +167,7 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(panel, /Settings/);
   assert.match(panel, /\.tesseraft\/settings\.json/);
   assert.match(panel, /\/api\/settings/);
-  assert.match(panel, /putJson<SettingsResponse>\('\/api\/settings'/);
+  assert.match(panel, /putJson<SettingsResponse>\(projectApiUrl\('\/api\/settings'/);
   assert.match(panel, /Default provider/);
   assert.match(panel, /Default model/);
   assert.match(panel, /GitHub token/);
@@ -222,7 +222,7 @@ test('Artifact comments and approval UI sources expose annotation and decision s
   assert.match(artifactBrowser, /Comments on/);
   assert.match(artifactBrowser, /Add a comment anchored to this artifact/);
   assert.match(artifactBrowser, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments/);
-  assert.match(artifactBrowser, /postJson\(`\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments`/);
+  assert.match(artifactBrowser, /postJson\(projectApiUrl\(`\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments`/);
   assert.match(artifactBrowser, /start_line/);
   // Approval decision panel wired into Run Console.
   assert.match(approvalPanel, /Manual input · approval/);
@@ -284,7 +284,7 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.doesNotMatch(controls, /parseInputs/);
   assert.match(controls, /Delete selected run/);
   assert.match(controls, /Confirm permanent deletion of this run's directory/);
-  assert.match(controls, /deleteJson<MutationResult>\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
+  assert.match(controls, /deleteJson<MutationResult>\(projectApiUrl\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
   assert.match(controls, /isDeletableLiveness/);
   assert.match(runListTable, /Show only deletable runs/);
   assert.match(controls, /Confirm one local node execution/);
@@ -292,7 +292,7 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(runListTable, /aria-current=\{expanded \? 'true' : undefined\}/);
   assert.match(runListTable, /status-pill/);
   // Start still goes through POST /api/runs from RunControls' onStart callback.
-  assert.match(controls, /postJson<MutationResult>\('\/api\/runs'/);
+  assert.match(controls, /postJson<MutationResult>\(projectApiUrl\('\/api\/runs'/);
   assert.match(controls, /max_steps: maxSteps/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);

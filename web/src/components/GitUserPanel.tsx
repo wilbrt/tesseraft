@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getJson, putJson } from '../lib/api';
+import { useProject, projectApiUrl } from '../lib/project';
 
 type GitUser = { name: string | null; email: string | null; source: 'project' | 'global' | 'none' };
 type GitUserResponse = { git_user: GitUser };
@@ -8,6 +9,7 @@ const isNonEmpty = (value: string): boolean => value.trim() !== '';
 const isBasicEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 export const GitUserPanel = () => {
+  const { projectId } = useProject();
   const [gitUser, setGitUser] = useState<GitUser | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -17,7 +19,7 @@ export const GitUserPanel = () => {
 
   const load = async (): Promise<void> => {
     try {
-      const data = await getJson<GitUserResponse>('/api/git-user');
+      const data = await getJson<GitUserResponse>(projectApiUrl('/api/git-user', projectId));
       setGitUser(data.git_user);
       setName(data.git_user.name || '');
       setEmail(data.git_user.email || '');
@@ -27,7 +29,7 @@ export const GitUserPanel = () => {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [projectId]);
 
   const save = async (): Promise<void> => {
     setError(null);
@@ -38,7 +40,7 @@ export const GitUserPanel = () => {
     if (!isNonEmpty(email) || !isBasicEmail(email)) { setError('Email is required and must be a valid address.'); return; }
     setBusy(true);
     try {
-      const refreshed = await putJson<GitUserResponse>('/api/git-user', { name, email });
+      const refreshed = await putJson<GitUserResponse>(projectApiUrl('/api/git-user', projectId), { name, email });
       setGitUser(refreshed.git_user);
       setInfo('Saved. The git user is written to the project-local config file.');
     } catch (saveError) {
