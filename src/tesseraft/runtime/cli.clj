@@ -20,6 +20,7 @@
           "start" (recur rest-xs (assoc acc :command "start"))
           "step" (recur rest-xs (assoc acc :command "step"))
           "resume" (recur rest-xs (assoc acc :command "resume"))
+          "cancel" (recur rest-xs (assoc acc :command "cancel"))
           "inspect" (recur rest-xs (assoc acc :command "inspect"))
           "decide" (recur rest-xs (assoc acc :command "decide"))
           "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
@@ -70,6 +71,7 @@
     (println "  tesseraft-run start <workflow.edn> --input ticket=PROJ-123")
     (println "  tesseraft-run step --run-dir .agent-runs/name/run-id")
     (println "  tesseraft-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
+    (println "  tesseraft-run cancel --run-dir .agent-runs/name/run-id")
     (println "  tesseraft-run inspect --run-dir .agent-runs/name/run-id --format json")
     (println "  tesseraft-run decide --run-dir .agent-runs/name/run-id --approval-id <id> --decision <label> [--summary text] [--author-name x --author-email y]"))
   (System/exit 2))
@@ -105,9 +107,18 @@
 
         "resume"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [ctx (apply-run-options (store/load-context (:run-dir opts)) opts)
-                  wf (spec/read-workflow (get-in ctx [:workflow :file]))]
-              (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))))
+            (let [run-dir (:run-dir opts)
+                  ctx (apply-run-options (store/load-context run-dir) opts)
+                  wf (spec/read-workflow (get-in ctx [:workflow :file]))
+                  pid (runtime/register-runtime-process! run-dir)]
+              (try
+                (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))
+                (finally
+                  (runtime/unregister-runtime-process! run-dir pid)))))
+
+        "cancel"
+        (do (when (str/blank? (:run-dir opts)) (usage!))
+            (print-result opts (runtime/cancel! (:run-dir opts))))
 
         "inspect"
         (do (when (str/blank? (:run-dir opts)) (usage!))

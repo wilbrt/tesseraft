@@ -2,6 +2,7 @@
   (:require
     [tesseraft.cli-args :as cli-args]
     [tesseraft.control-plane.core :as control-plane]
+    [tesseraft.control-plane.doctor :as doctor]
     [cheshire.core :as json]
     [clojure.string :as str]))
 
@@ -55,6 +56,7 @@
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
     (println "  tesseraft control-plane project migrate [<project-id>]")
     (println "  tesseraft control-plane project connections <project-id>")
+    (println "  tesseraft control-plane doctor")
     (println)
     (println "Options:")
     (println "  --workspace-root <dir>   Workspace root (default: .)")
@@ -248,6 +250,7 @@
                                     (control-plane/add-run-comment options run-id body project-id)))))
                    "git-user" (git-user-command options (:args opts) project-id)
                    "settings" (settings-command options (:args opts) project-id)
+                   "doctor" (doctor/doctor-report options project-id)
                    "projects" (projects-command options (:args opts))
                    "project" (project-command options (:args opts))
                    (usage!))]

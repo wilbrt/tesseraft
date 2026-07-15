@@ -26,6 +26,61 @@ const removeRunUnder = (runsRoot, runId) => {
   fs.rmSync(path.join(process.cwd(), runsRoot, runId), { recursive: true, force: true });
 };
 
+const seedConnectionsDoctorFixture = () => {
+  const root = process.cwd();
+  const projectsDir = path.join(root, '.tesseraft', 'projects');
+  const defaultManifest = path.join(projectsDir, 'default.json');
+  const explicitManifest = path.join(projectsDir, 'doctor-explicit.json');
+  const fixtureWs = path.join(root, '.agent-runs', 'manual-connections-doctor-explicit-ws');
+  const workflowDir = path.join(fixtureWs, '.tesseraft', 'workflows', 'manual-doctor');
+  const backups = new Map();
+  for (const p of [defaultManifest, explicitManifest]) {
+    backups.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null);
+  }
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.mkdirSync(path.join(fixtureWs, 'runs'), { recursive: true });
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "manual-doctor" :title "Manual Doctor"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :deterministic
+                  :handler :noop/succeed
+                  :runtime {:timeout "10s"}
+                  :next :done}
+          :done {:type :terminal :title "Done" :status :success}}}
+`);
+  fs.writeFileSync(defaultManifest, JSON.stringify({
+    project_id: 'default',
+    name: 'Default',
+    workspace_root: '.',
+    runs_root: '.agent-runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows', 'examples'] },
+    settings: {}
+  }, null, 2));
+  fs.writeFileSync(explicitManifest, JSON.stringify({
+    project_id: 'doctor-explicit',
+    name: 'Doctor Explicit',
+    workspace_root: '.agent-runs/manual-connections-doctor-explicit-ws',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    settings: { 'default-repo-root': 'missing-repo-root' },
+    connections: {
+      github: { 'credential-ref': 'env:DOCTOR_EXPLICIT_GITHUB_TOKEN' },
+      jira: { 'base-url': 'https://doctor-explicit.invalid', 'credential-ref': 'env:DOCTOR_EXPLICIT_JIRA_TOKEN' }
+    }
+  }, null, 2));
+  return () => {
+    fs.rmSync(fixtureWs, { recursive: true, force: true });
+    for (const [p, content] of backups.entries()) {
+      if (content === null) fs.rmSync(p, { force: true });
+      else fs.writeFileSync(p, content);
+    }
+  };
+};
+
 const waitForRunStatus = async (base, runId, status, attempts = 50) => {
   for (let i = 0; i < attempts; i += 1) {
     const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
@@ -103,11 +158,13 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/settings'), ['settings']);
   assert.deepEqual(routeApi('/api/projects'), ['projects']);
   assert.deepEqual(routeApi('/api/projects/default'), ['project', 'default']);
+  assert.deepEqual(routeApi('/api/projects/acme/doctor'), ['project-doctor', 'acme']);
   assert.deepEqual(routeApi('/api/projects/acme/connections'), ['project-connections', 'acme']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
 test('control-plane discovers project and global Tesseraft workflows', () => {
+  fs.mkdirSync(path.join(process.cwd(), '.agent-runs'), { recursive: true });
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-project-'));
   const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-home-'));
   const workflowEdn = (name, title) => [
@@ -144,6 +201,41 @@ test('control-plane discovers project and global Tesseraft workflows', () => {
   }
 });
 
+test('web server exposes seeded explicit Connections Doctor project for manual review', async (t) => {
+  const cleanupFixture = seedConnectionsDoctorFixture();
+  t.after(cleanupFixture);
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const projectsResponse = await fetch(`${base}/api/projects`);
+  assert.equal(projectsResponse.status, 200);
+  const projects = await projectsResponse.json();
+  const ids = projects.projects.map((project) => project.project_id).sort();
+  assert.deepEqual(ids, ['default', 'doctor-explicit']);
+
+  const defaultResponse = await fetch(`${base}/api/projects/default/doctor`);
+  assert.equal(defaultResponse.status, 200);
+  const defaultDoctor = await defaultResponse.json();
+  assert.equal(defaultDoctor.project_id, 'default');
+
+  const explicitResponse = await fetch(`${base}/api/projects/doctor-explicit/doctor`);
+  assert.equal(explicitResponse.status, 200);
+  const explicitDoctor = await explicitResponse.json();
+  assert.equal(explicitDoctor.project_id, 'doctor-explicit');
+  assert.equal(explicitDoctor.checks.find((check) => check.id === 'workflow-discovery')?.status, 'ready');
+  assert.equal(explicitDoctor.checks.find((check) => check.id === 'runs-root')?.status, 'ready');
+  assert.equal(explicitDoctor.checks.find((check) => check.id === 'repository-root')?.status, 'invalid');
+  assert.notDeepEqual(defaultDoctor, explicitDoctor);
+  assert.doesNotMatch(JSON.stringify(defaultDoctor), /manual-connections-doctor-explicit-ws/);
+  assert.doesNotMatch(JSON.stringify(explicitDoctor), /SECRET_SENTINEL_VALUE|stdout|stderr|ghp_|token-preview/);
+
+  const missingResponse = await fetch(`${base}/api/projects/doctor-missing/doctor`);
+  assert.equal(missingResponse.status, 404);
+});
+
 test('web server serves React index/assets and JSON API routes', async (t) => {
   removeRun('web-server-test');
   t.after(() => removeRun('web-server-test'));
@@ -169,6 +261,15 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const asset = await fetch(`${base}${assetMatch[1]}`);
   assert.equal(asset.status, 200);
   assert.match(asset.headers.get('content-type') || '', /javascript/);
+
+  const doctorResponse = await fetch(`${base}/api/projects/default/doctor`);
+  assert.equal(doctorResponse.status, 200);
+  const doctor = await doctorResponse.json();
+  assert.equal(doctor.project_id, 'default');
+  assert.equal(doctor.checks.length, 10);
+  assert.deepEqual(Object.keys(doctor.summary).sort(), ['invalid', 'not-configured', 'ready', 'unreachable'].sort());
+  assert.ok(doctor.checks.every((check) => ['ready', 'not-configured', 'unreachable', 'invalid'].includes(check.status)));
+  assert.doesNotMatch(JSON.stringify(doctor), /SECRET_SENTINEL|stdout|stderr|GH_TOKEN_VALUE/);
 
   const workflowsResponse = await fetch(`${base}/api/workflows`);
   assert.equal(workflowsResponse.status, 200);
@@ -437,6 +538,61 @@ test('web server supports local smoke start-and-run, step, and resume mutations'
   assert.equal(runResponse.status, 200);
   const run = await runResponse.json();
   assert.equal(run.run.run_id, runId);
+});
+
+test('web server cancels a detached runtime and persists terminal cancellation', async (t) => {
+  const runId = `web-cancel-${Date.now()}`;
+  const workflowName = 'cancel-smoke';
+  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', workflowName);
+  const runDir = path.join(process.cwd(), '.agent-runs', workflowName, runId);
+  fs.rmSync(workflowDir, { recursive: true, force: true });
+  fs.rmSync(runDir, { recursive: true, force: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), [
+    `{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "${workflowName}"}`,
+    ' :defaults {:max-rounds 1 :state-timeout "2m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :wait',
+    ' :states {:wait {:type :timer :duration "60s" :runtime {:timeout "90s"} :next :done}',
+    '          :done {:type :terminal :status :success}}}'
+  ].join('\n'));
+  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const startResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: workflowName, run_id: runId, inputs: {} })
+  });
+  assert.equal(startResponse.status, 202);
+
+  const processFile = path.join(runDir, 'runtime-process.json');
+  for (let i = 0; i < 50 && !fs.existsSync(processFile); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(fs.existsSync(processFile), 'detached resume did not persist its process metadata');
+  const runtimePid = JSON.parse(fs.readFileSync(processFile, 'utf8')).pid;
+
+  const cancelResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.equal(cancelResponse.status, 200);
+  const cancelled = await cancelResponse.json();
+  assert.equal(cancelled.operation, 'cancel');
+  assert.equal(cancelled.status, 'ok');
+  assert.equal(cancelled.latest_runtime.run.status, 'cancelled');
+  assert.equal(cancelled.run_detail.run.liveness, 'cancelled');
+  assert.ok(!fs.existsSync(processFile), 'cancellation left stale process metadata');
+  assert.throws(() => process.kill(runtimePid, 0), /ESRCH/);
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
+  assert.match(events, /"event":"run.cancelled"/);
 });
 
 test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {

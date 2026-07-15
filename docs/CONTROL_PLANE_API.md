@@ -51,8 +51,8 @@ The current Web UI server implements:
 - Project abstraction routes (design §4.6): `GET /api/projects`,
   `GET /api/projects/{id}`, `POST /api/projects`,
   `PUT /api/projects/{id}`, `POST /api/projects/{id}/migrate`,
-  `GET /api/projects/{id}/connections`, and
-  `PUT /api/projects/{id}/connections` through `routeApi` → control-plane CLI.
+  `GET /api/projects/{id}/connections`, `PUT /api/projects/{id}/connections`,
+  and `GET /api/projects/{id}/doctor` through `routeApi` → control-plane CLI.
   Secrets never leave the process; raw token payloads are rejected on write.
 - Pi-session routes: list/create/get/send prompt/events/SSE stream.
 
@@ -132,6 +132,7 @@ validated-but-unresolved locally).
 | POST | `/api/projects/{id}/migrate` | `project migrate {id}` | Legacy→default migration; 409 if default already exists. |
 | GET | `/api/projects/{id}/connections` | `project connections {id}` | Connection metadata + masked state; no raw tokens. |
 | PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update `base_url` / `credential-ref`; **never** accepts raw token payloads. |
+| GET | `/api/projects/{id}/doctor` | `--project-id {id} doctor` | Local-first readiness report with `ready`, `not-configured`, `unreachable`, and `invalid` checks. Static/read-only only; no raw secrets or subprocess output. |
 
 Existing default routes are unscoped and operate on the implicit `default` project
 (non-breaking for single-project users). Project-scoped operations thread a
@@ -174,6 +175,29 @@ project's runs-root). The control-plane CLI accepts a global
 | DELETE | `/api/projects/{id}/runs/{runId}` | `delete-run {runId} --project-id {id}` |
 | GET/PUT | `/api/projects/{id}/settings` | `settings get|set --project-id {id}` |
 | GET/PUT | `/api/projects/{id}/git-user` | `git-user get|set --project-id {id}` |
+
+### Connections Doctor response
+
+`GET /api/projects/{id}/doctor` returns a deterministic, project-scoped JSON
+report. Checks are bounded and either `static` configuration inspection or
+`read-only` local checks. Jira and Pinga are not contacted; Pinga is never
+executed. Git/GitHub/Pi checks use local read-only commands with short timeouts
+and fixed allowlisted summaries/remediation. Raw secret values, token previews,
+command environments, and raw stdout/stderr are not returned.
+
+```json
+{
+  "project_id": "default",
+  "summary": {"ready": 2, "not-configured": 7, "unreachable": 0, "invalid": 1},
+  "checks": [
+    {"id":"github-auth","label":"GitHub authentication","status":"ready","mode":"read-only","summary":"gh authentication is available.","remediation":null,"duration_ms":34}
+  ]
+}
+```
+
+Current check ids, in order: `github-credential`, `github-auth`,
+`jira-base-url`, `jira-credential`, `pi-provider-model`, `git-author`,
+`repository-root`, `pinga`, `workflow-discovery`, and `runs-root`.
 
 ## Common conventions
 

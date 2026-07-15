@@ -176,6 +176,18 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(panel, /Save settings/);
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);
+  assert.match(panel, /<ConnectionsDoctorPanel \/>/);
+  const doctor = fs.readFileSync('web/src/components/ConnectionsDoctorPanel.tsx', 'utf8');
+  assert.match(doctor, /Connections Doctor/);
+  assert.match(doctor, /\/api\/projects\/\$\{encodeURIComponent\(projectId \|\| 'default'\)\}\/doctor/);
+  assert.match(doctor, /Run checks/);
+  assert.match(doctor, /ready/);
+  assert.match(doctor, /not-configured/);
+  assert.match(doctor, /unreachable/);
+  assert.match(doctor, /invalid/);
+  assert.match(doctor, /Static configuration/);
+  assert.match(doctor, /Read-only check/);
+  assert.doesNotMatch(doctor, /preview|stdout|stderr|GH_TOKEN|GITHUB_TOKEN|JIRA_TOKEN/);
   assert.match(panel, /\/api\/git-user/);
   // GitUserPanel is still present and unchanged (git-user.json contract preserved).
   assert.match(gitUserPanel, /Git user settings/);
@@ -296,6 +308,8 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /max_steps: maxSteps/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
+  assert.match(controls, /Cancel selected run/);
+  assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/cancel/);
   // Wizard owns the guided start flow and type-correct inputs.
   assert.match(wizard, /Start workflow/);
   assert.match(wizard, /Workflow inputs/);

@@ -1,0 +1,14 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "max-rounds-fixture"}
+ :defaults {:max-rounds 2 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :loop
+ :states
+ {:loop {:type :deterministic
+         :handler :noop/succeed
+         :runtime {:timeout "10s"}
+         :transitions [{:when {:status "ok"}
+                        :effects [:inc-round]
+                        :next :loop}]}
+  :done {:type :terminal :status :success}}}

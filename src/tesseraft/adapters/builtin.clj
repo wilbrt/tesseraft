@@ -318,6 +318,58 @@
             true
             (do (Thread/sleep 200) (recur (or (:err result) (:out result))))))))))
 
+(defn wait-for-http-body-contains [url needle timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [last-error nil]
+      (if (> (System/currentTimeMillis) deadline)
+        (throw (ex-info "Timed out waiting for expected web service response"
+                        {:url url :needle needle :last-error last-error}))
+        (let [result (p/shell {:continue true :out :string :err :string}
+                              "bash" "-lc" (str "curl -fsS --max-time 2 " (pr-str url)))]
+          (if (and (zero? (:exit result)) (str/includes? (str (:out result)) needle))
+            true
+            (do (Thread/sleep 200)
+                (recur (or (:err result) (:out result))))))))))
+
+(defn seed-connections-doctor-project-fixture!
+  "Create an ignored, disposable explicit project for manual-review servers.
+  The fixture stores only credential references and local paths, so produced
+  `:web/start-test-server` artifacts can exercise project switching and doctor
+  isolation without requiring reviewers to mutate their checkout by hand."
+  [cwd]
+  (let [project-id "doctor-explicit"
+        default-manifest-path (fs/path cwd ".tesseraft" "projects" "default.json")
+        fixture-ws (fs/path cwd ".agent-runs" "manual-connections-doctor-explicit-ws")
+        workflows-dir (fs/path fixture-ws ".tesseraft" "workflows" "manual-doctor")
+        runs-dir (fs/path fixture-ws "runs")
+        explicit-manifest-path (fs/path cwd ".tesseraft" "projects" (str project-id ".json"))
+        workflow-path (fs/path workflows-dir "workflow.edn")]
+    (fs/create-dirs workflows-dir)
+    (fs/create-dirs runs-dir)
+    (spit (str workflow-path)
+          "{:api-version \"tesseraft.workflow/v1\"\n :kind :workflow\n :metadata {:name \"manual-doctor\" :title \"Manual Doctor\"}\n :defaults {:max-rounds 1 :state-timeout \"1m\"}\n :policies {:require-timeouts true :require-max-rounds true}\n :initial :start\n :states {:start {:type :deterministic\n                  :handler :noop/succeed\n                  :runtime {:timeout \"10s\"}\n                  :next :done}\n          :done {:type :terminal :title \"Done\" :status :success}}}\n")
+    (store/write-json! default-manifest-path
+                       {:project_id "default"
+                        :name "Default"
+                        :workspace_root "."
+                        :runs_root ".agent-runs"
+                        :discovery {:workflow-roots [".tesseraft/workflows" "examples"]}
+                        :settings {}})
+    (store/write-json! explicit-manifest-path
+                       {:project_id project-id
+                        :name "Doctor Explicit"
+                        :workspace_root ".agent-runs/manual-connections-doctor-explicit-ws"
+                        :runs_root "runs"
+                        :discovery {:workflow-roots [".tesseraft/workflows"]}
+                        :settings {:default-repo-root "missing-repo-root"}
+                        :connections {:github {:credential-ref "env:DOCTOR_EXPLICIT_GITHUB_TOKEN"}
+                                      :jira {:base-url "https://doctor-explicit.invalid"
+                                             :credential-ref "env:DOCTOR_EXPLICIT_JIRA_TOKEN"}}})
+    {"project_id" project-id
+     "default_manifest" (str default-manifest-path)
+     "explicit_manifest" (str explicit-manifest-path)
+     "workspace" (str fixture-ws)}))
+
 (defn start-test-server! [_wf ctx _state-id node]
   (let [cwd (absolute-normal-path (repo-dir ctx node))
         host (or (get-in node [:inputs :host]) "127.0.0.1")
@@ -366,6 +418,29 @@
       (store/write-json! out-path artifact)
       {:status "ok" :test-server-file out-path :url url :pid pid})))
 
+(defn stop-test-server! [_wf ctx _state-id node]
+  (let [server-file (artifact-path ctx (get-in node [:inputs :server-file]))
+        server (when (fs/exists? server-file) (store/read-json server-file))
+        pid (:pid server)
+        handle (when (and (integer? pid) (pos? pid))
+                 (java.lang.ProcessHandle/of (long pid)))
+        present? (and handle (.isPresent handle))
+        process-handle (when present? (.get handle))
+        requested? (if process-handle (.destroy process-handle) false)
+        stopped? (if-not process-handle
+                   false
+                   (loop [remaining 40]
+                     (cond
+                       (not (.isAlive process-handle)) true
+                       (zero? remaining) (do (.destroyForcibly process-handle) false)
+                       :else (do (Thread/sleep 50) (recur (dec remaining))))))]
+    {:status "ok"
+     :server-file server-file
+     :pid pid
+     :process-found (boolean present?)
+     :stop-requested (boolean requested?)
+     :stopped (boolean stopped?)}))
+
 (defn notify-pinga! [_wf ctx _state-id _node]
   (let [msg (str "Workflow finished: " (get-in ctx [:workflow :name]) "\nRun dir: " (run-dir ctx) "\n")]
     (if-let [pinga (not-empty (System/getenv "PINGA_BIN"))]
@@ -381,6 +456,7 @@
    :github/create-pr github-create-pr!
    :github/fetch-pr-feedback github-fetch-pr-feedback!
    :web/start-test-server start-test-server!
+   :web/stop-test-server stop-test-server!
    :notify/pinga notify-pinga!
    :noop/succeed (fn [_wf _ctx _state-id _node] {:status "ok"})})
 
@@ -406,19 +482,25 @@
       (str (fs/path (get-in ctx [:run :dir]) "mock-worktree"))))
 
 (defn mock-test-server [ctx node]
-  {:kind "web-service"
-   :name "mock-test-server"
-   :url "http://127.0.0.1:0"
-   :host (or (get-in node [:inputs :host]) "127.0.0.1")
-   :port 0
-   :pid nil
-   :cwd (mock-worktree-dir ctx node)
-   :worktree_root (mock-worktree-dir ctx node)
-   :command (mapv str (or (get-in node [:inputs :command]) []))
-   :build_command (when-let [cmd (get-in node [:inputs :build-command])] (mapv str cmd))
-   :mock true
-   :started_at (store/now)
-   :lifecycle {:cleanup "none; mock dry run did not start a process"}})
+  (let [cwd (absolute-normal-path (repo-dir ctx node))
+        doctor-fixture (seed-connections-doctor-project-fixture! cwd)]
+    {:kind "web-service"
+     :name "mock-test-server"
+     :url "http://127.0.0.1:0"
+     :host (or (get-in node [:inputs :host]) "127.0.0.1")
+     :port 0
+     :pid nil
+     :cwd cwd
+     :worktree_root cwd
+     :command (mapv str (or (get-in node [:inputs :command]) []))
+     :build_command (when-let [cmd (get-in node [:inputs :build-command])] (mapv str cmd))
+     :connections_doctor_fixture doctor-fixture
+     :mock true
+     :live false
+     :manual_testing_ready false
+     :manual_testing_note "Mock dry run seeded the Connections Doctor project fixture but did not start a live HTTP server. Use a non-mock :web/start-test-server run for browser/API manual review."
+     :started_at (store/now)
+     :lifecycle {:cleanup "none; mock dry run did not start a process"}}))
 
 (defn run-mock-handler! [_wf ctx _state-id node]
   (case (:handler node)
@@ -464,7 +546,17 @@
     (let [server (mock-test-server ctx node)
           out-path (output-path ctx node :test-server "manual-testing/test-server.json")]
       (store/write-json! out-path server)
-      {:status "ok" :mock true :test-server-file out-path :url (:url server) :pid nil})
+      {:status "ok"
+       :mock true
+       :live false
+       :manual-testing-ready false
+       :connections-doctor-fixture (:connections_doctor_fixture server)
+       :test-server-file out-path
+       :url (:url server)
+       :pid nil})
+
+    :web/stop-test-server
+    {:status "ok" :mock true :process-found false :stop-requested false}
 
     :notify/pinga
     {:status "ok" :mock true}

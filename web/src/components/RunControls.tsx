@@ -26,6 +26,7 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
   const [maxSteps, setMaxSteps] = useState(10);
   const [confirmStep, setConfirmStep] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<MutationResult | null>(null);
@@ -46,6 +47,7 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
       setBusy(false);
       if (label === 'step') setConfirmStep(false);
       if (label === 'resume') setConfirmResume(false);
+      if (label === 'cancel') setConfirmCancel(false);
       if (label === 'delete') setConfirmDelete(false);
     }
   };
@@ -116,6 +118,12 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
           <label>Max steps <input type="number" min="1" max="1000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
           <label className="check"><input type="checkbox" checked={confirmResume} onChange={(event) => setConfirmResume(event.target.checked)} /> Confirm bounded local execution.</label>
           <button type="button" disabled={!selectedRun || !confirmResume || busy} onClick={() => mutate('resume', () => postJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}/resume`, projectId), { max_steps: maxSteps }), selectedRun || undefined)}>Resume run</button>
+        </div>
+        <div className="control-card">
+          <h3>Cancel selected run</h3>
+          <p className="muted">Stops the detached runtime and its child processes, then records the run as cancelled.</p>
+          <label className="check"><input type="checkbox" checked={confirmCancel} onChange={(event) => setConfirmCancel(event.target.checked)} /> Confirm cancellation of this run.</label>
+          <button type="button" disabled={!selectedRun || !confirmCancel || busy || ['done', 'failed', 'error', 'cancelled'].includes(runDetail?.status || '')} onClick={() => mutate('cancel', () => postJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}/cancel`, projectId), {}), selectedRun || undefined)}>Cancel run</button>
         </div>
       </div>
       {error && <div className="error">{error}</div>}

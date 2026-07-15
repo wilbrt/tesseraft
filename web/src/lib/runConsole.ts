@@ -2,15 +2,15 @@ import type { EventRecord, Liveness, RunDetail } from '../types/runConsole';
 
 export const eventName = (event: EventRecord): string => event.event || event.type || 'event';
 export const nodeForEvent = (event: EventRecord): string | undefined => event.state || event.from;
-export const isActiveRun = (run: RunDetail | null): boolean => Boolean(run && !['done', 'failed', 'error'].includes(run.status || ''));
+export const isActiveRun = (run: RunDetail | null): boolean => Boolean(run && !['done', 'failed', 'error', 'cancelled'].includes(run.status || ''));
 export const snippet = (value: unknown): string => JSON.stringify(value, null, 2).slice(0, 700);
 
-export const TERMINAL_LIVENESS: Liveness[] = ['done', 'failed'];
+export const TERMINAL_LIVENESS: Liveness[] = ['done', 'failed', 'cancelled'];
 export const isTerminalLiveness = (liveness: Liveness | undefined | null): boolean =>
   liveness != null && TERMINAL_LIVENESS.includes(liveness);
 
 /** A run is finished if its liveness is terminal, or its status is terminal/errored. */
-export const TERMINAL_STATUS = ['done', 'failed', 'error'] as const;
+export const TERMINAL_STATUS = ['done', 'failed', 'error', 'cancelled'] as const;
 export const isFinishedRun = (run: { liveness?: Liveness | null; status?: string }): boolean =>
   isTerminalLiveness(run.liveness) || (run.status != null && (TERMINAL_STATUS as readonly string[]).includes(run.status));
 
@@ -18,6 +18,7 @@ export const isFinishedRun = (run: { liveness?: Liveness | null; status?: string
 export const livenessPillClass = (run: { status?: string; liveness?: Liveness | null }): string => {
   if (run.liveness) return run.liveness;
   if (run.status === 'done') return 'done';
+  if (run.status === 'cancelled') return 'cancelled';
   if (run.status === 'failed' || run.status === 'error') return 'failed';
   return 'parked';
 };

@@ -14,6 +14,76 @@
 (defn parse-input [s]
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
 
+(def terminal-run-statuses #{"done" "failed" "error" "cancelled"})
+
+(defn terminal-run? [ctx]
+  (contains? terminal-run-statuses (get-in ctx [:run :status])))
+
+(defn runtime-process-path [run-dir]
+  (fs/path run-dir "runtime-process.json"))
+
+(defn register-runtime-process! [run-dir]
+  (let [pid (.pid (java.lang.ProcessHandle/current))]
+    (store/write-json! (runtime-process-path run-dir)
+                       {:pid pid :started_at (store/now)})
+    pid))
+
+(defn unregister-runtime-process! [run-dir pid]
+  (let [path (runtime-process-path run-dir)]
+    ;; Do not let an older resume process remove a newer process's marker.
+    (when (and (fs/exists? path)
+               (= pid (:pid (store/read-json path))))
+      (fs/delete-if-exists path))))
+
+(defn- process-descendants [process-handle]
+  (with-open [stream (.descendants process-handle)]
+    (vec (iterator-seq (.iterator stream)))))
+
+(defn- wait-for-process-exit [handles]
+  (loop [remaining 40]
+    (let [alive (filterv #(.isAlive ^java.lang.ProcessHandle %) handles)]
+      (cond
+        (empty? alive) true
+        (zero? remaining) (do (doseq [handle alive] (.destroyForcibly ^java.lang.ProcessHandle handle)) false)
+        :else (do (Thread/sleep 50) (recur (dec remaining)))))))
+
+(defn stop-runtime-process! [run-dir]
+  (let [path (runtime-process-path run-dir)
+        record (when (fs/exists? path) (store/read-json path))
+        pid (:pid record)
+        optional (when (and (integer? pid) (pos? pid))
+                   (java.lang.ProcessHandle/of (long pid)))
+        root (when (and optional (.isPresent optional)) (.get optional))
+        descendants (if (and root (.isAlive root)) (process-descendants root) [])
+        handles (vec (concat (reverse descendants) (when root [root])))]
+    (doseq [handle handles]
+      (when (.isAlive ^java.lang.ProcessHandle handle)
+        (.destroy ^java.lang.ProcessHandle handle)))
+    (let [stopped? (if (seq handles) (wait-for-process-exit handles) true)]
+      (fs/delete-if-exists path)
+      {:pid pid
+       :process_found (boolean root)
+       :descendants (count descendants)
+       :stopped stopped?})))
+
+(defn cancel! [run-dir]
+  (let [before (store/load-context run-dir)]
+    (if (terminal-run? before)
+      before
+      (let [process (stop-runtime-process! run-dir)
+            ;; Reload after stopping the process so its last durable transition
+            ;; cannot overwrite the cancellation state.
+            ctx (store/load-context run-dir)
+            cancelled (-> ctx
+                          (assoc-in [:run :status] "cancelled")
+                          (assoc-in [:run :updated-at] (store/now)))]
+        (store/event! cancelled {:event "run.cancelled"
+                                 :pid (:pid process)
+                                 :process_found (:process_found process)
+                                 :descendants (:descendants process)
+                                 :stopped (:stopped process)})
+        (store/save-context! cancelled)))))
+
 (defn default-branch [inputs]
   (when-let [ticket (:ticket inputs)]
     (str "feature/" (str/lower-case ticket))))
@@ -310,6 +380,49 @@
             (assoc-in [:run :updated-at] (store/now))))
       ctx)))
 
+(defn max-rounds-exceeded? [wf ctx]
+  (let [maximum (get-in wf [:defaults :max-rounds])
+        current (get-in ctx [:run :round] 1)]
+    (and (integer? maximum) (pos? maximum) (> current maximum))))
+
+(defn fail-max-rounds! [wf ctx]
+  (let [maximum (get-in wf [:defaults :max-rounds])
+        current (get-in ctx [:run :round])
+        failed (-> ctx
+                   (assoc-in [:run :status] "failed")
+                   (assoc-in [:run :updated-at] (store/now)))]
+    (store/event! failed {:event "run.max-rounds-exceeded"
+                          :status "failed"
+                          :round current
+                          :max_rounds maximum
+                          :state (some-> (get-in ctx [:run :state]) name)})
+    (store/save-context! failed)
+    failed))
+
+(defn heartbeat-interval-ms []
+  (or (some-> (System/getenv "TESSERAFT_HEARTBEAT_INTERVAL_MS")
+              parse-long
+              (#(when (and % (pos? %)) %)))
+      30000))
+
+(defn execute-with-heartbeat [ctx state-id attempt f]
+  (let [active? (atom true)
+        interval (heartbeat-interval-ms)
+        worker (future
+                 (try
+                   (while @active?
+                     (Thread/sleep interval)
+                     (when @active?
+                       (store/event! ctx {:event "node.heartbeat"
+                                          :state (name state-id)
+                                          :attempt attempt})))
+                   (catch InterruptedException _ nil)))]
+    (try
+      (f)
+      (finally
+        (reset! active? false)
+        (future-cancel worker)))))
+
 (defn read-run-events [ctx]
   (let [p (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
     (when (fs/exists? p)
@@ -470,13 +583,16 @@
       (store/save-context! ctx))))
 
 (defn step! [wf ctx]
-  (if (= "done" (get-in ctx [:run :status]))
+  (if (terminal-run? ctx)
     ctx
     (let [state-id (get-in ctx [:run :state])
           attempt (get-in ctx [:run :attempt])
           node (spec/node wf state-id)]
       (when-not node (throw (ex-info "Current state not found" {:state state-id})))
       (cond
+        (max-rounds-exceeded? wf ctx)
+        (fail-max-rounds! wf ctx)
+
         (= :terminal (:type node))
         (finish-if-terminal wf ctx)
 
@@ -497,7 +613,9 @@
             (let [failed (orphan-run! ctx state-id attempt)]
               (throw (ex-info "Orphaned node detected: started without a terminal event"
                               {:state state-id :attempt attempt :tesseraft/already-failed true})))
-            (let [result (execute-node! wf ctx state-id node)
+            (let [result (execute-with-heartbeat
+                           ctx state-id attempt
+                           #(execute-node! wf ctx state-id node))
                   tr (choose-transition node result)]
               (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
               (finish-if-terminal wf (advance ctx tr result)))))))))
@@ -586,7 +704,7 @@
         ;; A run is "blocked" when it parked at an :approval node awaiting a
         ;; human decision. Stop advancing; the run is resumed by decide!
         ;; (which writes a decision record and calls step!), not by looping.
-        (#{"done" "blocked"} status) ctx
+        (or (contains? terminal-run-statuses status) (= "blocked" status)) ctx
         ;; Pre-check: stop cleanly (park) before starting a node we cannot let
         ;; finish. max-steps is the number of steps we are allowed to start.
         ;; n is the number of steps already started. If (= n max-steps) the

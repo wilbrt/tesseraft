@@ -85,6 +85,10 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
     const id = safeDecode(parts[2]);
     return id === null ? { badRequest: 'Malformed project id' } : ['project', id];
   }
+  if (parts.length === 4 && parts[1] === 'projects' && parts[3] === 'doctor') {
+    const id = safeDecode(parts[2]);
+    return id === null ? { badRequest: 'Malformed project id' } : ['project-doctor', id];
+  }
   if (parts.length === 4 && parts[1] === 'projects' && parts[3] === 'connections') {
     const id = safeDecode(parts[2]);
     return id === null ? { badRequest: 'Malformed project id' } : ['project-connections', id];
@@ -301,6 +305,12 @@ const handleMigrateProject = async (res: Response, projectId: string): Promise<v
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const result = await runControlPlane(['project', 'connections', projectId]);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleGetProjectDoctor = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const result = await runControlPlane(['--project-id', projectId, 'doctor'], { timeout: 12000 });
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -775,7 +785,7 @@ const handleRunStream = async (req: Request, res: Response, runId: string, proje
   };
   const isTerminalSnapshot = (snapshot: unknown): boolean => {
     const run = snapshot && typeof snapshot === 'object' && 'run' in snapshot ? (snapshot as { run?: { status?: unknown } }).run : null;
-    return Boolean(run && typeof run.status === 'string' && ['done', 'failed', 'error'].includes(run.status));
+    return Boolean(run && typeof run.status === 'string' && ['done', 'failed', 'error', 'cancelled'].includes(run.status));
   };
   const sendSnapshot = async (): Promise<void> => {
     if (closed) return;
@@ -851,14 +861,20 @@ const handleAddComment = async (req: Request, res: Response, runId: string, proj
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume', projectId?: string): Promise<void> => {
+const handleExistingRunMutation = async (req: Request, res: Response, runId: string, operation: 'step' | 'resume' | 'cancel', projectId?: string): Promise<void> => {
   const body = req.body as JsonRecord;
   const detail = await refreshedRun(runId, projectId);
   if (detail.status !== 200) return jsonResponse(res, detail.status, detail.body);
   const runDir = runDetailPath(detail.body);
   if (!runDir) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Run detail did not include a path'));
-  const maxSteps = readMaxSteps(body.max_steps, 100);
+  const maxSteps = readMaxSteps(body?.max_steps, 100);
   if (operation === 'resume' && maxSteps === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
+
+  if (operation === 'cancel') {
+    const cli = await runRuntime(['cancel', '--run-dir', runDir, '--format', 'json']);
+    const result = await mutationResponse(operation, runId, cli, runDir, projectId);
+    return jsonResponse(res, result.status, result.body);
+  }
 
   if (operation === 'resume') {
     const background = startRuntime(['resume', '--run-dir', runDir, '--max-steps', String(maxSteps), '--format', 'json']);
@@ -932,6 +948,11 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
     return void handleMigrateProject(res, id).catch(next);
+  });
+  router.get('/projects/:projectId/doctor', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleGetProjectDoctor(res, id).catch(next);
   });
   router.get('/projects/:projectId/connections', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
@@ -1100,7 +1121,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const runId = safeDecode(req.params.runId);
     const operation = req.params.operation;
     if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
-    if (operation !== 'step' && operation !== 'resume') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
+    if (operation !== 'step' && operation !== 'resume' && operation !== 'cancel') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
     return void handleExistingRunMutation(req, res, runId, operation).catch(next);
   });
 
@@ -1136,7 +1157,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const id = projectIdParam(req); if (badProjectId(res, id)) return;
     const runId = safeDecode(req.params.runId); if (runId === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed run id'));
     const operation = req.params.operation;
-    if (operation !== 'step' && operation !== 'resume') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
+    if (operation !== 'step' && operation !== 'resume' && operation !== 'cancel') return jsonResponse(res, 404, errorBody(404, 'not_found', 'API route not found'));
     return void handleExistingRunMutation(req, res, runId, operation, id!).catch(next);
   });
 

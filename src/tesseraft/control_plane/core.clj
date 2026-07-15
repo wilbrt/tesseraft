@@ -859,7 +859,7 @@
 
 (defn derive-liveness
   "Additive, read-only heuristic liveness for a run. Returns a map with
-  :liveness (one of done/failed/orphaned/stale/executing/parked) and
+  :liveness (one of done/failed/cancelled/orphaned/stale/executing/parked) and
   :staleness_seconds. attempts may be empty for a cheap derivation; an empty
   attempts seq means we cannot see an in-flight node, so a fresh running run is
   reported as parked and a stale one as stale (acceptable for the Runs list).
@@ -877,7 +877,7 @@
   ([summary attempts opts]
    (let [status (:status summary)
          state-name (when (:state summary) (name (:state summary)))
-         non-terminal (not (#{"done" "failed" "error"} (str status)))
+         non-terminal (not (#{"done" "failed" "error" "cancelled"} (str status)))
          last-activity (:last-activity-at opts)
          activity-ts (when non-terminal
                       (if last-activity
@@ -895,6 +895,7 @@
      {:liveness
       (cond
         (= "done" (str status)) "done"
+        (= "cancelled" (str status)) "cancelled"
         (#{"failed" "error"} (str status)) "failed"
         current-running (if stale? "orphaned" "executing")
         stale? "stale"

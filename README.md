@@ -145,35 +145,36 @@ src/tesseraft/adapters/*      deterministic handler adapters
 <!-- BEGIN STATUS — generated from STATUS.edn by `bb status`. Do not edit by hand. -->
 Implemented:
 
-- **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.  
+- **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
-- **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.  
+- **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.
   _Evidence:_ src/tesseraft/runtime/core.clj mock-mode?/executor-mode, src/tesseraft/executors/mock.clj, examples/mock-run-workflow/workflow.edn, scripts/test.sh mock dry-run, README.md §Mock mode
-- **project-abstraction** (implemented) — First-class Project abstraction: a named aggregate owning workspace root, run root, workflow discovery context, non-secret settings, and project-specific Jira/GitHub connection config. Raw credentials kept out of repos behind credential-refs resolved from ~/.tesseraft/credentials.json. Control-plane CRUD + resolve-project + default-project fallback (legacy settings/git-user read fallback), run-state project_id stamping with project.resolved event, and /api/projects* HTTP routes (secrets never returned; raw token writes rejected). Project-scoped operations: a global --project-id threads discovery, runs, settings, git-identity, and run identity (project_id, run_id) through the control-plane CLI and the HTTP API (/api/projects/:projectId/{workflows,runs,...}); project-scoped opts resolve the project's workspace_root/runs_root/discovery against the control workspace; the runtime honors --workspace-root/--runs-root so runs land under the selected project; legacy default routes are unchanged (delegate to the default project). A Web UI Project selector persists the active project and scopes all fetches.  
+- **connections-doctor** (implemented) — Project-scoped local-first Connections Doctor: `tesseraft control-plane --project-id <id> doctor`, `GET /api/projects/:projectId/doctor`, and a Settings panel report bounded static/read-only readiness for GitHub/Jira credential refs, gh auth, Pi provider/model local catalog, Git author identity, repo/runs roots, Pinga config, and workflow discovery. Reports use fixed statuses/remediation and never return raw secrets, token previews, command environments, or stdout/stderr.
+  _Evidence:_ src/tesseraft/control_plane/doctor.clj, src/tesseraft/control_plane/cli.clj doctor, web/src-server/routes/api.ts /api/projects/:projectId/doctor, web/src/components/ConnectionsDoctorPanel.tsx, test/web-server.test.js doctor endpoint, test/web-ui.test.js ConnectionsDoctorPanel, scripts/test.sh control-plane doctor, docs/CONTROL_PLANE_API.md Connections Doctor response, manual-testing/connections-doctor.md
+- **project-abstraction** (implemented) — First-class Project abstraction: a named aggregate owning workspace root, run root, workflow discovery context, non-secret settings, and project-specific Jira/GitHub connection config. Raw credentials kept out of repos behind credential-refs resolved from ~/.tesseraft/credentials.json. Control-plane CRUD + resolve-project + default-project fallback (legacy settings/git-user read fallback), run-state project_id stamping with project.resolved event, and /api/projects* HTTP routes (secrets never returned; raw token writes rejected). Project-scoped operations: a global --project-id threads discovery, runs, settings, git-identity, and run identity (project_id, run_id) through the control-plane CLI and the HTTP API (/api/projects/:projectId/{workflows,runs,...}); project-scoped opts resolve the project's workspace_root/runs_root/discovery against the control workspace; the runtime honors --workspace-root/--runs-root so runs land under the selected project; legacy default routes are unchanged (delegate to the default project). A Web UI Project selector persists the active project and scopes all fetches.
   _Evidence:_ src/tesseraft/control_plane/core.clj project-scoped-opts/resolve-project/list-projects/get-project/create-project/update-project/migrate-project/get-project-connections/update-project-connections matching-run-files/resolve-run project_id filter, src/tesseraft/control_plane/cli.clj --project-id threading, src/tesseraft/runtime/core.clj init-context runs-root/workspace-root, src/tesseraft/runtime/cli.clj --runs-root/--workspace-root, schemas/run-state.schema.json project_id, schemas/project.schema.json, schemas/credential-ref.schema.json, web/src-server/routes/api.ts /api/projects/:projectId/{workflows,runs,settings,git-user}, web/src/lib/project.ts, web/src/components/ProjectSelector.tsx, web/src/App.tsx ProjectContext, web/src/components/{GitUserPanel,RunControls,ApprovalPanel,ArtifactBrowser,RunInspection,SettingsPanel,StartWorkflowWizard}.tsx projectApiUrl routing, test/project-scope.test.js, docs/PROJECTS.md, docs/CONTROL_PLANE_API.md project section
-- **container-install** (implemented) — Containerized install path and install_deps script.  
+- **container-install** (implemented) — Containerized install path and install_deps script.
   _Evidence:_ docs/CONTAINER_INSTALL.md, scripts/install.sh, test/container/
-- **blocked-run-state** (implemented) — Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments.  
+- **blocked-run-state** (implemented) — Runtime approval/manual-input node: blocked run state, approval request/decision records, approval.requested/approval.decided events, and artifact comments.
   _Evidence:_ schemas/run-state.schema.json enum "blocked", src/tesseraft/runtime/core.clj approval pause/resume, web/src/components/ApprovalPanel.tsx, web/src-server/lib/approvals.ts, docs/MERGE_PROTOCOL.md
-- **fragment-package-contract** (implemented) — First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof.  
+- **fragment-package-contract** (implemented) — First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof.
   _Evidence:_ src/tesseraft/fragment/cli.clj, src/tesseraft/lint/core.clj lint-fragment-package, docs/FRAGMENTS.md, schemas/fragment-package.schema.json, examples/fragments/test-fix-loop/fragment.edn, bb.edn :fragment
-- **scope-shadow-metadata** (implemented) — Workflow discovery (list + detail) exposes scope (configured/global/project), precedence, and shadowing metadata (duplicates lowered by precedence; conflicts at equal precedence) so the UI can show when a project workflow overrides a global/example one. Discovery precedence semantics are unchanged; metadata is purely inspectable.  
+- **scope-shadow-metadata** (implemented) — Workflow discovery (list + detail) exposes scope (configured/global/project), precedence, and shadowing metadata (duplicates lowered by precedence; conflicts at equal precedence) so the UI can show when a project workflow overrides a global/example one. Discovery precedence semantics are unchanged; metadata is purely inspectable.
   _Evidence:_ src/tesseraft/control_plane/core.clj list-workflows/get-workflow, test/discovery-scope.test.js, web/src/types/runConsole.ts, scripts/test.sh scope-shadow block
-- **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.  
+- **recovery-tests** (implemented) — Interrupted-agent recovery + orphan detection with node.recovered events.
   _Evidence:_ scripts/test.sh recovery fixture, src/tesseraft/runtime/core.clj
-- **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.  
+- **routeapi-architecture** (implemented) — Declarative routeApi mapping /api paths to control-plane commands.
   _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
-- **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.  
+- **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.
   _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
 
 Partial:
 
-- **web-ui** (partial) — Workflow Studio + Run Console scaffold exists; not feature-complete.  
+- **web-ui** (partial) — Workflow Studio + Run Console scaffold exists; not feature-complete.
   _Evidence:_ web/src/, web/src/components/WorkflowStudio.tsx, docs/WEB_UI.md
 
 Not yet implemented:
 
 - Full Pi SDK executor
-- HTTP control-plane server (read-only CLI/library skeleton only)
 - Durable DB-backed runner
 <!-- END STATUS -->

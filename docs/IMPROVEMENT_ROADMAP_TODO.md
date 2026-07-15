@@ -271,12 +271,17 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   > branch, reviewers, and retry budget. Add lint tests proving fragment
   > boundary contracts catch missing resources and invalid exposed outcomes.
 
-### P1.6 Add connections doctor for first-run setup
+### P1.6 Add connections doctor for first-run setup — ✅ DONE
 
 - **Workflow:** review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P1.2, P2.1
 - **Side effects:** Web UI + safe no-op handler checks
+- **Status:** ✅ Done — project-scoped `GET /api/projects/{id}/doctor`,
+  `tesseraft control-plane --project-id <id> doctor`, and a Settings-panel
+  Connections Doctor now report bounded static/read-only checks without
+  returning raw secrets or subprocess output. Covered by web route/UI tests,
+  CLI smoke checks, API docs, and manual-testing/connections-doctor.md.
 - **Prompt:**
   > Add a local-first Connections Doctor in Settings/Studio for GitHub, Jira,
   > Pinga, Pi, git user, and repo root. Each check must use the existing runtime

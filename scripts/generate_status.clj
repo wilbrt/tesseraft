@@ -73,8 +73,8 @@
     (str
      (format "- **%s** %s — %s" label status-tag summary)
      (when gap
-       (str "  \n  _Gap:_ " gap))
-     (str "  \n  _Evidence:_ " (str/join ", " evidence)))))
+       (str "\n  _Gap:_ " gap))
+     (str "\n  _Evidence:_ " (str/join ", " evidence)))))
 
 (defn- render-section [root]
   (let [caps (:capabilities root)
