@@ -133,12 +133,47 @@ validated-but-unresolved locally).
 | GET | `/api/projects/{id}/connections` | `project connections {id}` | Connection metadata + masked state; no raw tokens. |
 | PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update `base_url` / `credential-ref`; **never** accepts raw token payloads. |
 
-Existing routes accept an optional `?project_id=` query param; the default
-project is used when absent (non-breaking). Run state persists `project_id`
-(absent means `"default"`); a `project.resolved` event is emitted at run start.
-Project manifests live under `.tesseraft/projects/<slug>.json` and are safe to
-commit. Resolved secrets live out-of-repo at
-`~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`).
+Existing default routes are unscoped and operate on the implicit `default` project
+(non-breaking for single-project users). Project-scoped operations thread a
+`--project-id` flag through the control-plane CLI and runtime so discovery,
+runs, settings, and git-identity resolve from the selected project. Run identity
+is `(project_id, run_id)`: identical run ids in two projects do not collide.
+Run state persists `project_id` (absent means `"default"`); a `project.resolved`
+event is emitted at run start. Project manifests live under
+`.tesseraft/projects/<slug>.json` and are safe to commit. Resolved secrets live
+out-of-repo at `~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`).
+
+### Project-scoped operations
+
+Project-scoped routes mirror the default routes under a `/api/projects/{id}`
+prefix and thread `--project-id {id}` to the control plane (and, for run start,
+`--workspace-root`/`--runs-root` to the runtime so the run dir lands under the
+project's runs-root). The control-plane CLI accepts a global
+`--project-id <id>` flag before the command (e.g.
+`tesseraft control-plane --project-id acme workflows`).
+
+| Method | Path | Maps to |
+| --- | --- | --- |
+| GET | `/api/projects/{id}/workflows` | `workflows --project-id {id}` |
+| GET | `/api/projects/{id}/workflows/{name}` | `workflow {name} --project-id {id}` |
+| GET | `/api/projects/{id}/workflows/{name}/graph` | `graph {name} --project-id {id}` |
+| GET | `/api/projects/{id}/runs` | `runs --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}` | `run {runId} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/events` | `events {runId} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/artifacts` | `artifacts {runId} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/artifact?path=` | `artifact {runId} {path} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/approvals` | `approvals {runId} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/approval/{approvalId}` | `approval {runId} {approvalId} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/comments?path=` | `comments {runId} --path {path} --project-id {id}` |
+| GET | `/api/projects/{id}/runs/{runId}/stream` | SSE snapshot stream (project-scoped). |
+| POST | `/api/projects/{id}/runs` | `run start ... --project-id {id} --workspace-root … --runs-root …` |
+| POST | `/api/projects/{id}/runs/{runId}/step` | step (project-scoped). |
+| POST | `/api/projects/{id}/runs/{runId}/resume` | resume (project-scoped). |
+| POST | `/api/projects/{id}/runs/{runId}/approvals/{approvalId}` | decide (project-scoped). |
+| POST | `/api/projects/{id}/runs/{runId}/comments` | `comment add ... --project-id {id}` |
+| DELETE | `/api/projects/{id}/runs/{runId}` | `delete-run {runId} --project-id {id}` |
+| GET/PUT | `/api/projects/{id}/settings` | `settings get|set --project-id {id}` |
+| GET/PUT | `/api/projects/{id}/git-user` | `git-user get|set --project-id {id}` |
 
 ## Common conventions
 

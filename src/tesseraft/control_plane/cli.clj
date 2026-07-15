@@ -16,7 +16,7 @@
 ;; greedily stolen as top-level options, relocating manifest writes outside
 ;; the workspace and bypassing path-confinement validation.
 (defn parse-args [args]
-  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs"}]
+  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -30,6 +30,7 @@
             "--workflow-root" (recur more (update acc :workflow-roots conj (cli-args/require-value a b)))
             "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
             "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
+            "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
             (recur rest-xs (assoc acc :command a))))))))
 
 (defn usage! []
@@ -79,17 +80,17 @@
           "--global" (recur (rest xs) (assoc acc :global true))
           (recur (rest xs) acc))))))
 
-(defn git-user-command [options args]
+(defn git-user-command [options args project-id]
   (let [[sub & rest] (if (empty? args) ["get"] args)]
     (case sub
-      "get" (control-plane/get-git-user options)
+      "get" (control-plane/get-git-user options project-id)
       "set" (let [p (parse-git-user-set-args rest)]
              (if (or (= git-user-missing (:name p))
                      (= git-user-missing (:email p))
                      (nil? (:name p))
                      (nil? (:email p)))
                (control-plane/error-response 400 "bad_request" "git-user set requires --name and --email")
-             (control-plane/set-git-user options (:name p) (:email p) (:global p))))
+             (control-plane/set-git-user options (:name p) (:email p) (:global p) project-id)))
       (control-plane/error-response 400 "bad_request" (str "Unknown git-user subcommand: " sub)))))
 
 (def ^:private settings-flags
@@ -122,16 +123,16 @@
               (recur (drop 2 xs) (assoc acc (get settings-flags a) v) global)))
           :else (recur (rest xs) acc global))))))
 
-(defn settings-command [options args]
+(defn settings-command [options args project-id]
   (let [[sub & rest] (if (empty? args) ["get"] args)]
     (case sub
-      "get" (control-plane/get-settings options)
+      "get" (control-plane/get-settings options project-id)
       "set" (let [parsed (try (parse-settings-set-args rest)
                               (catch Throwable t
                                 {:error t}))]
               (if-let [err (:error parsed)]
                 (control-plane/error-response 400 "bad_request" (.getMessage err))
-                (control-plane/set-settings options (:updates parsed) (:global parsed))))
+                (control-plane/set-settings options (:updates parsed) (:global parsed) project-id)))
       (control-plane/error-response 400 "bad_request" (str "Unknown settings subcommand: " sub)))))
 
 (defn require-nth-arg [opts idx label]
@@ -216,23 +217,24 @@
   (try
     (let [opts (parse-args args)
           command (:command opts)
-          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root])
+          project-id (:project-id opts)
+          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id])
           result (case command
-                   "workflows" (control-plane/list-workflows options)
-                   "workflow" (control-plane/get-workflow options (require-arg opts "workflow name"))
-                   "graph" (control-plane/get-workflow-graph options (require-arg opts "workflow name"))
-                   "runs" (control-plane/list-runs options)
-                   "run" (control-plane/get-run options (require-arg opts "run id"))
-                   "delete-run" (control-plane/delete-run options (require-arg opts "run id"))
-                   "events" (control-plane/get-run-events options (require-arg opts "run id"))
-                   "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id"))
-                   "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path"))
-                   "approvals" (control-plane/get-run-approvals options (require-arg opts "run id"))
-                   "approval" (control-plane/get-run-approval options (require-arg opts "run id") (require-nth-arg opts 1 "approval id"))
+                   "workflows" (control-plane/list-workflows options project-id)
+                   "workflow" (control-plane/get-workflow options (require-arg opts "workflow name") project-id)
+                   "graph" (control-plane/get-workflow-graph options (require-arg opts "workflow name") project-id)
+                   "runs" (control-plane/list-runs options project-id)
+                   "run" (control-plane/get-run options (require-arg opts "run id") project-id)
+                   "delete-run" (control-plane/delete-run options (require-arg opts "run id") project-id)
+                   "events" (control-plane/get-run-events options (require-arg opts "run id") project-id)
+                   "artifacts" (control-plane/get-run-artifacts options (require-arg opts "run id") project-id)
+                   "artifact" (control-plane/read-run-artifact options (require-arg opts "run id") (require-nth-arg opts 1 "artifact path") project-id)
+                   "approvals" (control-plane/get-run-approvals options (require-arg opts "run id") project-id)
+                   "approval" (control-plane/get-run-approval options (require-arg opts "run id") (require-nth-arg opts 1 "approval id") project-id)
                    "comments" (let [run-id (require-arg opts "run id")
                                      path (some #(when (re-find #"^--path$" (first %)) (second %))
                                                (partition 2 1 (:args opts)))]
-                               (control-plane/get-run-comments (assoc options :query {:path (or path "")}) run-id))
+                               (control-plane/get-run-comments (assoc options :query {:path (or path "")}) run-id project-id))
                    "comment" (let [[sub & rest-args] (:args opts)]
                               (if (not= "add" sub)
                                 (control-plane/error-response 400 "bad_request" (str "Unknown comment subcommand: " sub))
@@ -243,9 +245,9 @@
                                       body {:path (:path p) :body (:body p) :anchor anchor}]
                                   (if (or (str/blank? run-id) (str/blank? (:path p)) (str/blank? (:body p)))
                                     (control-plane/error-response 400 "bad_request" "comment add requires <run-id> --path <artifact> --body <text>")
-                                    (control-plane/add-run-comment options run-id body)))))
-                   "git-user" (git-user-command options (:args opts))
-                   "settings" (settings-command options (:args opts))
+                                    (control-plane/add-run-comment options run-id body project-id)))))
+                   "git-user" (git-user-command options (:args opts) project-id)
+                   "settings" (settings-command options (:args opts) project-id)
                    "projects" (projects-command options (:args opts))
                    "project" (project-command options (:args opts))
                    (usage!))]

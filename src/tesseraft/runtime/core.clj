@@ -23,7 +23,9 @@
         run-id (or (:run-id opts)
                    (str "run-" (-> (store/now) (str/replace #"[:.]" "-") (str/replace #"Z$" "Z"))))
         name (spec/workflow-name wf)
-        run-dir (str (fs/absolutize (fs/path ".agent-runs" name run-id)))
+        run-dir (str (fs/absolutize (fs/path (or (:workspace-root opts) ".")
+                                      (or (:runs-root opts) ".agent-runs")
+                                      name run-id)))
         inputs (merge {:repo-root "."
                        :base-branch (get-in wf [:defaults :base-branch] "main")}
                       (:inputs opts))

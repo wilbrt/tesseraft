@@ -349,3 +349,17 @@ button.link { background: transparent; border: 0; color: #1d4ed8; text-decoratio
 .project-tab.active { border-color: #1d4ed8; background: #eff6ff; }
 .settings-panel .item-list .project-tab + .project-tab { margin-left: 0; }
 @media (max-width: 480px) { .project-tab { width: 100%; } }
+
+/* Global Project selector in the header topline (project-scoped operations). */
+.project-selector { position: relative; display: inline-flex; align-items: center; }
+.project-selector-button { display: inline-flex; align-items: center; gap: 0.4rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 0.45rem; padding: 0.3rem 0.55rem; cursor: pointer; font: inherit; color: #0f172a; }
+.project-selector-button:hover { background: #eff6ff; border-color: #1d4ed8; }
+.project-selector-label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.project-selector-caret { font-size: 0.7rem; color: #475569; }
+.project-selector-menu { position: absolute; top: 100%; left: 0; margin: 0.25rem 0 0; padding: 0.25rem; list-style: none; background: #fff; border: 1px solid #cbd5e1; border-radius: 0.45rem; box-shadow: 0 4px 10px rgba(15,23,42,0.12); min-width: 12rem; z-index: 20; }
+.project-selector-item { display: flex; flex-direction: column; width: 100%; text-align: left; background: transparent; border: 0; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: 0.3rem; font: inherit; }
+.project-selector-item:hover { background: #eff6ff; }
+.project-selector-item.active { background: #dbeafe; }
+.project-selector-id { font-weight: 600; }
+.project-selector-name { color: #475569; font-size: 0.82rem; }
+.project-selector-empty { padding: 0.4rem 0.5rem; color: #64748b; }
