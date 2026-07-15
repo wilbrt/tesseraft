@@ -5,19 +5,31 @@
     [cheshire.core :as json]
     [clojure.string :as str]))
 
+;; Top-level options (`--workspace-root`, `--workflow-root`,
+;; `--tesseraft-home`, `--runs-root`) are ONLY consumed *before* the command
+;; is set. This matches all existing usage, which places these flags before
+;; the command (e.g. `control-plane --workspace-root <root> workflows`).
+;; Crucially, it also disambiguates the `project create|update` subcommands,
+;; whose own `--workspace-root`/`--runs-root`/`--workflow-root` flags are
+;; *project-spec* values (written into `.tesseraft/projects/<id>.json`), not
+;; control-plane workspace overrides. Without this ordering, those flags were
+;; greedily stolen as top-level options, relocating manifest writes outside
+;; the workspace and bypassing path-confinement validation.
 (defn parse-args [args]
   (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs"}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
             rest-xs (rest xs)]
-        (case a
-          "--workspace-root" (recur more (assoc acc :workspace-root (cli-args/require-value a b)))
-          "--workflow-root" (recur more (update acc :workflow-roots conj (cli-args/require-value a b)))
-          "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
-          "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
-          (if (:command acc)
-            (recur rest-xs (update acc :args conj a))
+        (if (:command acc)
+          ;; Command is fixed: every remaining token is a command argument,
+          ;; including any that look like top-level options.
+          (recur rest-xs (update acc :args conj a))
+          (case a
+            "--workspace-root" (recur more (assoc acc :workspace-root (cli-args/require-value a b)))
+            "--workflow-root" (recur more (update acc :workflow-roots conj (cli-args/require-value a b)))
+            "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
+            "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
             (recur rest-xs (assoc acc :command a))))))))
 
 (defn usage! []

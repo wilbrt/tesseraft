@@ -269,10 +269,24 @@
                         (dissoc :source)
                         (assoc :connections connections))))))))
 
+(defn- path-escape-component?
+  "True if the relative path string contains a `..` path component or an
+  absolute path, i.e. could resolve outside its intended root. Accepts a
+  workspace root to interpret relative vs absolute inputs."
+  [workspace-root p]
+  (let [parts (if (str/blank? p) [] (str/split (str p) #"/"))]
+    (or (fs/absolute? (fs/path p))
+        (some #(= % "..") parts))))
+
 (defn- validate-project-spec
   "Validate a project create/update spec. Returns a string error or nil."
   [options project-id spec]
-  (let [wr (:workspace-root (opts options))]
+  ;; Absolutize the workspace root so confinement checks are well-defined even
+  ;; when the configured `:workspace-root` is the relative default `"."`.
+  ;; `abs-path` only absolutizes *its input* when it is already absolute, so a
+  ;; relative workspace root would otherwise yield empty/relative `abs-path`
+  ;; results and let absolute escapes (e.g. `/tmp/escape`) through.
+  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))]
     (cond
       (not (valid-project-id? project-id))
       (str "Invalid project_id (expected " project-id-re ")")
@@ -287,6 +301,17 @@
            (not (path-prefix? (abs-path wr ".")
                              (abs-path wr (:workspace_root spec)))))
       "workspace_root must be under the current workspace"
+
+      ;; runs_root is resolved relative to the workspace root and must stay
+      ;; confined under it: reject any `..` component or absolute path outside
+      ;; the workspace. This is the control-plane-level confinement that
+      ;; prevents run artifacts from being written to arbitrary filesystem
+      ;; locations (design §6 path-confinement risk).
+      (and (contains? spec :runs_root)
+           (or (path-escape-component? wr (:runs_root spec))
+               (not (path-prefix? (abs-path wr ".")
+                                 (abs-path wr (:runs_root spec))))))
+      "runs_root must be a relative path under the current workspace"
 
       :else
       (let [discovery (:discovery spec)

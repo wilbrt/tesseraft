@@ -231,6 +231,24 @@ const handleGetSettings = async (res: Response): Promise<void> => {
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CREDENTIAL_REF_RE = /^(env|github-actions):\S+$/;
 
+// Collect workflow roots from a request body, honoring both the flat
+// `workflow_roots` field and the nested design-doc shape
+// `discovery.workflow-roots` (hyphenated) or `discovery.workflow_roots`
+// (underscored). The CLI subcommand accepts `--workflow-root <path>` repeated.
+const collectWorkflowRoots = (body: JsonRecord): string[] => {
+  const roots: string[] = [];
+  if (Array.isArray(body.workflow_roots)) for (const r of body.workflow_roots) if (typeof r === 'string') roots.push(r);
+  const discovery = body.discovery;
+  if (discovery && typeof discovery === 'object' && !Array.isArray(discovery)) {
+    const d = discovery as Record<string, unknown>;
+    for (const key of ['workflow-roots', 'workflow_roots']) {
+      const v = d[key];
+      if (Array.isArray(v)) for (const r of v) if (typeof r === 'string') roots.push(r);
+    }
+  }
+  return roots;
+};
+
 const handleListProjects = async (res: Response): Promise<void> => {
   const result = await runControlPlane(['projects']);
   return jsonResponse(res, result.status, result.body);
@@ -250,7 +268,7 @@ const handleCreateProject = async (req: Request, res: Response): Promise<void> =
   if (typeof body.name === 'string' && body.name.trim() !== '') args.push('--name', body.name.trim());
   if (typeof body.workspace_root === 'string' && body.workspace_root.trim() !== '') args.push('--workspace-root', body.workspace_root.trim());
   if (typeof body.runs_root === 'string' && body.runs_root.trim() !== '') args.push('--runs-root', body.runs_root.trim());
-  if (Array.isArray(body.workflow_roots)) for (const r of body.workflow_roots) if (typeof r === 'string') args.push('--workflow-root', r);
+  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
   const conns = body.connections;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
     const c = conns as Record<string, JsonRecord>;
@@ -268,7 +286,7 @@ const handleUpdateProject = async (req: Request, res: Response, projectId: strin
   if (typeof body.name === 'string') args.push('--name', body.name);
   if (typeof body.workspace_root === 'string') args.push('--workspace-root', body.workspace_root);
   if (typeof body.runs_root === 'string') args.push('--runs-root', body.runs_root);
-  if (Array.isArray(body.workflow_roots)) for (const r of body.workflow_roots) if (typeof r === 'string') args.push('--workflow-root', r);
+  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
 };

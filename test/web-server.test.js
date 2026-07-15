@@ -1076,3 +1076,83 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('project abstraction: path-confinement rejects runs_root and workspace_root escapes (review issues 1 & 2)', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-confinement-'));
+  try {
+    const cp = (args) => {
+      try {
+        return { out: JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8', stdio: 'pipe' })), threw: false };
+      } catch (e) {
+        return { out: JSON.parse(String(e.stdout || '{}')), threw: true, stderr: String(e.stderr || '') };
+      }
+    };
+
+    // runs_root traversal escapes are rejected and not persisted.
+    const rr = cp(['project', 'create', 'escape-runs', '--runs-root', '../../../tmp/escape']);
+    assert.equal(rr.threw, true, 'runs_root escape must exit nonzero');
+    assert.equal(rr.out.status, 400, rr.out);
+    assert.match(rr.out.error.message, /runs_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-runs.json')), 'escaped runs_root manifest must not be written');
+
+    // workspace_root relative escape is rejected and not persisted.
+    const wr = cp(['project', 'create', 'escape-ws-rel', '--workspace-root', '../etc/passwd']);
+    assert.equal(wr.threw, true, 'relative workspace_root escape must exit nonzero');
+    assert.equal(wr.out.status, 400, wr.out);
+    assert.match(wr.out.error.message, /workspace_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-rel.json')), 'escaped workspace_root manifest must not be written');
+
+    // workspace_root absolute escape is rejected and not persisted.
+    const wa = cp(['project', 'create', 'escape-ws-abs', '--workspace-root', '/tmp/escape']);
+    assert.equal(wa.threw, true, 'absolute workspace_root escape must exit nonzero');
+    assert.equal(wa.out.status, 400, wa.out);
+    assert.match(wa.out.error.message, /workspace_root/);
+    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-abs.json')), 'absolute escaped workspace_root manifest must not be written');
+
+    // Sanity: a legitimately scoped project still creates.
+    const ok = cp(['project', 'create', 'ok-proj', '--runs-root', '.agent-runs']);
+    assert.equal(ok.threw, false, ok.out && ok.out.error);
+    assert.equal(ok.out.project_id, 'ok-proj');
+    assert.ok(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'ok-proj.json')));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP create rejects path escapes with 400 and honors nested discovery.workflow-roots (review issues 1, 2, 3)', async () => {
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    // POST /api/projects with an escaping runs_root returns 400, never 201.
+    const escapeRes = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: 'http-escape', runs_root: '../../../tmp/escape' })
+    });
+    assert.equal(escapeRes.status, 400, 'escaped runs_root must be 400, not 201');
+    const escapeBody = await escapeRes.json();
+    assert.match(escapeBody.error.message, /runs_root|workspace_root|path/i, escapeBody);
+    // A follow-up GET must 404 (no manifest created).
+    const gone = await fetch(`${base}/api/projects/http-escape`);
+    assert.equal(gone.status, 404, 'escaped project must not have been persisted');
+
+    // POST with the design-doc nested discovery shape is honored.
+    const nested = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: 'nested-discovery', name: 'Nested', discovery: { 'workflow-roots': ['examples/smoke'] } })
+    });
+    assert.equal(nested.status, 201, 'nested discovery create should succeed');
+    const nestedBody = await nested.json();
+    assert.deepEqual(nestedBody.discovery['workflow-roots'], ['examples/smoke'], 'nested discovery.workflow-roots must be honored');
+
+    // A follow-up GET confirms the nested roots were persisted.
+    const refetch = await fetch(`${base}/api/projects/nested-discovery`);
+    assert.equal(refetch.status, 200);
+    const refetched = await refetch.json();
+    assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
+  } finally {
+    await close(server);
+  }
+});
