@@ -308,6 +308,8 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /max_steps: maxSteps/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
   assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
+  assert.match(controls, /Cancel selected run/);
+  assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/cancel/);
   // Wizard owns the guided start flow and type-correct inputs.
   assert.match(wizard, /Start workflow/);
   assert.match(wizard, /Workflow inputs/);

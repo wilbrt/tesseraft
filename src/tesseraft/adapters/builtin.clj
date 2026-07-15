@@ -379,8 +379,7 @@
         out-path (artifact-path ctx (or (get-in node [:outputs :test-server :path]) "manual-testing/test-server.json"))]
     (when build-command
       (apply shell! {:dir cwd} (map str build-command)))
-    (let [doctor-fixture (seed-connections-doctor-project-fixture! cwd)
-          ;; Default the manual test server to the fake Pi adapter so the
+    (let [;; Default the manual test server to the fake Pi adapter so the
           ;; compose -> preview -> save flow is deterministic without real
           ;; API spend. Respect an explicitly inherited TESSERAFT_PI_ADAPTER
           ;; so real-SDK manual testing remains opt-in via the parent env.
@@ -411,18 +410,36 @@
                     :worktree_root cwd
                     :command command
                     :build_command build-command
-                    :connections_doctor_fixture doctor-fixture
                     :started_at (store/now)
                     :lifecycle {:cleanup "kill pid after manual testing/review run"
                                 :cleanup_command (when pid (str "kill " pid))
                                 :owner "tesseraft deterministic handler :web/start-test-server"}}]
       (wait-for-http-ok url 10000)
-      ;; The review-loop manual-testing gate must be able to verify project
-      ;; isolation. Do not publish a produced server artifact until the live
-      ;; server sees the disposable explicit project seeded above.
-      (wait-for-http-body-contains (str url "/api/projects") "doctor-explicit" 10000)
       (store/write-json! out-path artifact)
       {:status "ok" :test-server-file out-path :url url :pid pid})))
+
+(defn stop-test-server! [_wf ctx _state-id node]
+  (let [server-file (artifact-path ctx (get-in node [:inputs :server-file]))
+        server (when (fs/exists? server-file) (store/read-json server-file))
+        pid (:pid server)
+        handle (when (and (integer? pid) (pos? pid))
+                 (java.lang.ProcessHandle/of (long pid)))
+        present? (and handle (.isPresent handle))
+        process-handle (when present? (.get handle))
+        requested? (if process-handle (.destroy process-handle) false)
+        stopped? (if-not process-handle
+                   false
+                   (loop [remaining 40]
+                     (cond
+                       (not (.isAlive process-handle)) true
+                       (zero? remaining) (do (.destroyForcibly process-handle) false)
+                       :else (do (Thread/sleep 50) (recur (dec remaining))))))]
+    {:status "ok"
+     :server-file server-file
+     :pid pid
+     :process-found (boolean present?)
+     :stop-requested (boolean requested?)
+     :stopped (boolean stopped?)}))
 
 (defn notify-pinga! [_wf ctx _state-id _node]
   (let [msg (str "Workflow finished: " (get-in ctx [:workflow :name]) "\nRun dir: " (run-dir ctx) "\n")]
@@ -439,6 +456,7 @@
    :github/create-pr github-create-pr!
    :github/fetch-pr-feedback github-fetch-pr-feedback!
    :web/start-test-server start-test-server!
+   :web/stop-test-server stop-test-server!
    :notify/pinga notify-pinga!
    :noop/succeed (fn [_wf _ctx _state-id _node] {:status "ok"})})
 
@@ -536,6 +554,9 @@
        :test-server-file out-path
        :url (:url server)
        :pid nil})
+
+    :web/stop-test-server
+    {:status "ok" :mock true :process-found false :stop-requested false}
 
     :notify/pinga
     {:status "ok" :mock true}

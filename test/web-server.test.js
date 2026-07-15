@@ -540,6 +540,61 @@ test('web server supports local smoke start-and-run, step, and resume mutations'
   assert.equal(run.run.run_id, runId);
 });
 
+test('web server cancels a detached runtime and persists terminal cancellation', async (t) => {
+  const runId = `web-cancel-${Date.now()}`;
+  const workflowName = 'cancel-smoke';
+  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', workflowName);
+  const runDir = path.join(process.cwd(), '.agent-runs', workflowName, runId);
+  fs.rmSync(workflowDir, { recursive: true, force: true });
+  fs.rmSync(runDir, { recursive: true, force: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), [
+    `{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "${workflowName}"}`,
+    ' :defaults {:max-rounds 1 :state-timeout "2m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :wait',
+    ' :states {:wait {:type :timer :duration "60s" :runtime {:timeout "90s"} :next :done}',
+    '          :done {:type :terminal :status :success}}}'
+  ].join('\n'));
+  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const startResponse = await fetch(`${base}/api/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_name: workflowName, run_id: runId, inputs: {} })
+  });
+  assert.equal(startResponse.status, 202);
+
+  const processFile = path.join(runDir, 'runtime-process.json');
+  for (let i = 0; i < 50 && !fs.existsSync(processFile); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(fs.existsSync(processFile), 'detached resume did not persist its process metadata');
+  const runtimePid = JSON.parse(fs.readFileSync(processFile, 'utf8')).pid;
+
+  const cancelResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.equal(cancelResponse.status, 200);
+  const cancelled = await cancelResponse.json();
+  assert.equal(cancelled.operation, 'cancel');
+  assert.equal(cancelled.status, 'ok');
+  assert.equal(cancelled.latest_runtime.run.status, 'cancelled');
+  assert.equal(cancelled.run_detail.run.liveness, 'cancelled');
+  assert.ok(!fs.existsSync(processFile), 'cancellation left stale process metadata');
+  assert.throws(() => process.kill(runtimePid, 0), /ESRCH/);
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
+  assert.match(events, /"event":"run.cancelled"/);
+});
+
 test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {
   const runId = `web-approval-${Date.now()}`;
   const approvalRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);

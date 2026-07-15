@@ -189,6 +189,7 @@ pre {
 .status-pill + .status-pill { margin-left: 0.35rem; }
 .status-pill.ok, .status-pill.done { background: #dcfce7; color: #166534; }
 .status-pill.error, .status-pill.failed { background: #fee2e2; color: #991b1b; }
+.status-pill.cancelled { background: #f3f4f6; color: #4b5563; }
 .status-pill.running, .status-pill.executing { background: #dbeafe; color: #1d4ed8; }
 .status-pill.parked { background: #e0e7ff; color: #3730a3; }
 .status-pill.orphaned { background: #ffedd5; color: #9a3412; }

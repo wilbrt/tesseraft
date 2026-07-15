@@ -108,6 +108,85 @@ assert 'THINKING: medium' in log, log
 PY
 rm -f /tmp/tesseraft-agent-model-lint.json /tmp/tesseraft-agent-model-invalid-lint.json /tmp/tesseraft-agent-model-run.json
 
+printf '\nChecking runtime max-round enforcement...\n'
+MAX_ROUNDS_WORKFLOW="test/fixtures/valid/max-rounds.workflow.edn"
+MAX_ROUNDS_RUN_DIR=".agent-runs/max-rounds-fixture/max-rounds-test"
+rm -rf "$MAX_ROUNDS_RUN_DIR"
+./bin/tesseraft run start "$MAX_ROUNDS_WORKFLOW" --run-id max-rounds-test --format json >/dev/null
+./bin/tesseraft run step --run-dir "$MAX_ROUNDS_RUN_DIR" --format json >/dev/null
+./bin/tesseraft run step --run-dir "$MAX_ROUNDS_RUN_DIR" --format json >/dev/null
+./bin/tesseraft run step --run-dir "$MAX_ROUNDS_RUN_DIR" --format json >/dev/null
+python3 - <<'PY'
+import json
+from pathlib import Path
+run_dir = Path('.agent-runs/max-rounds-fixture/max-rounds-test')
+state = (run_dir / 'state.edn').read_text()
+events = [json.loads(line) for line in (run_dir / 'events.jsonl').read_text().splitlines() if line.strip()]
+assert ':status "failed"' in state, state
+assert ':round 3' in state, state
+limit = [event for event in events if event.get('event') == 'run.max-rounds-exceeded']
+assert len(limit) == 1, events
+assert limit[0]['round'] == 3 and limit[0]['max_rounds'] == 2, limit
+assert len([event for event in events if event.get('event') == 'node.started']) == 2, events
+PY
+
+printf '\nChecking in-flight node heartbeat events...\n'
+TESSERAFT_HEARTBEAT_INTERVAL_MS=20 bb -e '
+  (require (quote [tesseraft.runtime.core :as runtime])
+           (quote [cheshire.core :as json])
+           (quote [clojure.string :as str]))
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                   "tesseraft-heartbeat"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        ctx {:run {:dir dir}}]
+    (runtime/execute-with-heartbeat ctx :slow-node 7
+      #(do (Thread/sleep 110) :ok))
+    (let [events (map #(json/parse-string % true)
+                      (remove str/blank? (str/split-lines (slurp (str dir "/events.jsonl")))))
+          heartbeats (filter #(= "node.heartbeat" (:event %)) events)]
+      (assert (<= 2 (count heartbeats)) events)
+      (assert (every? #(and (= "slow-node" (:state %)) (= 7 (:attempt %))) heartbeats) heartbeats)))'
+
+printf '\nChecking persisted runtime cancellation and process-tree cleanup...\n'
+bb -e '
+  (require (quote [tesseraft.runtime.core :as runtime])
+           (quote [tesseraft.runtime.store :as store])
+           (quote [cheshire.core :as json])
+           (quote [clojure.string :as str]))
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                   "tesseraft-cancel"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        child (.start (ProcessBuilder. ["bash" "-lc" "sleep 60 & wait"]))
+        pid (.pid child)
+        descendant-count (fn []
+                           (with-open [stream (.descendants (.toHandle child))]
+                             (.count stream)))
+        ctx {:workflow {:name "cancel-fixture"}
+             :run {:id "cancel-test" :dir dir :status "running"
+                   :state :slow :attempt 1 :updated-at (store/now)}}]
+    (try
+      (store/save-context! ctx)
+      (store/write-json! (runtime/runtime-process-path dir)
+                         {:pid pid :started_at (store/now)})
+      ;; Give bash enough time to spawn sleep so descendant cleanup is tested.
+      (loop [remaining 40]
+        (when (and (zero? (descendant-count)) (pos? remaining))
+          (Thread/sleep 25)
+          (recur (dec remaining))))
+      (let [cancelled (runtime/cancel! dir)
+            events (map #(json/parse-string % true)
+                        (remove str/blank? (str/split-lines (slurp (str dir "/events.jsonl")))))
+            event (last (filter #(= "run.cancelled" (:event %)) events))]
+        (assert (= "cancelled" (get-in cancelled [:run :status])) cancelled)
+        (assert (not (.isAlive child)) "runtime root process is still alive")
+        (assert event events)
+        (assert (= true (:process_found event)) event)
+        (assert (pos? (:descendants event)) event)
+        (assert (= true (:stopped event)) event)
+        (assert (not (.exists (.toFile (runtime/runtime-process-path dir))))))
+      (finally
+        (when (.isAlive child) (.destroyForcibly child)))))'
+
 printf '\nLinting self-contained node fixtures...\n'
 ./bin/tesseraft node lint test/fixtures/valid/simple-node/node.edn
 ./bin/tesseraft node lint .tesseraft/nodes/manual-input/node.edn
@@ -546,6 +625,50 @@ bb -e '(require (quote [tesseraft.adapters.builtin :as b])
          (assert (= false (:manual_testing_ready mock-server)) mock-server)
          (assert (= "doctor-explicit" (get-in mock-server [:connections_doctor_fixture "project_id"])) mock-server)
          (assert (contains? mock-ids "doctor-explicit") mock-projects))'
+
+printf '\nChecking produced multi-project test server and cleanup...\n'
+bb -e '(require (quote [tesseraft.adapters.builtin :as b])
+                (quote [tesseraft.runtime.store :as store])
+                (quote [babashka.fs :as fs])
+                (quote [babashka.process :as p])
+                (quote [cheshire.core :as json]))
+       (let [cwd (str (fs/absolutize "."))
+             run-dir (str (java.nio.file.Files/createTempDirectory
+                            "doctor-live-server"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+             default-path (fs/path cwd ".tesseraft" "projects" "default.json")
+             explicit-path (fs/path cwd ".tesseraft" "projects" "doctor-explicit.json")
+             fixture-ws (fs/path cwd ".agent-runs" "manual-connections-doctor-explicit-ws")
+             backups (into {} (for [path [default-path explicit-path]]
+                                [path (when (fs/exists? path) (slurp (str path)))]))
+             ctx {:inputs {:repo-root cwd}
+                  :run {:dir run-dir :worktree-dir cwd :round 1}}
+             node {:runtime {:cwd cwd}
+                   :inputs {:host "127.0.0.1"
+                            :port 0
+                            :build-command ["bash" "-lc" "python3 scripts/prepare_connections_doctor_fixture.py && npm run web:build"]
+                            :command ["node" "web/server.js" "--host" "127.0.0.1" "--port" "0"]}
+                   :outputs {:test-server {:path "manual-testing/test-server-1.json"}}}
+             stop-node {:inputs {:server-file "manual-testing/test-server-1.json"}}]
+         (try
+           (let [started (b/start-test-server! nil ctx :start-test-server node)
+                 artifact (store/read-json (:test-server-file started))
+                 response (p/shell {:out :string :err :string}
+                                   "curl" "-fsS" (str (:url artifact) "/api/projects"))
+                 projects (json/parse-string (:out response) true)
+                 ids (set (map :project_id (:projects projects)))
+                 stopped (b/stop-test-server! nil ctx :stop-test-server stop-node)]
+             (assert (contains? ids "default") projects)
+             (assert (contains? ids "doctor-explicit") projects)
+             (assert (= true (:process-found stopped)) stopped)
+             (assert (= true (:stop-requested stopped)) stopped)
+             (assert (= true (:stopped stopped)) stopped))
+           (finally
+             (doseq [[path content] backups]
+               (if content
+                 (spit (str path) content)
+                 (fs/delete-if-exists path)))
+             (fs/delete-tree fixture-ws))))'
 
 printf '\nChecking control-plane scope/shadowing metadata (P1.1)...\n'
 SCOPE_TMP="$(mktemp -d)"

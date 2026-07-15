@@ -108,7 +108,7 @@
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m"}
    :inputs {:host "127.0.0.1"
             :port 0
-            :build-command ["npm" "run" "web:build"]
+            :build-command ["bash" "-lc" "python3 scripts/prepare_connections_doctor_fixture.py && npm run web:build"]
             :command ["node" "web/server.js" "--host" "127.0.0.1" "--port" "0"]}
    :outputs {:test-server {:path "manual-testing/test-server-{{run.round}}.json" :required true}}
    :resources {:requires [{:kind :worktree :name "run-worktree" :path "worktree/path.txt" :mode :read}
@@ -139,8 +139,28 @@
                :produces [{:kind :validation-report :name "manual-testing-status" :path "manual-testing/status-{{run.round}}.json"}
                           {:kind :review-evidence :name "manual-testing-report" :path "manual-testing/report-{{run.round}}.md"}
                           {:kind :issue-file :name "manual-testing-issues" :path "manual-testing/issues-{{run.round}}.json"}]}
-   :transitions [{:when {:status "pass"} :next :review}
-                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+   :transitions [{:when {:status "pass"} :next :stop-test-server-pass}
+                 {:when {:status "fail"} :effects [:merge-issues] :next :stop-test-server-fail}]}
+
+  :stop-test-server-pass
+  {:type :deterministic
+   :title "Stop test server after manual testing"
+   :handler :web/stop-test-server
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "30s"}
+   :inputs {:server-file "manual-testing/test-server-{{run.round}}.json"}
+   :resources {:consumes [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :write}]
+               :produces [{:kind :artifact :name "test-server-cleanup" :source "manual-testing/test-server-{{run.round}}.json"}]}
+   :next :review}
+
+  :stop-test-server-fail
+  {:type :deterministic
+   :title "Stop test server before implementation retry"
+   :handler :web/stop-test-server
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "30s"}
+   :inputs {:server-file "manual-testing/test-server-{{run.round}}.json"}
+   :resources {:consumes [{:kind :web-service :name "test-server" :path "manual-testing/test-server-{{run.round}}.json" :mode :write}]
+               :produces [{:kind :artifact :name "test-server-cleanup" :source "manual-testing/test-server-{{run.round}}.json"}]}
+   :transitions [{:when {:status "ok"} :effects [:inc-round] :next :execute}]}
 
   :review
   {:type :agent

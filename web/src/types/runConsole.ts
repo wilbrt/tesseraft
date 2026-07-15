@@ -35,10 +35,10 @@ export type Attempt = { attempt?: number; node_id?: string; state?: string; stat
 export type Failure = { source?: string; message?: string; path?: string; node_id?: string };
 export type Artifact = { path: string; name?: string; source?: string; node_id?: string; attempt?: number; kind?: string; exists?: boolean; size?: number; content_type?: string; read_url?: string };
 export type ArtifactRead = { artifact: Artifact; previewable?: boolean; content?: string; reason?: string };
-export type Liveness = 'executing' | 'parked' | 'orphaned' | 'stale' | 'done' | 'failed';
+export type Liveness = 'executing' | 'parked' | 'orphaned' | 'stale' | 'done' | 'failed' | 'cancelled';
 
 /** Liveness values that are safe to delete (never `executing`). */
-export const DELETABLE_LIVENESS: Liveness[] = ['done', 'failed', 'orphaned', 'stale', 'parked'];
+export const DELETABLE_LIVENESS: Liveness[] = ['done', 'failed', 'cancelled', 'orphaned', 'stale', 'parked'];
 export const isDeletableLiveness = (liveness: Liveness | null | undefined): boolean =>
   liveness != null && DELETABLE_LIVENESS.includes(liveness);
 export type RunSummary = {
