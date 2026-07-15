@@ -1154,5 +1154,11 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
   } finally {
     await close(server);
+    // Clean up created manifests so listProjects synthesizes the implicit
+    // default for later tests (default is only implicit when no manifests exist).
+    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+    for (const id of ['nested-discovery', 'http-escape']) {
+      fs.rmSync(path.join(projectsDir, `${id}.json`), { force: true });
+    }
   }
 });

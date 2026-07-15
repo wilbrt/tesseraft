@@ -15,6 +15,63 @@ type SettingsResponse = { settings: Settings };
 type GitUser = { name: string | null; email: string | null; source: 'project' | 'global' | 'none' };
 type GitUserResponse = { git_user: GitUser };
 
+// ---- Project abstraction runtime types ----
+// The control plane emits JSON with kebab-cased compound keys
+// (`credential-ref`, `workflow-roots`, `migrated-from`, `github-token`),
+// while single-concept keys keep their existing snake_case (`project_id`,
+// `workspace_root`, `runs_root`). These local types mirror the wire shape so
+// the UI typechecks against the actual contract rather than the aspirational
+// snake_case TS types in runConsole.ts.
+type ProjectListItem = { project_id: string; name?: string; source?: string };
+type ProjectsResponse = { projects: ProjectListItem[] };
+
+type RuntimeMaskedCredential = {
+  present?: boolean;
+  // The control plane uses kebab-case `credential-ref` on the wire.
+  'credential-ref'?: string;
+  credential_ref?: string;
+  preview?: string;
+  unresolved?: string;
+  error?: string;
+};
+
+type RuntimeProjectConnection = {
+  base_url?: string;
+  // Kebab-cased on the wire.
+  'credential-ref'?: string;
+  credential_ref?: string;
+  credential_state?: RuntimeMaskedCredential | null;
+};
+
+type RuntimeProjectConnections = {
+  jira?: RuntimeProjectConnection;
+  github?: RuntimeProjectConnection;
+};
+type ProjectConnectionsResponse = { connections: RuntimeProjectConnections };
+
+type RuntimeProjectDiscovery = {
+  'workflow-roots'?: string[] | null;
+  workflow_roots?: string[] | null;
+  'tesseraft-home'?: string | null;
+  tesseraft_home?: string | null;
+};
+
+type RuntimeProjectDetail = {
+  project_id: string;
+  name?: string;
+  workspace_root?: string;
+  runs_root?: string;
+  discovery?: RuntimeProjectDiscovery;
+  connections?: RuntimeProjectConnections;
+  'migrated-from'?: string;
+  migrated_from?: string;
+  source?: string;
+};
+
+// Read a kebab-or-snake credential ref off a connection/mask object.
+const readCredRef = (obj: { 'credential-ref'?: string; credential_ref?: string } | undefined | null): string =>
+  (obj && (obj['credential-ref'] || obj.credential_ref)) || '';
+
 const UNCHANGED = '__unchanged__';
 const isNonEmpty = (value: string): boolean => value.trim() !== '';
 const isBasicEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -34,6 +91,18 @@ export const SettingsPanel = () => {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Project abstraction state.
+  const [projects, setProjects] = useState<ProjectListItem[] | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('default');
+  const [projectDetail, setProjectDetail] = useState<RuntimeProjectDetail | null>(null);
+  const [connections, setConnections] = useState<RuntimeProjectConnections | null>(null);
+  const [jiraBaseUrl, setJiraBaseUrl] = useState('');
+  const [jiraCredRef, setJiraCredRef] = useState('');
+  const [githubCredRef, setGithubCredRef] = useState('');
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [projectInfo, setProjectInfo] = useState<string | null>(null);
+  const [projectBusy, setProjectBusy] = useState(false);
 
   const load = async (): Promise<void> => {
     try {
@@ -56,7 +125,88 @@ export const SettingsPanel = () => {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); void loadProjects(); }, []);
+
+  const loadProjects = async (): Promise<void> => {
+    setProjectError(null);
+    try {
+      const list = await getJson<ProjectsResponse>('/api/projects');
+      const items = Array.isArray(list.projects) ? list.projects : [];
+      setProjects(items);
+      // Keep a valid selection: prefer the current selection if it still
+      // exists, otherwise fall back to the first/default project.
+      const stillPresent = items.some((p) => p.project_id === selectedProjectId);
+      const nextId = stillPresent ? selectedProjectId : (items.find((p) => p.project_id === 'default')?.project_id || items[0]?.project_id || 'default');
+      if (nextId !== selectedProjectId) setSelectedProjectId(nextId);
+      await loadProject(nextId);
+    } catch (loadError) {
+      setProjectError(loadError instanceof Error ? loadError.message : String(loadError));
+    }
+  };
+
+  const loadProject = async (projectId: string): Promise<void> => {
+    setProjectError(null);
+    try {
+      const [detail, conns] = await Promise.all([
+        getJson<RuntimeProjectDetail>(`/api/projects/${encodeURIComponent(projectId)}`),
+        getJson<ProjectConnectionsResponse>(`/api/projects/${encodeURIComponent(projectId)}/connections`)
+      ]);
+      setProjectDetail(detail);
+      const c = conns.connections || {};
+      setConnections(c);
+      setJiraBaseUrl(c.jira?.base_url || '');
+      setJiraCredRef(readCredRef(c.jira));
+      setGithubCredRef(readCredRef(c.github));
+      setProjectInfo(null);
+    } catch (loadError) {
+      setProjectError(loadError instanceof Error ? loadError.message : String(loadError));
+      setProjectDetail(null);
+      setConnections(null);
+    }
+  };
+
+  const selectProject = (projectId: string): void => {
+    if (projectId === selectedProjectId || projectBusy) return;
+    setSelectedProjectId(projectId);
+    void loadProject(projectId);
+  };
+
+  const saveConnections = async (): Promise<void> => {
+    setProjectError(null);
+    setProjectInfo(null);
+    const id = selectedProjectId;
+    // NEVER send raw token payloads: only credential_ref + base_url. The
+    // server rejects any raw token key with 400 (surface-4 gate).
+    const payload: { jira?: { credential_ref?: string; base_url?: string }; github?: { credential_ref?: string } } = {};
+    const jira: { credential_ref?: string; base_url?: string } = {};
+    if (jiraCredRef.trim() !== '') jira.credential_ref = jiraCredRef.trim();
+    if (jiraBaseUrl.trim() !== '') jira.base_url = jiraBaseUrl.trim();
+    if (Object.keys(jira).length > 0) payload.jira = jira;
+    const github: { credential_ref?: string } = {};
+    if (githubCredRef.trim() !== '') github.credential_ref = githubCredRef.trim();
+    if (Object.keys(github).length > 0) payload.github = github;
+    if (Object.keys(payload).length === 0) {
+      setProjectError('Edit a credential ref or Jira base URL before saving connections.');
+      return;
+    }
+    setProjectBusy(true);
+    try {
+      const result = await putJson<{ connections?: RuntimeProjectConnections } & { error?: { message?: string } }>(
+        `/api/projects/${encodeURIComponent(id)}/connections`,
+        payload
+      );
+      const c = result.connections || {};
+      setConnections(c);
+      setJiraBaseUrl(c.jira?.base_url || '');
+      setJiraCredRef(readCredRef(c.jira));
+      setGithubCredRef(readCredRef(c.github));
+      setProjectInfo('Connections saved. Only credential references are stored; raw tokens are never accepted or exposed.');
+    } catch (saveError) {
+      setProjectError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setProjectBusy(false);
+    }
+  };
 
   const save = async (): Promise<void> => {
     setError(null);
@@ -121,6 +271,38 @@ export const SettingsPanel = () => {
   const githubPreview = settings?.github_token?.present ? `••••${settings.github_token.preview || ''}` : <em className="muted">not configured</em>;
   const jiraPreview = settings?.jira_token?.present ? `••••${settings.jira_token.preview || ''}` : <em className="muted">not configured</em>;
 
+  // ---- Project abstraction rendered helpers ----
+  const renderMaskedState = (conn: RuntimeProjectConnection | undefined, label: string) => {
+    const cs = conn?.credential_state;
+    const ref = readCredRef(conn) || readCredRef(cs);
+    const present = !!(cs?.present);
+    const preview = cs?.preview ? `••••${cs.preview}` : '';
+    const unresolved = cs?.unresolved || cs?.error;
+    return (
+      <dl className="field-row">
+        <dt>{label} state</dt>
+        <dd>
+          {present ? (
+            <span className="status-pill connected">configured</span>
+          ) : (
+            <span className="status-pill disconnected">not configured</span>
+          )}
+          {preview && <span className="muted"> {preview}</span>}
+          {ref && <span className="muted"> ref: <code>{ref}</code></span>}
+          {unresolved && <span className="warning inline"> unresolved: {unresolved}</span>}
+        </dd>
+      </dl>
+    );
+  };
+
+  const workflowRoots: string[] = (() => {
+    const d = projectDetail?.discovery;
+    if (!d) return [];
+    const r = d['workflow-roots'] || d.workflow_roots;
+    return Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [];
+  })();
+  const migratedFrom = projectDetail?.['migrated-from'] || projectDetail?.migrated_from;
+
   return (
     <section className="panel settings-panel" aria-label="Settings">
       <h2>Settings</h2>
@@ -183,6 +365,78 @@ export const SettingsPanel = () => {
         <div className="settings-actions">
           <button type="button" disabled={busy} onClick={() => void save()}>Save settings</button>
           <button type="button" disabled={busy} onClick={() => void load()}>Refresh</button>
+        </div>
+      </div>
+
+      {/* ---- Project abstraction (surface 10) ---- */}
+      <div className="control-card settings-form" aria-label="Projects and connections">
+        <h3>Projects</h3>
+        <p className="muted">A first-class Project owns a workspace root, runs root, workflow discovery context, and project-specific Jira/GitHub connections. Raw credentials are kept out of repositories behind a <em>credential reference</em> (e.g. <code>env:GITHUB_TOKEN</code>); the browser never holds raw tokens. Manifests are safe to commit to <code>.tesseraft/projects/</code>.</p>
+        {projectError && <div className="error">{projectError}</div>}
+        {projectInfo && <div className="success">{projectInfo}</div>}
+
+        {projects === null ? (
+          <p className="muted">Loading projects…</p>
+        ) : projects.length === 0 ? (
+          <p className="muted">No projects found.</p>
+        ) : (
+          <ul className="item-list" aria-label="Projects list">
+            {projects.map((p) => (
+              <li key={p.project_id}>
+                <button
+                  type="button"
+                  className={p.project_id === selectedProjectId ? 'project-tab active' : 'project-tab'}
+                  onClick={() => selectProject(p.project_id)}
+                >
+                  <strong>{p.name || p.project_id}</strong>{' '}
+                  <span className="muted">({p.project_id})</span>{' '}
+                  {p.source && <span className="status-pill">{p.source}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {projectDetail && (
+          <div className="control-card" aria-label="Project metadata">
+            <h4>{projectDetail.name || projectDetail.project_id}</h4>
+            <dl className="field-row">
+              <dt>Project id</dt><dd><code>{projectDetail.project_id}</code></dd>
+              {projectDetail.source && <><dt>Source</dt><dd><span className="status-pill">{projectDetail.source}</span></dd></>}
+              <dt>Workspace root</dt><dd><code>{projectDetail.workspace_root || <em className="muted">unset</em>}</code></dd>
+              <dt>Runs root</dt><dd><code>{projectDetail.runs_root || <em className="muted">unset</em>}</code></dd>
+              <dt>Workflow roots</dt><dd>{workflowRoots.length > 0 ? workflowRoots.map((r, i) => (<span key={r}>{i > 0 ? ', ' : ''}<code>{r}</code></span>)) : <em className="muted">none</em>}</dd>
+              {migratedFrom && <><dt>Migrated from</dt><dd><code>{migratedFrom}</code></dd></>}
+            </dl>
+          </div>
+        )}
+
+        <h3>Connections</h3>
+        <p className="muted">Edit per-project connection metadata. Credential references are resolved at effect time and never expose raw tokens here. Leaving a field blank keeps the current value.</p>
+        {connections && (
+          <>
+            {renderMaskedState(connections.jira, 'Jira')}
+            {renderMaskedState(connections.github, 'GitHub')}
+          </>
+        )}
+        <label>
+          Jira base URL
+          <input value={jiraBaseUrl} onChange={(event) => setJiraBaseUrl(event.target.value)} placeholder="https://your-domain.atlassian.net" />
+        </label>
+        <label>
+          Jira credential ref
+          <input value={jiraCredRef} onChange={(event) => setJiraCredRef(event.target.value)} placeholder="env:JIRA_TOKEN" />
+          <small>A reference like <code>env:JIRA_TOKEN</code>; raw tokens are never accepted.</small>
+        </label>
+        <label>
+          GitHub credential ref
+          <input value={githubCredRef} onChange={(event) => setGithubCredRef(event.target.value)} placeholder="env:GITHUB_TOKEN" />
+          <small>A reference like <code>env:GITHUB_TOKEN</code>; raw tokens are never accepted.</small>
+        </label>
+
+        <div className="settings-actions">
+          <button type="button" disabled={projectBusy} onClick={() => void saveConnections()}>Save connections</button>
+          <button type="button" disabled={projectBusy} onClick={() => void loadProjects()}>Refresh project</button>
         </div>
       </div>
     </section>
