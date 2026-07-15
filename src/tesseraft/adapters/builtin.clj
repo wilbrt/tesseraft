@@ -318,6 +318,45 @@
             true
             (do (Thread/sleep 200) (recur (or (:err result) (:out result))))))))))
 
+(defn seed-connections-doctor-project-fixture!
+  "Create an ignored, disposable explicit project for manual-review servers.
+  The fixture stores only credential references and local paths, so produced
+  `:web/start-test-server` artifacts can exercise project switching and doctor
+  isolation without requiring reviewers to mutate their checkout by hand."
+  [cwd]
+  (let [project-id "doctor-explicit"
+        default-manifest-path (fs/path cwd ".tesseraft" "projects" "default.json")
+        fixture-ws (fs/path cwd ".agent-runs" "manual-connections-doctor-explicit-ws")
+        workflows-dir (fs/path fixture-ws ".tesseraft" "workflows" "manual-doctor")
+        runs-dir (fs/path fixture-ws "runs")
+        explicit-manifest-path (fs/path cwd ".tesseraft" "projects" (str project-id ".json"))
+        workflow-path (fs/path workflows-dir "workflow.edn")]
+    (fs/create-dirs workflows-dir)
+    (fs/create-dirs runs-dir)
+    (spit (str workflow-path)
+          "{:api-version \"tesseraft.workflow/v1\"\n :kind :workflow\n :metadata {:name \"manual-doctor\" :title \"Manual Doctor\"}\n :defaults {:max-rounds 1 :state-timeout \"1m\"}\n :policies {:require-timeouts true :require-max-rounds true}\n :initial :start\n :states {:start {:type :deterministic\n                  :handler :noop/succeed\n                  :runtime {:timeout \"10s\"}\n                  :next :done}\n          :done {:type :terminal :title \"Done\" :status :success}}}\n")
+    (store/write-json! default-manifest-path
+                       {:project_id "default"
+                        :name "Default"
+                        :workspace_root "."
+                        :runs_root ".agent-runs"
+                        :discovery {:workflow-roots [".tesseraft/workflows" "examples"]}
+                        :settings {}})
+    (store/write-json! explicit-manifest-path
+                       {:project_id project-id
+                        :name "Doctor Explicit"
+                        :workspace_root ".agent-runs/manual-connections-doctor-explicit-ws"
+                        :runs_root "runs"
+                        :discovery {:workflow-roots [".tesseraft/workflows"]}
+                        :settings {:default-repo-root "missing-repo-root"}
+                        :connections {:github {:credential-ref "env:DOCTOR_EXPLICIT_GITHUB_TOKEN"}
+                                      :jira {:base-url "https://doctor-explicit.invalid"
+                                             :credential-ref "env:DOCTOR_EXPLICIT_JIRA_TOKEN"}}})
+    {"project_id" project-id
+     "default_manifest" (str default-manifest-path)
+     "explicit_manifest" (str explicit-manifest-path)
+     "workspace" (str fixture-ws)}))
+
 (defn start-test-server! [_wf ctx _state-id node]
   (let [cwd (absolute-normal-path (repo-dir ctx node))
         host (or (get-in node [:inputs :host]) "127.0.0.1")
@@ -327,7 +366,8 @@
         out-path (artifact-path ctx (or (get-in node [:outputs :test-server :path]) "manual-testing/test-server.json"))]
     (when build-command
       (apply shell! {:dir cwd} (map str build-command)))
-    (let [;; Default the manual test server to the fake Pi adapter so the
+    (let [doctor-fixture (seed-connections-doctor-project-fixture! cwd)
+          ;; Default the manual test server to the fake Pi adapter so the
           ;; compose -> preview -> save flow is deterministic without real
           ;; API spend. Respect an explicitly inherited TESSERAFT_PI_ADAPTER
           ;; so real-SDK manual testing remains opt-in via the parent env.
@@ -358,6 +398,7 @@
                     :worktree_root cwd
                     :command command
                     :build_command build-command
+                    :connections_doctor_fixture doctor-fixture
                     :started_at (store/now)
                     :lifecycle {:cleanup "kill pid after manual testing/review run"
                                 :cleanup_command (when pid (str "kill " pid))

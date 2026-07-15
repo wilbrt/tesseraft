@@ -3,6 +3,10 @@
 Copy-paste from the repo root of the feature worktree. Do not paste or capture
 raw token values in screenshots or logs.
 
+Produced review-loop test servers started by Tesseraft's `:web/start-test-server`
+handler seed the same disposable `doctor-explicit` project automatically. Use
+the setup block below when starting a normal worktree-rooted server by hand.
+
 ```sh
 set -euo pipefail
 
