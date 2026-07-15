@@ -71,14 +71,25 @@ tesseraft control-plane project create <project-id> [--name <name>] [--workspace
 tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]
 tesseraft control-plane project migrate [<project-id>]
 tesseraft control-plane project connections <project-id>
+tesseraft control-plane --project-id <project-id> doctor
 ```
 
 ## HTTP API
 
 See [CONTROL_PLANE_API.md](CONTROL_PLANE_API.md) for the project endpoint
-contracts. Secrets never leave the process: project detail and connection
-endpoints return masked/absent token state; raw token payloads are rejected on
-write (only `credential_ref` is accepted).
+contracts. Secrets never leave the process: project detail, connection, and
+Connections Doctor endpoints return only references/statuses/remediation, never
+raw token values; raw token payloads are rejected on write (only
+`credential_ref` is accepted).
+
+`GET /api/projects/{id}/doctor` and `tesseraft control-plane --project-id <id>
+doctor` run the local-first Connections Doctor for the selected project. The
+report checks GitHub credential-ref resolution and `gh auth status`, Jira base
+URL/credential-ref configuration, Pi provider/model local catalog availability,
+effective Git author identity, repository-root Git/read/write readiness, Pinga
+executable configuration, workflow discovery, and runs-root accessibility. Checks
+are static or read-only with bounded timeouts; Jira/Pinga are not contacted and
+Pinga is not executed.
 
 ## Run-state persistence
 

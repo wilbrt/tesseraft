@@ -103,11 +103,13 @@ test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/settings'), ['settings']);
   assert.deepEqual(routeApi('/api/projects'), ['projects']);
   assert.deepEqual(routeApi('/api/projects/default'), ['project', 'default']);
+  assert.deepEqual(routeApi('/api/projects/acme/doctor'), ['project-doctor', 'acme']);
   assert.deepEqual(routeApi('/api/projects/acme/connections'), ['project-connections', 'acme']);
   assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
 });
 
 test('control-plane discovers project and global Tesseraft workflows', () => {
+  fs.mkdirSync(path.join(process.cwd(), '.agent-runs'), { recursive: true });
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-project-'));
   const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-home-'));
   const workflowEdn = (name, title) => [
@@ -169,6 +171,15 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const asset = await fetch(`${base}${assetMatch[1]}`);
   assert.equal(asset.status, 200);
   assert.match(asset.headers.get('content-type') || '', /javascript/);
+
+  const doctorResponse = await fetch(`${base}/api/projects/default/doctor`);
+  assert.equal(doctorResponse.status, 200);
+  const doctor = await doctorResponse.json();
+  assert.equal(doctor.project_id, 'default');
+  assert.equal(doctor.checks.length, 10);
+  assert.deepEqual(Object.keys(doctor.summary).sort(), ['invalid', 'not-configured', 'ready', 'unreachable'].sort());
+  assert.ok(doctor.checks.every((check) => ['ready', 'not-configured', 'unreachable', 'invalid'].includes(check.status)));
+  assert.doesNotMatch(JSON.stringify(doctor), /SECRET_SENTINEL|stdout|stderr|GH_TOKEN_VALUE/);
 
   const workflowsResponse = await fetch(`${base}/api/workflows`);
   assert.equal(workflowsResponse.status, 200);

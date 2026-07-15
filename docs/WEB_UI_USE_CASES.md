@@ -44,8 +44,8 @@ The current local Web UI already supports:
   run SSE refresh;
 - run start, step, background resume, and delete controls where supported by the
   runner;
-- Settings, local git-user configuration, repository browse, and Pi-session
-  surfaces;
+- Settings, local git-user configuration, project-scoped Connections Doctor,
+  repository browse, and Pi-session surfaces;
 - web-server and Studio tests in `npm run web:test` plus manual testing notes.
 
 Known next-work gaps:
@@ -76,7 +76,7 @@ Known next-work gaps:
 | Inspect outputs produced by node attempts. | Run Console | Open declared artifact paths in the run directory; compare against output contracts and schemas from `workflow.edn`. | **Implemented baseline:** artifact list and artifact read routes with path confinement. **Next:** richer renderers, schema/status summaries, and links from artifacts to attempts/events. | Artifacts are runtime outputs, not workflow source edits. Required artifact validation belongs to runner/linter contracts. |
 | Decide a human approval gate with enough context. | Run Console | Observe an `:approval` node, read its message/context, then record an approval decision that produces durable `approval.requested` and `approval.decided` events. | **Runtime landed (PR #44, merged):** approval request/decision records and events are durable; `POST /api/runs/{run-id}/approvals/{approval-id}` records a decision. **Next:** present a low-ceremony, diff-centric self-checkpoint screen with allowed decisions and consequences text (P3.1). | Decisions must be durable runtime records, not private UI state. Authz is especially important before non-localhost exposure. |
 | Resume, step, delete, or abort a run intentionally. | Run Console | Use runner-supported controls; otherwise inspect state and restart or stop processes according to operational practice. | **Implemented baseline:** step, background resume, and delete routes where supported. **Next:** standardize retry/cancel/abort semantics, idempotency, and approval interaction. | Runtime controls must not mutate workflow definitions or repin workflow content. |
-| Verify first-run environment and credentials. | Settings / Studio | Manually check GitHub/Jira/Pinga/Pi/git config and discover failures during a run. | **Implemented baseline:** settings, git-user, Pi-session surfaces. **Next:** connections doctor with safe no-op checks and no secret leakage. | The container/runtime-mounted-secrets model should remain the foundation. |
+| Verify first-run environment and credentials. | Settings | Manually check GitHub/Jira/Pinga/Pi/git config and discover failures during a run. | **Implemented baseline:** project-scoped Connections Doctor in Settings via `GET /api/projects/{id}/doctor`, with static/read-only checks and no secret leakage. | The container/runtime-mounted-secrets model should remain the foundation; Jira/Pinga checks are static and non-mutating. |
 
 ## Cross-cutting open questions
 

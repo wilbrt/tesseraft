@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getJson, putJson } from '../lib/api';
 import { useProject, projectApiUrl } from '../lib/project';
+import { ConnectionsDoctorPanel } from './ConnectionsDoctorPanel';
 
 type TokenMask = { present: boolean; preview?: string };
 type Settings = {
@@ -369,6 +370,8 @@ export const SettingsPanel = () => {
           <button type="button" disabled={busy} onClick={() => void load()}>Refresh</button>
         </div>
       </div>
+
+      <ConnectionsDoctorPanel />
 
       {/* ---- Project abstraction (surface 10) ---- */}
       <div className="control-card settings-form" aria-label="Projects and connections">

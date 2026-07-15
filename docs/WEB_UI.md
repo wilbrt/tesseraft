@@ -37,7 +37,7 @@ implementation under `web/`:
   to the package directory.
 - Run creation, background resume, step, resume, and delete controls where the
   runner supports them.
-- Settings, git-user, browse, and Pi-session routes.
+- Settings, git-user, Connections Doctor, browse, and Pi-session routes.
 - Web tests in `npm run web:test` plus manual testing notes in `manual-testing/`.
 
 Known semantic gaps remain:
@@ -52,6 +52,14 @@ Known semantic gaps remain:
   `approval.requested`/`approval.decided` events.
 - Catalog-as-lens, cross-scope shadowing visibility, and fragment packages are
   next-step UX/product work over existing package discovery concepts.
+
+The Settings surface embeds a project-scoped Connections Doctor. It calls
+`GET /api/projects/{projectId}/doctor` for bounded static/read-only local checks
+of GitHub/Jira credential references, `gh` authentication, Pi provider/model
+local catalog availability, Git author identity, repository/runs roots, Pinga
+configuration, and workflow discovery. The panel shows status, check mode,
+summary, and remediation only; it must not render raw secrets, token previews,
+command output, or environment data.
 
 ## v3.2 phase-1 product frame
 

@@ -85,6 +85,10 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
     const id = safeDecode(parts[2]);
     return id === null ? { badRequest: 'Malformed project id' } : ['project', id];
   }
+  if (parts.length === 4 && parts[1] === 'projects' && parts[3] === 'doctor') {
+    const id = safeDecode(parts[2]);
+    return id === null ? { badRequest: 'Malformed project id' } : ['project-doctor', id];
+  }
   if (parts.length === 4 && parts[1] === 'projects' && parts[3] === 'connections') {
     const id = safeDecode(parts[2]);
     return id === null ? { badRequest: 'Malformed project id' } : ['project-connections', id];
@@ -301,6 +305,12 @@ const handleMigrateProject = async (res: Response, projectId: string): Promise<v
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const result = await runControlPlane(['project', 'connections', projectId]);
+  return jsonResponse(res, result.status, result.body);
+};
+
+const handleGetProjectDoctor = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const result = await runControlPlane(['--project-id', projectId, 'doctor'], { timeout: 12000 });
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -932,6 +942,11 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
     return void handleMigrateProject(res, id).catch(next);
+  });
+  router.get('/projects/:projectId/doctor', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleGetProjectDoctor(res, id).catch(next);
   });
   router.get('/projects/:projectId/connections', (req, res, next) => {
     const id = safeDecode(req.params.projectId);

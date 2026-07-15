@@ -51,6 +51,7 @@ either:
 | 6 | Settings: read/write, masked tokens | ✅ `test/web-server.test.js` settings read/write + masked tokens | — skip: HTTP behavior is auto-covered |
 | 7 | git-user: read/write | ✅ `test/web-server.test.js` git-user read and write | — skip: HTTP behavior is auto-covered |
 | 8 | Pi sessions: list/create/detail/prompts/events/stream; settings→model resolution + typed errors | ✅ `test/web-server.test.js` fake Pi session routes; `test/web-pi-session.test.js` resolveSettingsModel/createSessionWithModel; `test/web-server.test.js` POST resolution-failure 400 | `run-streaming.md` (Pi-session live stream only) |
+| 9 | Connections Doctor: project-scoped local readiness checks without secret leakage | ✅ `test/web-server.test.js` endpoint contract; `test/web-ui.test.js` Settings panel structure; `scripts/test.sh` CLI smoke | `connections-doctor.md` (copy-paste API/browser verification) |
 
 **Conclusion:** Every named surface has automated HTTP/structural coverage.
 The real gaps are **browser/DOM-only behaviors** that
@@ -70,6 +71,8 @@ Those are covered by the four focused scripts below.
 - [`studio-path-confinement-ux.md`](studio-path-confinement-ux.md) — Studio
   save/lint and asset/path-traversal refusal messages surfaced visibly in the
   UI (HTTP behavior is auto-covered; this is the visible-error UX).
+- [`connections-doctor.md`](connections-doctor.md) — project-scoped doctor API
+  and Settings-panel verification, including no-secret-leak pass criteria.
 
 Each script is copy-paste runnable, starts a fresh server, states the
 ground-truth command/file to compare against, and lists explicit pass/fail

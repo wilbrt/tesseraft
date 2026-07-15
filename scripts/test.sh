@@ -514,6 +514,16 @@ import json
 x=json.load(open('/tmp/tesseraft-cp-workflows.json'))
 assert any(w['name'] == 'smoke-demo' for w in x['workflows'])
 PY
+./bin/tesseraft control-plane doctor >/tmp/tesseraft-cp-doctor.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/tesseraft-cp-doctor.json'))
+assert x['project_id'] == 'default', x
+assert sorted(x['summary'].keys()) == sorted(['ready', 'not-configured', 'unreachable', 'invalid']), x
+assert [c['id'] for c in x['checks']] == ['github-credential', 'github-auth', 'jira-base-url', 'jira-credential', 'pi-provider-model', 'git-author', 'repository-root', 'pinga', 'workflow-discovery', 'runs-root'], x
+assert all(c['status'] in ['ready', 'not-configured', 'unreachable', 'invalid'] for c in x['checks']), x
+assert 'SECRET_SENTINEL' not in json.dumps(x)
+PY
 
 printf '\nChecking control-plane scope/shadowing metadata (P1.1)...\n'
 SCOPE_TMP="$(mktemp -d)"
