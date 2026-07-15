@@ -524,6 +524,19 @@ assert [c['id'] for c in x['checks']] == ['github-credential', 'github-auth', 'j
 assert all(c['status'] in ['ready', 'not-configured', 'unreachable', 'invalid'] for c in x['checks']), x
 assert 'SECRET_SENTINEL' not in json.dumps(x)
 PY
+bb -e '(require (quote [tesseraft.adapters.builtin :as b])
+                (quote [tesseraft.control-plane.core :as cp]))
+       (let [dir (java.nio.file.Files/createTempDirectory "doctor-fixture" (make-array java.nio.file.attribute.FileAttribute 0))
+             cwd (str dir)
+             fixture (b/seed-connections-doctor-project-fixture! cwd)
+             projects (cp/list-projects {:workspace-root cwd})
+             ids (set (map #(get % "project_id") (:projects projects)))
+             explicit (cp/resolve-project {:workspace-root cwd} "doctor-explicit")]
+         (assert (= "doctor-explicit" (get fixture "project_id")) fixture)
+         (assert (contains? ids "default") projects)
+         (assert (contains? ids "doctor-explicit") projects)
+         (assert (= "doctor-explicit" (:project_id explicit)) explicit)
+         (assert (= "missing-repo-root" (get-in explicit [:settings :default-repo-root])) explicit))'
 
 printf '\nChecking control-plane scope/shadowing metadata (P1.1)...\n'
 SCOPE_TMP="$(mktemp -d)"

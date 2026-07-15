@@ -318,6 +318,19 @@
             true
             (do (Thread/sleep 200) (recur (or (:err result) (:out result))))))))))
 
+(defn wait-for-http-body-contains [url needle timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [last-error nil]
+      (if (> (System/currentTimeMillis) deadline)
+        (throw (ex-info "Timed out waiting for expected web service response"
+                        {:url url :needle needle :last-error last-error}))
+        (let [result (p/shell {:continue true :out :string :err :string}
+                              "bash" "-lc" (str "curl -fsS --max-time 2 " (pr-str url)))]
+          (if (and (zero? (:exit result)) (str/includes? (str (:out result)) needle))
+            true
+            (do (Thread/sleep 200)
+                (recur (or (:err result) (:out result))))))))))
+
 (defn seed-connections-doctor-project-fixture!
   "Create an ignored, disposable explicit project for manual-review servers.
   The fixture stores only credential references and local paths, so produced
@@ -404,6 +417,10 @@
                                 :cleanup_command (when pid (str "kill " pid))
                                 :owner "tesseraft deterministic handler :web/start-test-server"}}]
       (wait-for-http-ok url 10000)
+      ;; The review-loop manual-testing gate must be able to verify project
+      ;; isolation. Do not publish a produced server artifact until the live
+      ;; server sees the disposable explicit project seeded above.
+      (wait-for-http-body-contains (str url "/api/projects") "doctor-explicit" 10000)
       (store/write-json! out-path artifact)
       {:status "ok" :test-server-file out-path :url url :pid pid})))
 
