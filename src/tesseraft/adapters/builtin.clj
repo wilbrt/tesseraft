@@ -464,19 +464,25 @@
       (str (fs/path (get-in ctx [:run :dir]) "mock-worktree"))))
 
 (defn mock-test-server [ctx node]
-  {:kind "web-service"
-   :name "mock-test-server"
-   :url "http://127.0.0.1:0"
-   :host (or (get-in node [:inputs :host]) "127.0.0.1")
-   :port 0
-   :pid nil
-   :cwd (mock-worktree-dir ctx node)
-   :worktree_root (mock-worktree-dir ctx node)
-   :command (mapv str (or (get-in node [:inputs :command]) []))
-   :build_command (when-let [cmd (get-in node [:inputs :build-command])] (mapv str cmd))
-   :mock true
-   :started_at (store/now)
-   :lifecycle {:cleanup "none; mock dry run did not start a process"}})
+  (let [cwd (absolute-normal-path (repo-dir ctx node))
+        doctor-fixture (seed-connections-doctor-project-fixture! cwd)]
+    {:kind "web-service"
+     :name "mock-test-server"
+     :url "http://127.0.0.1:0"
+     :host (or (get-in node [:inputs :host]) "127.0.0.1")
+     :port 0
+     :pid nil
+     :cwd cwd
+     :worktree_root cwd
+     :command (mapv str (or (get-in node [:inputs :command]) []))
+     :build_command (when-let [cmd (get-in node [:inputs :build-command])] (mapv str cmd))
+     :connections_doctor_fixture doctor-fixture
+     :mock true
+     :live false
+     :manual_testing_ready false
+     :manual_testing_note "Mock dry run seeded the Connections Doctor project fixture but did not start a live HTTP server. Use a non-mock :web/start-test-server run for browser/API manual review."
+     :started_at (store/now)
+     :lifecycle {:cleanup "none; mock dry run did not start a process"}}))
 
 (defn run-mock-handler! [_wf ctx _state-id node]
   (case (:handler node)
@@ -522,7 +528,14 @@
     (let [server (mock-test-server ctx node)
           out-path (output-path ctx node :test-server "manual-testing/test-server.json")]
       (store/write-json! out-path server)
-      {:status "ok" :mock true :test-server-file out-path :url (:url server) :pid nil})
+      {:status "ok"
+       :mock true
+       :live false
+       :manual-testing-ready false
+       :connections-doctor-fixture (:connections_doctor_fixture server)
+       :test-server-file out-path
+       :url (:url server)
+       :pid nil})
 
     :notify/pinga
     {:status "ok" :mock true}

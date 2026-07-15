@@ -531,12 +531,21 @@ bb -e '(require (quote [tesseraft.adapters.builtin :as b])
              fixture (b/seed-connections-doctor-project-fixture! cwd)
              projects (cp/list-projects {:workspace-root cwd})
              ids (set (map #(get % "project_id") (:projects projects)))
-             explicit (cp/resolve-project {:workspace-root cwd} "doctor-explicit")]
+             explicit (cp/resolve-project {:workspace-root cwd} "doctor-explicit")
+             mock-server (b/mock-test-server {:inputs {:repo-root cwd}
+                                              :run {:dir cwd}}
+                                             {:inputs {:host "127.0.0.1"}})
+             mock-projects (cp/list-projects {:workspace-root cwd})
+             mock-ids (set (map #(get % "project_id") (:projects mock-projects)))]
          (assert (= "doctor-explicit" (get fixture "project_id")) fixture)
          (assert (contains? ids "default") projects)
          (assert (contains? ids "doctor-explicit") projects)
          (assert (= "doctor-explicit" (:project_id explicit)) explicit)
-         (assert (= "missing-repo-root" (get-in explicit [:settings :default-repo-root])) explicit))'
+         (assert (= "missing-repo-root" (get-in explicit [:settings :default-repo-root])) explicit)
+         (assert (= false (:live mock-server)) mock-server)
+         (assert (= false (:manual_testing_ready mock-server)) mock-server)
+         (assert (= "doctor-explicit" (get-in mock-server [:connections_doctor_fixture "project_id"])) mock-server)
+         (assert (contains? mock-ids "doctor-explicit") mock-projects))'
 
 printf '\nChecking control-plane scope/shadowing metadata (P1.1)...\n'
 SCOPE_TMP="$(mktemp -d)"
