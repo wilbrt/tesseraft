@@ -45,16 +45,54 @@ const browserCandidates = [
 const browserBin = browserCandidates.find((candidate) => fs.existsSync(candidate));
 if (!browserBin) throw new Error(`agent-browser was not found; checked: ${browserCandidates.join(', ')}`);
 
+const macBrave = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+const configuredBrowserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH;
+const selectedBrowserExecutable = configuredBrowserExecutable
+  || (process.platform === 'darwin' && fs.existsSync(macBrave) ? macBrave : null);
+const executableStrategy = configuredBrowserExecutable
+  ? 'environment'
+  : selectedBrowserExecutable
+    ? 'darwin-brave-fallback'
+    : 'agent-browser-default';
+const commandTimeoutMs = Number(process.env.TESSERAFT_UI_BROWSER_COMMAND_TIMEOUT_MS || 20000);
+if (!Number.isFinite(commandTimeoutMs) || commandTimeoutMs <= 0) {
+  throw new Error('TESSERAFT_UI_BROWSER_COMMAND_TIMEOUT_MS must be a positive number');
+}
+
+const versionOf = (command) => {
+  if (!command) return null;
+  const result = spawnSync(command, ['--version'], { encoding: 'utf8', timeout: 5000 });
+  return result.status === 0 ? (result.stdout || result.stderr || '').trim() : null;
+};
+
+const browserDiagnostics = {
+  agent_browser_bin: browserBin,
+  agent_browser_version: versionOf(browserBin),
+  executable_strategy: executableStrategy,
+  executable_path: selectedBrowserExecutable,
+  executable_version: versionOf(selectedBrowserExecutable),
+  command_timeout_ms: commandTimeoutMs,
+  platform: `${process.platform}-${process.arch}`
+};
+
 const runBrowser = (args, { allowFailure = false } = {}) => {
-  const result = spawnSync(browserBin, ['--session', session, '--color-scheme', 'light', ...args], {
+  const launchOptions = selectedBrowserExecutable ? ['--executable-path', selectedBrowserExecutable] : [];
+  const result = spawnSync(browserBin, ['--session', session, ...launchOptions, '--color-scheme', 'light', ...args], {
     cwd: worktreeRoot,
     encoding: 'utf8',
+    timeout: commandTimeoutMs,
     env: { ...process.env, NO_PROXY: [process.env.NO_PROXY, '127.0.0.1', 'localhost'].filter(Boolean).join(',') }
   });
   if (!allowFailure && result.status !== 0) {
-    throw new Error(`agent-browser ${args[0]} failed: ${(result.stderr || result.stdout || '').trim()}`);
+    const detail = result.error?.message || (result.stderr || result.stdout || '').trim() || `status ${result.status}`;
+    throw new Error(`agent-browser ${args[0]} failed: ${detail}`);
   }
-  return { status: result.status, stdout: (result.stdout || '').trim(), stderr: (result.stderr || '').trim() };
+  return {
+    status: result.status,
+    stdout: (result.stdout || '').trim(),
+    stderr: (result.stderr || '').trim(),
+    error: result.error?.message || null
+  };
 };
 
 const evalJson = (expression) => {
@@ -122,6 +160,7 @@ const evidence = {
   target_url: targetUrl,
   worktree_root: worktreeRoot,
   generated_at: new Date().toISOString(),
+  browser: browserDiagnostics,
   screenshots: [],
   geometry: {},
   checks: [],

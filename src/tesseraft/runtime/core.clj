@@ -35,9 +35,22 @@
                (= pid (:pid (store/read-json path))))
       (fs/delete-if-exists path))))
 
+(defn- process-enumeration-denied? [error]
+  (let [message (some-> error .getMessage str/lower-case)]
+    (boolean (and message
+                  (or (str/includes? message "operation not permitted")
+                      (str/includes? message "permission denied")
+                      (str/includes? message "sysctl failed"))))))
+
 (defn- process-descendants [process-handle]
-  (with-open [stream (.descendants process-handle)]
-    (vec (iterator-seq (.iterator stream)))))
+  (try
+    (with-open [stream (.descendants process-handle)]
+      {:handles (vec (iterator-seq (.iterator stream)))
+       :enumerated true})
+    (catch RuntimeException error
+      (if (process-enumeration-denied? error)
+        {:handles [] :enumerated false}
+        (throw error)))))
 
 (defn- wait-for-process-exit [handles]
   (loop [remaining 40]
@@ -54,7 +67,10 @@
         optional (when (and (integer? pid) (pos? pid))
                    (java.lang.ProcessHandle/of (long pid)))
         root (when (and optional (.isPresent optional)) (.get optional))
-        descendants (if (and root (.isAlive root)) (process-descendants root) [])
+        descendant-result (if (and root (.isAlive root))
+                            (process-descendants root)
+                            {:handles [] :enumerated true})
+        descendants (:handles descendant-result)
         handles (vec (concat (reverse descendants) (when root [root])))]
     (doseq [handle handles]
       (when (.isAlive ^java.lang.ProcessHandle handle)
@@ -64,6 +80,7 @@
       {:pid pid
        :process_found (boolean root)
        :descendants (count descendants)
+       :descendants_enumerated (:enumerated descendant-result)
        :stopped stopped?})))
 
 (defn cancel! [run-dir]
@@ -81,6 +98,7 @@
                                  :pid (:pid process)
                                  :process_found (:process_found process)
                                  :descendants (:descendants process)
+                                 :descendants_enumerated (:descendants_enumerated process)
                                  :stopped (:stopped process)})
         (store/save-context! cancelled)))))
 
