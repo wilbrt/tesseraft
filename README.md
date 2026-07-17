@@ -51,14 +51,6 @@ bb test
 
 This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies an invalid fixture fails lint, and exercises the Web UI's deterministic rendered-layout gate with a local headless browser. It does not run Pi, Jira, GitHub, or hosted-service workflows.
 
-The rendered-layout gate honors `AGENT_BROWSER_EXECUTABLE_PATH`. Without an
-explicit executable it prefers Brave on macOS, where Chrome 150 screenshot
-capture is incompatible with the pinned `agent-browser`, and otherwise uses
-`agent-browser`'s default browser discovery. Evidence records the selected
-strategy, executable/version, tool version, platform, and command timeout.
-Set `TESSERAFT_UI_BROWSER_COMMAND_TIMEOUT_MS` to override the default bounded
-per-command timeout.
-
 ## Mock executor dry run
 
 Use runner-level mock mode to validate workflow transitions without invoking Pi, GitHub, Jira, or notification services:

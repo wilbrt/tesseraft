@@ -39,6 +39,15 @@ jobs:
       - name: Verify STATUS.edn ↔ README sync
         run: bb status --check
 
+      - name: Run web tests (npm run web:test)
+        # `bb test` above creates scratch dirs under .agent-runs/, which the
+        # web-server control-plane workflow-discovery test uses as the parent
+        # for mkdtemp. Guard the precondition so this step is robust to
+        # reordering or partial-step resolvers.
+        run: |
+          mkdir -p .agent-runs
+          npm run web:test
+
       - name: Container harness (PR #37)
         # ubuntu-latest provides a working Docker daemon. If a future
         # runner lacks Docker, gate this behind a service container or

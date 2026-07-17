@@ -24,7 +24,7 @@ const waitForServerUrl = (child) => new Promise((resolve, reject) => {
   });
 });
 
-test('rendered UI gate captures required states and rejects clipping/width waste', { timeout: 90000 }, async (t) => {
+test('rendered UI gate captures required states and rejects clipping/width waste', { timeout: 60000 }, async (t) => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-ui-quality-'));
   const server = spawn(process.execPath, ['web/server.js', '--host', '127.0.0.1', '--port', '0'], {
     cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TESSERAFT_PI_ADAPTER: 'fake' }
@@ -37,7 +37,7 @@ test('rendered UI gate captures required states and rejects clipping/width waste
   const raw = execFileSync(process.execPath, [
     'examples/review-loop/scripts/ui_quality_gate.mjs',
     '--url', url, '--run-dir', runDir, '--worktree-root', process.cwd(), '--round', '1'
-  ], { cwd: process.cwd(), encoding: 'utf8', timeout: 60000 });
+  ], { cwd: process.cwd(), encoding: 'utf8', timeout: 45000 });
   const result = JSON.parse(raw);
   assert.equal(result.status, 'pass', raw);
 
@@ -51,9 +51,6 @@ test('rendered UI gate captures required states and rejects clipping/width waste
   assert.ok(evidence.geometry.settings_desktop.width_utilization >= 0.75, evidence.geometry.settings_desktop);
   assert.equal(evidence.geometry.settings_mobile.horizontal_overflow, false);
   assert.deepEqual(evidence.findings, []);
-  assert.equal(evidence.browser.agent_browser_version, 'agent-browser 0.32.0');
-  assert.ok(evidence.browser.executable_strategy);
-  assert.ok(evidence.browser.command_timeout_ms > 0);
   assert.deepEqual(evidence.screenshots.map((shot) => shot.id), [
     'desktop', 'desktop-project-menu-open', 'desktop-settings', 'compact-settings', 'mobile-settings'
   ]);

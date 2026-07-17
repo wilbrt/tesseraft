@@ -158,16 +158,6 @@ bb -e '
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         child (.start (ProcessBuilder. ["bash" "-lc" "sleep 60 & wait"]))
         pid (.pid child)
-        process-enumeration-supported?
-        (try
-          (with-open [stream (java.lang.ProcessHandle/allProcesses)]
-            (.findAny stream))
-          true
-          (catch Throwable error
-            (binding [*out* *err*]
-              (println "SKIP descendant-count assertion: process enumeration is unavailable:"
-                       (.getMessage error)))
-            false))
         descendant-count (fn []
                            (with-open [stream (.descendants (.toHandle child))]
                              (.count stream)))
@@ -178,15 +168,11 @@ bb -e '
       (store/save-context! ctx)
       (store/write-json! (runtime/runtime-process-path dir)
                          {:pid pid :started_at (store/now)})
-      ;; Give bash enough time to spawn sleep so descendant cleanup is tested
-      ;; wherever the host permits Java process-tree enumeration. Sandboxed
-      ;; macOS runners can deny the underlying sysctl even though root-process
-      ;; cancellation remains available.
-      (when process-enumeration-supported?
-        (loop [remaining 40]
-          (when (and (zero? (descendant-count)) (pos? remaining))
-            (Thread/sleep 25)
-            (recur (dec remaining)))))
+      ;; Give bash enough time to spawn sleep so descendant cleanup is tested.
+      (loop [remaining 40]
+        (when (and (zero? (descendant-count)) (pos? remaining))
+          (Thread/sleep 25)
+          (recur (dec remaining))))
       (let [cancelled (runtime/cancel! dir)
             events (map #(json/parse-string % true)
                         (remove str/blank? (str/split-lines (slurp (str dir "/events.jsonl")))))
@@ -195,9 +181,7 @@ bb -e '
         (assert (not (.isAlive child)) "runtime root process is still alive")
         (assert event events)
         (assert (= true (:process_found event)) event)
-        (assert (= process-enumeration-supported? (:descendants_enumerated event)) event)
-        (when process-enumeration-supported?
-          (assert (pos? (:descendants event)) event))
+        (assert (pos? (:descendants event)) event)
         (assert (= true (:stopped event)) event)
         (assert (not (.exists (.toFile (runtime/runtime-process-path dir))))))
       (finally
