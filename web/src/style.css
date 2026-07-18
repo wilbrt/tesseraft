@@ -328,7 +328,7 @@ pre {
   .runs-table-row.expanded { background: #1e293b; }
   .runs-table-inspection-row td { background: var(--color-deep-bg); border-color: #273449; }
   .run-inspection-graph { background: var(--color-deep-bg); border-color: #374151; }
-  .node-title { fill: var(--color-surface-muted); }
+  .node-title { fill: var(--color-text); }
   .node-type, .graph-edge text { fill: var(--color-header-muted); }
 }
 

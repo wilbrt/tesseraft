@@ -186,6 +186,11 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(styles, /:root\[data-color-scheme="matrix"\]/);
   assert.match(styles, /--color-app-bg:\s*#020604/);
   assert.match(styles, /--color-accent:\s*#35e85f/);
+  const classicDarkStyles = styles.slice(
+    styles.indexOf('@media (prefers-color-scheme: dark)'),
+    styles.indexOf('/* Workflow Studio */')
+  );
+  assert.match(classicDarkStyles, /\.node-title\s*\{\s*fill:\s*var\(--color-text\)/, 'Classic dark graph titles must use readable light text');
   assert.ok(styles.indexOf(':root[data-color-scheme="matrix"]') > styles.indexOf('@media (prefers-color-scheme: dark)'), 'Matrix overrides must follow system dark-mode rules');
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);
