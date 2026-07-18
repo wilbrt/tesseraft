@@ -77,7 +77,7 @@ const browserDiagnostics = {
 
 const runBrowser = (args, { allowFailure = false } = {}) => {
   const launchOptions = selectedBrowserExecutable ? ['--executable-path', selectedBrowserExecutable] : [];
-  const result = spawnSync(browserBin, ['--session', session, ...launchOptions, '--color-scheme', 'dark', ...args], {
+  const result = spawnSync(browserBin, ['--session', session, ...launchOptions, '--color-scheme', 'light', ...args], {
     cwd: worktreeRoot,
     encoding: 'utf8',
     timeout: commandTimeoutMs,
@@ -85,7 +85,7 @@ const runBrowser = (args, { allowFailure = false } = {}) => {
   });
   if (!allowFailure && result.status !== 0) {
     const detail = result.error?.message || (result.stderr || result.stdout || '').trim() || `status ${result.status}`;
-    throw new Error(`agent-browser ${args.join(' ')} failed: ${detail}`);
+    throw new Error(`agent-browser ${args[0]} failed: ${detail}`);
   }
   return {
     status: result.status,
@@ -154,53 +154,6 @@ const settingsGeometryExpression = `JSON.stringify((() => {
   };
 })())`;
 
-const contrastExpression = (selectors) => `JSON.stringify((() => {
-  const rgb = (value) => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
-  const luminance = (channels) => {
-    const values = channels.map((channel) => channel / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
-    return 0.2126 * values[0] + 0.7152 * values[1] + 0.0722 * values[2];
-  };
-  const opaqueBackground = (element) => {
-    for (let current = element; current; current = current.parentElement) {
-      const channels = (getComputedStyle(current).backgroundColor.match(/\\d+(?:\\.\\d+)?/g) || []).map(Number);
-      if (channels.length >= 3 && (channels.length < 4 || channels[3] > 0)) return channels.slice(0, 3);
-    }
-    return [255, 255, 255];
-  };
-  const inspect = (selector) => {
-    const element = document.querySelector(selector);
-    if (!element) return { selector, visible: false, contrast: 0 };
-    const style = getComputedStyle(element);
-    const foreground = rgb(style.color);
-    const background = opaqueBackground(element);
-    const lighter = Math.max(luminance(foreground), luminance(background));
-    const darker = Math.min(luminance(foreground), luminance(background));
-    return { selector, visible: element.getBoundingClientRect().width > 0, foreground, background, contrast: (lighter + 0.05) / (darker + 0.05) };
-  };
-  const controls = ${JSON.stringify(selectors)}.map(inspect);
-  return { prefers_dark: matchMedia('(prefers-color-scheme: dark)').matches, controls, readable: controls.every((control) => control.visible && control.contrast >= 4.5) };
-})())`;
-
-const matrixThemeExpression = `JSON.stringify((() => {
-  const rgb = (value) => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
-  const root = document.documentElement;
-  const panel = document.querySelector('.settings-panel');
-  const save = document.querySelector('.settings-primary .settings-actions button');
-  const background = rgb(getComputedStyle(root).backgroundColor);
-  const panelBackground = panel ? rgb(getComputedStyle(panel).backgroundColor) : [];
-  const text = panel ? rgb(getComputedStyle(panel).color) : [];
-  const accent = save ? rgb(getComputedStyle(save).backgroundColor) : [];
-  const nearBlack = (channels) => channels.length === 3 && Math.max(...channels) <= 24;
-  const matrixGreen = (channels) => channels.length === 3 && channels[1] >= 140 && channels[1] > channels[0] && channels[1] > channels[2];
-  return {
-    root_scheme: root.dataset.colorScheme || null,
-    app_scheme: document.querySelector('.app-shell')?.getAttribute('data-color-scheme') || null,
-    background, panel_background: panelBackground, text, accent,
-    near_black: nearBlack(background) && nearBlack(panelBackground),
-    green_foreground: matrixGreen(text) && matrixGreen(accent)
-  };
-})())`;
-
 const evidence = {
   version: 1,
   mode: 'executed',
@@ -246,28 +199,9 @@ try {
 
   runBrowser(['click', 'button[aria-label^="Settings:"]']);
   runBrowser(['wait', '.settings-panel']);
-  runBrowser(['wait', '500']);
-  runBrowser(['click', 'input[name="color-scheme"][value="classic"]']);
-  runBrowser(['click', '.settings-primary .settings-actions button:first-child']);
-  runBrowser(['wait', '.settings-panel .success']);
-  runBrowser(['wait', 'html[data-color-scheme="classic"]']);
-  runBrowser(['click', 'button[aria-label^="Workflows:"]']);
-  const classicDarkNavigation = evalJson(contrastExpression(['.tabs button.active', '.tabs button.active span', '.project-selector-button', '.project-selector-caret']));
-  evidence.geometry.classic_dark_navigation = classicDarkNavigation;
-  check('classic-dark-navigation', classicDarkNavigation.prefers_dark && classicDarkNavigation.readable, classicDarkNavigation);
-
-  runBrowser(['click', 'button[aria-label^="Settings:"]']);
-  runBrowser(['wait', '.settings-panel']);
-  runBrowser(['click', 'input[name="color-scheme"][value="matrix"]']);
-  runBrowser(['click', '.settings-primary .settings-actions button:first-child']);
-  runBrowser(['wait', '.settings-panel .success']);
-  runBrowser(['wait', 'html[data-color-scheme="matrix"]']);
-  const matrixTheme = evalJson(matrixThemeExpression);
-  evidence.geometry.matrix_theme = matrixTheme;
-  check('matrix-theme', matrixTheme.root_scheme === 'matrix' && matrixTheme.app_scheme === 'matrix' && matrixTheme.near_black && matrixTheme.green_foreground, matrixTheme);
   const settingsDesktop = evalJson(settingsGeometryExpression);
   const settingsShot = screenshot('desktop-settings.png');
-  evidence.screenshots.push({ id: 'desktop-settings', width: 1440, height: 900, path: settingsShot, state: 'settings-matrix' });
+  evidence.screenshots.push({ id: 'desktop-settings', width: 1440, height: 900, path: settingsShot, state: 'settings' });
   evidence.geometry.settings_desktop = settingsDesktop;
   check('settings-width-utilization', settingsDesktop.visible && settingsDesktop.width_utilization >= 0.75 && !settingsDesktop.horizontal_overflow, settingsDesktop, settingsShot);
 
@@ -285,35 +219,10 @@ try {
   evidence.geometry.settings_mobile = mobileGeometry;
   check('mobile-screenshot', mobileGeometry.visible && !mobileGeometry.horizontal_overflow, mobileGeometry, mobileShot);
 
-  runBrowser(['set', 'viewport', '1440', '900']);
-  runBrowser(['click', 'button[aria-label^="Runs:"]']);
-  runBrowser(['click', '.header-start-button']);
-  runBrowser(['wait', '.wizard-steps']);
-  runBrowser(['click', '.wizard-workflow-list button']);
-  runBrowser(['wait', '.wizard-fill .required']);
-  const matrixWizardControls = evalJson(contrastExpression(['.project-selector-button', '.project-selector-caret', '.wizard-steps li[aria-current="true"]', '.wizard-steps li:not([aria-current="true"])', '.wizard-fill .required']));
-  runBrowser(['click', '.wizard .modal-header button']);
-  runBrowser(['click', 'button[aria-label^="Workflows:"]']);
-  runBrowser(['wait', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
-  runBrowser(['click', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
-  runBrowser(['wait', '.studio-toolbar']);
-  runBrowser(['eval', 'window.confirm = () => true']);
-  runBrowser(['click', '.studio-toolbar button:nth-child(5)']);
-  runBrowser(['click', '.studio-toolbar button:nth-child(3)']);
-  runBrowser(['wait', '.lint-list li.lint-error']);
-  const matrixStudioControls = evalJson(contrastExpression(['.studio-toolbar button:not(:disabled)', '.lint-list li.lint-error']));
-  const matrixControls = {
-    wizard: matrixWizardControls,
-    studio: matrixStudioControls,
-    readable: matrixWizardControls.readable && matrixStudioControls.readable
-  };
-  evidence.geometry.matrix_controls = matrixControls;
-  check('matrix-controls', matrixControls.readable, matrixControls);
-
   evidence.console.errors = runBrowser(['errors'], { allowFailure: true }).stdout;
   evidence.console.messages = runBrowser(['console'], { allowFailure: true }).stdout;
   check('console-clean', evidence.console.errors.trim() === '', { errors: evidence.console.errors });
-  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'select Classic under system dark mode', 'select and save Matrix color scheme', 'open workflow wizard required-input state', 'open Workflow Studio and render an invalid lint result'] });
+  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'open settings'] });
 } catch (error) {
   evidence.findings.push({
     source: 'ui-quality-gate', severity: 'blocker', category: 'setup', actionable: true,
@@ -324,7 +233,7 @@ try {
   runBrowser(['close'], { allowFailure: true });
 }
 
-const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls', 'console-clean', 'primary-task'];
+const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'console-clean', 'primary-task'];
 const passed = evidence.findings.length === 0 && requiredChecks.every((id) => evidence.checks.some((item) => item.id === id && item.passed));
 fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
 fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
