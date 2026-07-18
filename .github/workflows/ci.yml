@@ -33,6 +33,25 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Web tests
+        run: npm run web:test
+
+      - name: Run Playwright E2E tests
+        run: npm run web:e2e
+
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+
       - name: Run Babashka tests (bb test)
         run: bb test
 
