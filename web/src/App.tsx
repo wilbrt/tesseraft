@@ -15,6 +15,7 @@ import type { Artifact, EventRecord, LoadState, RunDetail, RunSummary, WorkflowD
 import './style.css';
 
 type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'settings' | 'studio';
+type ColorScheme = 'classic' | 'matrix';
 type RunSnapshot = { run?: RunDetail; events?: EventRecord[]; artifacts?: Artifact[]; runs?: RunSummary[] };
 
 export const App = () => {
@@ -37,6 +38,24 @@ export const App = () => {
   const [lastRunRefresh, setLastRunRefresh] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [studioWorkflowName, setStudioWorkflowName] = useState<string | null>(null);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>('classic');
+
+  useEffect(() => {
+    document.documentElement.dataset.colorScheme = colorScheme;
+  }, [colorScheme]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setColorScheme('classic');
+    getJson<{ settings?: { color_scheme?: unknown } }>(projectApiUrl('/api/settings', projectId))
+      .then((data) => {
+        if (!cancelled) setColorScheme(data.settings?.color_scheme === 'matrix' ? 'matrix' : 'classic');
+      })
+      .catch(() => {
+        if (!cancelled) setColorScheme('classic');
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   const loadRuns = async (): Promise<void> => {
     try {
@@ -169,7 +188,7 @@ export const App = () => {
 
   return (
     <ProjectContext.Provider value={projectContextValue}>
-    <>
+    <div className="app-shell" data-color-scheme={colorScheme}>
       <header>
         <div className="header-topline">
           <h1>Tesseraft Console</h1>
@@ -219,11 +238,11 @@ export const App = () => {
           </>
         )}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
-        {activeTab === 'settings' && <FullWidthPage><SettingsPanel /></FullWidthPage>}
+        {activeTab === 'settings' && <FullWidthPage><SettingsPanel onColorSchemeChange={setColorScheme} /></FullWidthPage>}
         {activeTab === 'studio' && <WorkflowStudio initialWorkflowName={studioWorkflowName} onExit={() => setActiveTab('workflows')} onWorkflowsChanged={refreshWorkflows} />}
         {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
-    </>
+    </div>
     </ProjectContext.Provider>
   );
 };

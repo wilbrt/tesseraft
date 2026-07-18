@@ -1,0 +1,21 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "mock-executor-fixture"}
+ :inputs {:prompt {:type :string :required true}
+          :repo-root {:type :path :required true}}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true}
+ :initial :execute
+ :states
+ {:execute
+  {:type :agent
+   :executor :pi-cli
+   :prompt-template "prompts/execute.md.tmpl"
+   :tools [:read]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "1m"}
+   :outputs {:status {:path "execution/status.json" :schema "../../../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :done}]}
+  :done {:type :terminal :status :success}}}

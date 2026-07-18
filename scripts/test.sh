@@ -482,15 +482,15 @@ if ! grep -q '"status" : "done"' <<<"$SMOKE_OUTPUT"; then
   exit 1
 fi
 
-printf '\nRunning review-loop mock executor dry run...\n'
-MOCK_RUN_DIR=".agent-runs/review-loop/mock-test"
-MOCK_OUTPUT="$(./bin/tesseraft run examples/review-loop/workflow.edn --executor mock --run-id mock-test --input prompt='Test dry run' --input repo-root=. --format json)"
+printf '\nRunning mock executor fixture...\n'
+MOCK_RUN_DIR=".agent-runs/mock-executor-fixture/mock-test"
+MOCK_OUTPUT="$(./bin/tesseraft run test/fixtures/valid/mock-executor/workflow.edn --executor mock --run-id mock-test --input prompt='Test dry run' --input repo-root=. --format json)"
 printf '%s\n' "$MOCK_OUTPUT"
 if ! grep -q '"status" : "done"' <<<"$MOCK_OUTPUT"; then
   echo "Expected mock workflow run status to be done" >&2
   exit 1
 fi
-if [[ ! -f "$MOCK_RUN_DIR/design/status.json" || ! -f "$MOCK_RUN_DIR/execution/status-1.json" || ! -f "$MOCK_RUN_DIR/pr/pr.json" ]]; then
+if [[ ! -f "$MOCK_RUN_DIR/execution/status.json" || ! -f "$MOCK_RUN_DIR/execution/summary.md" ]]; then
   echo "Expected mock dry run artifacts were not written" >&2
   exit 1
 fi

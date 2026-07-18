@@ -208,7 +208,7 @@ const readMaxSteps = (value: unknown, fallback: number): number | null => {
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 const SETTINGS_TOKEN_FIELDS = new Set(['github_token', 'jira_token']);
-const SETTINGS_NON_TOKEN_FIELDS = new Set(['pi_default_provider', 'pi_default_model', 'default_repo_root']);
+const SETTINGS_NON_TOKEN_FIELDS = new Set(['pi_default_provider', 'pi_default_model', 'default_repo_root', 'color_scheme']);
 const SETTINGS_FIELDS = new Set([...SETTINGS_TOKEN_FIELDS, ...SETTINGS_NON_TOKEN_FIELDS]);
 const SETTINGS_LENGTH_LIMITS: Record<string, number> = {
   pi_default_provider: 100, pi_default_model: 200,
@@ -217,6 +217,7 @@ const SETTINGS_LENGTH_LIMITS: Record<string, number> = {
 const SETTINGS_UNCHANGED = '__unchanged__';
 
 const validateSettingsField = (field: string, value: unknown): string | null => {
+  if (field === 'color_scheme' && value !== 'classic' && value !== 'matrix') return 'color_scheme must be one of: classic, matrix';
   if (typeof value !== 'string') return `${field} must be a string`;
   if (value.trim() === '') return `${field} must not be empty`;
   if (/\n/.test(value)) return `${field} must not contain newlines`;
@@ -345,6 +346,9 @@ const handleSetSettings = async (req: Request, res: Response, projectId?: string
   const updates: JsonRecord = {};
   for (const [field, raw] of Object.entries(body)) {
     if (!SETTINGS_FIELDS.has(field)) return jsonResponse(res, 400, errorBody(400, 'bad_request', `Unknown settings field: ${field}`));
+    if (field === 'color_scheme' && raw !== 'classic' && raw !== 'matrix') {
+      return jsonResponse(res, 400, errorBody(400, 'bad_request', 'color_scheme must be one of: classic, matrix'));
+    }
     // Token unchanged sentinel: null or the literal sentinel preserves.
     if (SETTINGS_TOKEN_FIELDS.has(field) && (raw === null || raw === SETTINGS_UNCHANGED)) {
       updates[field] = SETTINGS_UNCHANGED;

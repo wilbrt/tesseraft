@@ -4,12 +4,14 @@ import { useProject, projectApiUrl } from '../lib/project';
 import { ConnectionsDoctorPanel } from './ConnectionsDoctorPanel';
 
 type TokenMask = { present: boolean; preview?: string };
+type ColorScheme = 'classic' | 'matrix';
 type Settings = {
   pi_default_provider: string | null;
   pi_default_model: string | null;
   github_token: TokenMask;
   jira_token: TokenMask;
   default_repo_root: string | null;
+  color_scheme: ColorScheme;
   source: 'project' | 'global' | 'none';
 };
 type SettingsResponse = { settings: Settings };
@@ -80,12 +82,13 @@ const isBasicEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.te
 
 const tokenInputValue = (mask: TokenMask): string => '';
 
-export const SettingsPanel = () => {
+export const SettingsPanel = ({ onColorSchemeChange }: { onColorSchemeChange: (scheme: ColorScheme) => void }) => {
   const { projectId: globalProjectId } = useProject();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
   const [repoRoot, setRepoRoot] = useState('');
+  const [colorScheme, setColorScheme] = useState<ColorScheme>('classic');
   const [githubToken, setGithubToken] = useState('');
   const [jiraToken, setJiraToken] = useState('');
   const [gitName, setGitName] = useState('');
@@ -117,6 +120,7 @@ export const SettingsPanel = () => {
       setProvider(settingsData.settings.pi_default_provider || '');
       setModel(settingsData.settings.pi_default_model || '');
       setRepoRoot(settingsData.settings.default_repo_root || '');
+      setColorScheme(settingsData.settings.color_scheme === 'matrix' ? 'matrix' : 'classic');
       setGithubToken(tokenInputValue(settingsData.settings.github_token));
       setJiraToken(tokenInputValue(settingsData.settings.jira_token));
       setGitUser(gitUserData.git_user);
@@ -225,7 +229,7 @@ export const SettingsPanel = () => {
       setError('Default provider is required when a default model is set. Clear the model first, or set a provider.');
       return;
     }
-    const updates: Record<string, unknown> = {};
+    const updates: Record<string, unknown> = { color_scheme: colorScheme };
     if (provider.trim() !== '') updates.pi_default_provider = provider.trim();
     else if (settings?.pi_default_provider) updates.pi_default_provider = null;
     if (model.trim() !== '') updates.pi_default_model = model.trim();
@@ -252,6 +256,7 @@ export const SettingsPanel = () => {
           setProvider(data.settings.pi_default_provider || '');
           setModel(data.settings.pi_default_model || '');
           setRepoRoot(data.settings.default_repo_root || '');
+          setColorScheme(data.settings.color_scheme === 'matrix' ? 'matrix' : 'classic');
         }));
       }
       if (isNonEmpty(gitName) && isNonEmpty(gitEmail) && isBasicEmail(gitEmail)) {
@@ -260,6 +265,7 @@ export const SettingsPanel = () => {
         }));
       }
       await Promise.all(tasks);
+      onColorSchemeChange(colorScheme);
       setGithubToken('');
       setJiraToken('');
       setInfo('Saved. Settings are written to the project-local .tesseraft/settings.json config file; the browser never owns token values.');
@@ -319,6 +325,20 @@ export const SettingsPanel = () => {
 
       <div className="settings-layout">
       <div className="control-card settings-form settings-primary">
+        <h3>Appearance</h3>
+        <fieldset className="color-scheme-options">
+          <legend>Color scheme</legend>
+          <label>
+            <input type="radio" name="color-scheme" value="classic" checked={colorScheme === 'classic'} onChange={() => setColorScheme('classic')} />
+            <span><strong>Classic</strong><small>Use the standard Tesseraft palette, including your system dark-mode preference.</small></span>
+          </label>
+          <label>
+            <input type="radio" name="color-scheme" value="matrix" checked={colorScheme === 'matrix'} onChange={() => setColorScheme('matrix')} />
+            <span><strong>Matrix</strong><small>Use a high-contrast near-black and Matrix-green console palette.</small></span>
+          </label>
+        </fieldset>
+        <p className="muted">The color scheme is project-scoped and follows the active project.</p>
+
         <h3>Pi defaults</h3>
         <p className="muted">Default provider and model used when creating new Pi sessions.</p>
         <label>

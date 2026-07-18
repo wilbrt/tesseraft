@@ -87,13 +87,15 @@ test('two projects: discovery, settings, run identity, delete isolation, securit
   //    plane requires a provider whenever a model is set, so set both.
   const setAlpha = await fetch(`${base}/api/projects/alpha/settings`, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_provider: 'alpha-provider', pi_default_model: 'Alpha-Model' })
+    body: JSON.stringify({ pi_default_provider: 'alpha-provider', pi_default_model: 'Alpha-Model', color_scheme: 'matrix' })
   });
   assert.equal(setAlpha.status, 200);
   const alphaSettings = await fetch(`${base}/api/projects/alpha/settings`).then(json);
   const betaSettings = await fetch(`${base}/api/projects/beta/settings`).then(json);
   assert.equal(alphaSettings.settings.pi_default_provider, 'alpha-provider', 'alpha settings should reflect the write');
   assert.equal(alphaSettings.settings.pi_default_model, 'Alpha-Model', 'alpha settings should reflect the write');
+  assert.equal(alphaSettings.settings.color_scheme, 'matrix', 'alpha should use its saved scheme');
+  assert.equal(betaSettings.settings.color_scheme, 'classic', 'beta should retain the classic default');
   assert.notEqual(betaSettings.settings.pi_default_provider, 'alpha-provider', 'beta must not see alpha settings');
   assert.notEqual(betaSettings.settings.pi_default_model, 'Alpha-Model', 'beta must not see alpha settings');
 

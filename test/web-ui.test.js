@@ -159,9 +159,10 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
   const gitUserPanel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
   const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
+  const styles = fs.readFileSync('web/src/style.css', 'utf8');
   assert.match(app, /'settings'/);
   assert.match(app, />Settings <span>config<\/span><\/button>/);
-  assert.match(app, /<SettingsPanel \/>/);
+  assert.match(app, /<SettingsPanel onColorSchemeChange=\{setColorScheme\} \/>/);
   assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'settings'/);
   // The settings tab embeds the git identity fields and posts to /api/git-user.
   assert.match(panel, /Settings/);
@@ -174,6 +175,46 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(panel, /Jira token/);
   assert.match(panel, /Default repo root/);
   assert.match(panel, /Save settings/);
+  assert.match(panel, /<fieldset className="color-scheme-options">/);
+  assert.match(panel, /<legend>Color scheme<\/legend>/);
+  assert.match(panel, /type="radio" name="color-scheme" value="classic"/);
+  assert.match(panel, /type="radio" name="color-scheme" value="matrix"/);
+  assert.match(panel, /project-scoped and follows the active project/);
+  assert.match(app, /document\.documentElement\.dataset\.colorScheme = colorScheme/);
+  assert.match(app, /data-color-scheme=\{colorScheme\}/);
+  assert.match(app, /cancelled = true/);
+  assert.match(styles, /:root\[data-color-scheme="matrix"\]/);
+  assert.match(styles, /--color-app-bg:\s*#020604/);
+  assert.match(styles, /--color-accent:\s*#35e85f/);
+  const classicDarkStyles = styles.slice(
+    styles.indexOf('@media (prefers-color-scheme: dark)'),
+    styles.indexOf('/* Workflow Studio */')
+  );
+  assert.match(classicDarkStyles, /\.node-title\s*\{\s*fill:\s*var\(--color-text\)/, 'Classic dark graph titles must use readable light text');
+  assert.match(styles, /--color-nav-active-bg:\s*#e2e8f0/);
+  assert.match(styles, /--color-nav-active-text:\s*#172033/);
+  assert.match(styles, /--color-nav-active-muted:\s*#475569/);
+  assert.match(styles, /\.tabs button\.active\s*\{[^}]*background:\s*var\(--color-nav-active-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
+  assert.match(styles, /\.tabs button\.active span\s*\{\s*color:\s*var\(--color-nav-active-muted\)/);
+  assert.match(styles, /\.project-selector-caret\s*\{[^}]*color:\s*var\(--color-nav-active-muted\)/);
+  assert.match(styles, /\.project-selector-button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
+  assert.ok(styles.indexOf(':root[data-color-scheme="matrix"]') > styles.indexOf('@media (prefers-color-scheme: dark)'), 'Matrix overrides must follow system dark-mode rules');
+  const matrixStyles = styles.slice(styles.indexOf(':root[data-color-scheme="matrix"]'));
+  assert.match(matrixStyles, /--color-nav-active-muted:\s*#a7f3a0/);
+  assert.match(matrixStyles, /--color-control-subtle-bg:\s*#071b0d/);
+  assert.match(matrixStyles, /--color-control-subtle-text:\s*#baffbd/);
+  assert.match(matrixStyles, /--color-step-bg:\s*#0a2812/);
+  assert.match(matrixStyles, /--color-step-text:\s*#a7f3a0/);
+  assert.match(matrixStyles, /--color-required:\s*#ff9aa3/);
+  assert.match(matrixStyles, /--color-lint-warning-bg:\s*#2b2205/);
+  assert.match(matrixStyles, /--color-lint-warning-text:\s*#ffe781/);
+  assert.match(matrixStyles, /--color-lint-error-bg:\s*#2b090d/);
+  assert.match(matrixStyles, /--color-lint-error-text:\s*#ffb3ba/);
+  assert.match(styles, /\.wizard-steps li\s*\{[^}]*color:\s*var\(--color-step-text\);[^}]*background:\s*var\(--color-step-bg\)/);
+  assert.match(styles, /\.required\s*\{[^}]*color:\s*var\(--color-required\)/);
+  assert.match(styles, /\.lint-list li\s*\{[^}]*background:\s*var\(--color-lint-warning-bg\);[^}]*color:\s*var\(--color-lint-warning-text\)/);
+  assert.match(styles, /\.lint-list li\.lint-error\s*\{[^}]*background:\s*var\(--color-lint-error-bg\);[^}]*color:\s*var\(--color-lint-error-text\)/);
+  assert.match(styles, /\.studio-toolbar button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-control-subtle-text\)/);
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);
   assert.match(panel, /<ConnectionsDoctorPanel \/>/);
@@ -348,7 +389,7 @@ test('project overlays portal outside clipping layout and Settings owns the full
   assert.match(selector, /aria-haspopup="listbox"/);
   assert.doesNotMatch(styles, /\.header-topline[^\n]*overflow-x:\s*hidden/);
   assert.match(styles, /\.popover-layer\s*\{[^}]*position:\s*fixed/);
-  assert.match(app, /<FullWidthPage><SettingsPanel\s*\/><\/FullWidthPage>/);
+  assert.match(app, /<FullWidthPage><SettingsPanel onColorSchemeChange=\{setColorScheme\}\s*\/><\/FullWidthPage>/);
   assert.match(settings, /settings-layout/);
   assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
 });

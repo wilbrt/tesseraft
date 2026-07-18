@@ -154,7 +154,7 @@ src/tesseraft/adapters/*      deterministic handler adapters
 Implemented:
 
 - **ui-quality-gates** (implemented) — Rendered UI quality gates for review-loop: portal-based overlays and full-width page primitives, deterministic desktop/compact/mobile/open-overlay screenshots with geometry assertions, separate functional and independent visual-review agents, machine-enforced evidence/verdict validation, and branch-committed screenshot sets linked from PR descriptions.
-  _Evidence:_ web/src/components/Popover.tsx, web/src/components/PageLayout.tsx, examples/review-loop/scripts/ui_quality_gate.mjs, examples/review-loop/prompts/visual-review.md.tmpl, src/tesseraft/adapters/builtin.clj validate-ui-review!/publish-visual-evidence!, schemas/ui-evidence.schema.json, schemas/ui-review-status.schema.json, test/ui-quality-gate.test.js
+  _Evidence:_ web/src/components/Popover.tsx, web/src/components/PageLayout.tsx, examples/review-loop/scripts/ui_quality_gate.mjs, examples/review-loop/prompts/visual-review.md.tmpl, src/tesseraft/adapters/builtin.clj validate-ui-review!/publish-visual-evidence!, schemas/ui-evidence.schema.json, schemas/ui-review-status.schema.json
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
 - **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.
@@ -177,6 +177,8 @@ Implemented:
   _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
 - **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.
   _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
+- **color-schemes** (implemented) — Project-scoped console color schemes with accessible Classic/Matrix settings, file-backed persistence, immediate application, project switching, and a complete black/green Matrix palette.
+  _Evidence:_ src/tesseraft/control_plane/core.clj color_scheme settings contract, web/src/App.tsx data-color-scheme owner, web/src/components/SettingsPanel.tsx color scheme radio group, web/src/style.css Matrix semantic palette, test/web-server.test.js, test/project-scope.test.js
 
 Partial:
 
