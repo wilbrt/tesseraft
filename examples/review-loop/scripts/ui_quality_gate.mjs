@@ -154,6 +154,26 @@ const settingsGeometryExpression = `JSON.stringify((() => {
   };
 })())`;
 
+const matrixThemeExpression = `JSON.stringify((() => {
+  const rgb = (value) => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
+  const root = document.documentElement;
+  const panel = document.querySelector('.settings-panel');
+  const save = document.querySelector('.settings-primary .settings-actions button');
+  const background = rgb(getComputedStyle(root).backgroundColor);
+  const panelBackground = panel ? rgb(getComputedStyle(panel).backgroundColor) : [];
+  const text = panel ? rgb(getComputedStyle(panel).color) : [];
+  const accent = save ? rgb(getComputedStyle(save).backgroundColor) : [];
+  const nearBlack = (channels) => channels.length === 3 && Math.max(...channels) <= 24;
+  const matrixGreen = (channels) => channels.length === 3 && channels[1] >= 140 && channels[1] > channels[0] && channels[1] > channels[2];
+  return {
+    root_scheme: root.dataset.colorScheme || null,
+    app_scheme: document.querySelector('.app-shell')?.getAttribute('data-color-scheme') || null,
+    background, panel_background: panelBackground, text, accent,
+    near_black: nearBlack(background) && nearBlack(panelBackground),
+    green_foreground: matrixGreen(text) && matrixGreen(accent)
+  };
+})())`;
+
 const evidence = {
   version: 1,
   mode: 'executed',
@@ -199,9 +219,16 @@ try {
 
   runBrowser(['click', 'button[aria-label^="Settings:"]']);
   runBrowser(['wait', '.settings-panel']);
+  runBrowser(['wait', '500']);
+  runBrowser(['click', 'input[name="color-scheme"][value="matrix"]']);
+  runBrowser(['click', '.settings-primary .settings-actions button:first-child']);
+  runBrowser(['wait', 'html[data-color-scheme="matrix"]']);
+  const matrixTheme = evalJson(matrixThemeExpression);
+  evidence.geometry.matrix_theme = matrixTheme;
+  check('matrix-theme', matrixTheme.root_scheme === 'matrix' && matrixTheme.app_scheme === 'matrix' && matrixTheme.near_black && matrixTheme.green_foreground, matrixTheme);
   const settingsDesktop = evalJson(settingsGeometryExpression);
   const settingsShot = screenshot('desktop-settings.png');
-  evidence.screenshots.push({ id: 'desktop-settings', width: 1440, height: 900, path: settingsShot, state: 'settings' });
+  evidence.screenshots.push({ id: 'desktop-settings', width: 1440, height: 900, path: settingsShot, state: 'settings-matrix' });
   evidence.geometry.settings_desktop = settingsDesktop;
   check('settings-width-utilization', settingsDesktop.visible && settingsDesktop.width_utilization >= 0.75 && !settingsDesktop.horizontal_overflow, settingsDesktop, settingsShot);
 
@@ -222,7 +249,7 @@ try {
   evidence.console.errors = runBrowser(['errors'], { allowFailure: true }).stdout;
   evidence.console.messages = runBrowser(['console'], { allowFailure: true }).stdout;
   check('console-clean', evidence.console.errors.trim() === '', { errors: evidence.console.errors });
-  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'open settings'] });
+  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'matrix-theme'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'open settings', 'select and save Matrix color scheme'] });
 } catch (error) {
   evidence.findings.push({
     source: 'ui-quality-gate', severity: 'blocker', category: 'setup', actionable: true,
@@ -233,7 +260,7 @@ try {
   runBrowser(['close'], { allowFailure: true });
 }
 
-const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'console-clean', 'primary-task'];
+const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'matrix-theme', 'console-clean', 'primary-task'];
 const passed = evidence.findings.length === 0 && requiredChecks.every((id) => evidence.checks.some((item) => item.id === id && item.passed));
 fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
 fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);

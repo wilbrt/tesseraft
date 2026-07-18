@@ -50,6 +50,10 @@
    {:status :implemented
     :summary "Containerized install path and install_deps script."
     :evidence ["docs/CONTAINER_INSTALL.md" "scripts/install.sh" "test/container/"]}
+   :color-schemes
+   {:status :implemented
+    :summary "Project-scoped console color schemes with accessible Classic/Matrix settings, file-backed persistence, immediate application, project switching, and a complete black/green Matrix palette."
+    :evidence ["src/tesseraft/control_plane/core.clj color_scheme settings contract" "web/src/App.tsx data-color-scheme owner" "web/src/components/SettingsPanel.tsx color scheme radio group" "web/src/style.css Matrix semantic palette" "test/web-server.test.js" "test/project-scope.test.js" "examples/review-loop/scripts/ui_quality_gate.mjs matrix-theme check"]}
    :web-ui
    {:status :partial
     :summary "Workflow Studio + Run Console scaffold exists; not feature-complete."

@@ -162,7 +162,7 @@
 
 (def ^:private settings-fields
   [:pi_default_provider :pi_default_model :github_token
-   :jira_token :default_repo_root])
+   :jira_token :default_repo_root :color_scheme])
 
 ;; Sentinel for "leave this token field as-is" (used by the web API to round-trip
 ;; masked tokens safely). See docs in `set-settings`.
@@ -212,7 +212,8 @@
                  :tesseraft-home tesseraft-home}
      :settings (let [base {:pi-default-provider (or (:pi_default_provider settings) nil)
                            :pi-default-model (or (:pi_default_model settings) nil)
-                           :default-repo-root (or (:default_repo_root settings) nil)}]
+                           :default-repo-root (or (:default_repo_root settings) nil)
+                           :color-scheme (or (:color_scheme settings) "classic")}]
                  (-> base
                      (api-value)
                      (assoc :github-token (mask-token (:github_token settings))
@@ -1568,6 +1569,8 @@
 (defn validate-settings-field [k v]
   (cond
     (nil? v) nil ;; not provided; nothing to validate
+    (and (= k :color_scheme) (not (#{"classic" "matrix"} v)))
+    "color_scheme must be one of: classic, matrix"
     (not (string? v)) (str (name k) " must be a string")
     (str/blank? (str/trim v)) (str (name k) " must not be empty")
     (re-find #"\n" v) (str (name k) " must not contain newlines")
@@ -1580,7 +1583,8 @@
 (defn mask-settings [settings]
   (let [base {:pi_default_provider (or (:pi_default_provider settings) nil)
               :pi_default_model (or (:pi_default_model settings) nil)
-              :default_repo_root (or (:default_repo_root settings) nil)}]
+              :default_repo_root (or (:default_repo_root settings) nil)
+              :color_scheme (or (:color_scheme settings) "classic")}]
     (-> base
         (api-value)
         (assoc :github_token (mask-token (:github_token settings))

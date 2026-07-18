@@ -100,7 +100,8 @@
    "--pi-default-model" :pi_default_model
    "--github-token" :github_token
    "--jira-token" :jira_token
-   "--default-repo-root" :default_repo_root})
+   "--default-repo-root" :default_repo_root
+   "--color-scheme" :color_scheme})
 
 (def ^:private settings-clear-flags
   {"--clear-pi-default-provider" :pi_default_provider

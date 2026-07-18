@@ -965,6 +965,7 @@ test('web server exposes settings read and write via the control plane with mask
   const initialBody = await initial.json();
   assert.equal(initialBody.settings.source, 'none');
   assert.equal(initialBody.settings.pi_default_provider, null);
+  assert.equal(initialBody.settings.color_scheme, 'classic');
   assert.equal(initialBody.settings.github_token.present, false);
   assert.equal(initialBody.settings.jira_token.present, false);
 
@@ -977,6 +978,15 @@ test('web server exposes settings read and write via the control plane with mask
   assert.equal((await badWrite.json()).error.code, 'bad_request');
   assert.equal(fs.existsSync(configFile), false);
 
+  const badScheme = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ color_scheme: 'cyberpunk' })
+  });
+  assert.equal(badScheme.status, 400);
+  assert.equal((await badScheme.json()).error.code, 'bad_request');
+  assert.equal(fs.existsSync(configFile), false, 'invalid schemes must not mutate settings');
+
   const write = await fetch(`${base}/api/settings`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -985,7 +995,8 @@ test('web server exposes settings read and write via the control plane with mask
       pi_default_model: 'gpt-4o-mini',
       github_token: 'ghp_secretvalue1234',
       jira_token: 'jira-token-abcd',
-      default_repo_root: '/tmp/my-repo'
+      default_repo_root: '/tmp/my-repo',
+      color_scheme: 'matrix'
     })
   });
   assert.equal(write.status, 200);
@@ -994,6 +1005,7 @@ test('web server exposes settings read and write via the control plane with mask
   assert.equal(written.settings.pi_default_provider, 'openai');
   assert.equal(written.settings.pi_default_model, 'gpt-4o-mini');
   assert.equal(written.settings.default_repo_root, '/tmp/my-repo');
+  assert.equal(written.settings.color_scheme, 'matrix');
   // Tokens must be masked — only present + last 4 preview, never full value.
   assert.equal(written.settings.github_token.present, true);
   assert.equal(written.settings.github_token.preview, '1234');
@@ -1003,6 +1015,10 @@ test('web server exposes settings read and write via the control plane with mask
   const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   assert.equal(stored.github_token, 'ghp_secretvalue1234');
   assert.equal(stored.jira_token, 'jira-token-abcd');
+  assert.equal(stored.color_scheme, 'matrix');
+
+  const matrixGet = await fetch(`${base}/api/settings`).then((response) => response.json());
+  assert.equal(matrixGet.settings.color_scheme, 'matrix');
 
   // The masked GET round-trips: sending the sentinel preserves the token.
   const unchanged = await fetch(`${base}/api/settings`, {

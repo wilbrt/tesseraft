@@ -516,8 +516,15 @@ non-breaking.
 
 ### `GET /api/settings` / `PUT /api/settings`
 
-Purpose: round-trip local settings such as Pi defaults, tokens, and default repo
-root through the control plane.
+Purpose: round-trip project-scoped local settings such as Pi defaults, tokens,
+default repo root, and the console color scheme through the control plane.
+
+The response includes `color_scheme`, whose supported values are `classic` and
+`matrix`. Missing values default to `classic` for backward compatibility. A
+`PUT` with any other value is rejected with `400 bad_request` without mutating
+`.tesseraft/settings.json`. The CLI equivalent is
+`tesseraft control-plane settings set --color-scheme classic|matrix` (optionally
+preceded by `--project-id <id>`).
 
 Constraints:
 

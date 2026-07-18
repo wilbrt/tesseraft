@@ -177,6 +177,8 @@ Implemented:
   _Evidence:_ web/src-server/routes/api.ts, test/web-server.test.js
 - **pinga-handler** (implemented) — Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN.
   _Evidence:_ src/tesseraft/adapters/builtin.clj notify-pinga!, src/tesseraft/spec.clj
+- **color-schemes** (implemented) — Project-scoped console color schemes with accessible Classic/Matrix settings, file-backed persistence, immediate application, project switching, and a complete black/green Matrix palette.
+  _Evidence:_ src/tesseraft/control_plane/core.clj color_scheme settings contract, web/src/App.tsx data-color-scheme owner, web/src/components/SettingsPanel.tsx color scheme radio group, web/src/style.css Matrix semantic palette, test/web-server.test.js, test/project-scope.test.js, examples/review-loop/scripts/ui_quality_gate.mjs matrix-theme check
 
 Partial:
 

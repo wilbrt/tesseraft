@@ -42,13 +42,17 @@ test('rendered UI gate captures required states and rejects clipping/width waste
   assert.equal(result.status, 'pass', raw);
 
   const evidence = JSON.parse(fs.readFileSync(path.join(runDir, result.evidence_file), 'utf8'));
-  const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'console-clean', 'primary-task'];
+  const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'matrix-theme', 'console-clean', 'primary-task'];
   assert.deepEqual(requiredChecks.filter((id) => !evidence.checks.some((entry) => entry.id === id && entry.passed)), []);
   assert.equal(evidence.geometry.project_menu.visible, true);
   assert.equal(evidence.geometry.project_menu.within_viewport, true);
   assert.equal(evidence.geometry.project_menu.pointer_target, true);
   assert.deepEqual(evidence.geometry.project_menu.clipping_ancestors, []);
   assert.ok(evidence.geometry.settings_desktop.width_utilization >= 0.75, evidence.geometry.settings_desktop);
+  assert.equal(evidence.geometry.matrix_theme.root_scheme, 'matrix');
+  assert.equal(evidence.geometry.matrix_theme.app_scheme, 'matrix');
+  assert.equal(evidence.geometry.matrix_theme.near_black, true);
+  assert.equal(evidence.geometry.matrix_theme.green_foreground, true);
   assert.equal(evidence.geometry.settings_mobile.horizontal_overflow, false);
   assert.deepEqual(evidence.findings, []);
   assert.equal(evidence.browser.agent_browser_version, 'agent-browser 0.32.0');

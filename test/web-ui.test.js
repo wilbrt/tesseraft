@@ -159,9 +159,10 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
   const gitUserPanel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
   const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
+  const styles = fs.readFileSync('web/src/style.css', 'utf8');
   assert.match(app, /'settings'/);
   assert.match(app, />Settings <span>config<\/span><\/button>/);
-  assert.match(app, /<SettingsPanel \/>/);
+  assert.match(app, /<SettingsPanel onColorSchemeChange=\{setColorScheme\} \/>/);
   assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'settings'/);
   // The settings tab embeds the git identity fields and posts to /api/git-user.
   assert.match(panel, /Settings/);
@@ -174,6 +175,18 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(panel, /Jira token/);
   assert.match(panel, /Default repo root/);
   assert.match(panel, /Save settings/);
+  assert.match(panel, /<fieldset className="color-scheme-options">/);
+  assert.match(panel, /<legend>Color scheme<\/legend>/);
+  assert.match(panel, /type="radio" name="color-scheme" value="classic"/);
+  assert.match(panel, /type="radio" name="color-scheme" value="matrix"/);
+  assert.match(panel, /project-scoped and follows the active project/);
+  assert.match(app, /document\.documentElement\.dataset\.colorScheme = colorScheme/);
+  assert.match(app, /data-color-scheme=\{colorScheme\}/);
+  assert.match(app, /cancelled = true/);
+  assert.match(styles, /:root\[data-color-scheme="matrix"\]/);
+  assert.match(styles, /--color-app-bg:\s*#020604/);
+  assert.match(styles, /--color-accent:\s*#35e85f/);
+  assert.ok(styles.indexOf(':root[data-color-scheme="matrix"]') > styles.indexOf('@media (prefers-color-scheme: dark)'), 'Matrix overrides must follow system dark-mode rules');
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);
   assert.match(panel, /<ConnectionsDoctorPanel \/>/);
@@ -348,7 +361,7 @@ test('project overlays portal outside clipping layout and Settings owns the full
   assert.match(selector, /aria-haspopup="listbox"/);
   assert.doesNotMatch(styles, /\.header-topline[^\n]*overflow-x:\s*hidden/);
   assert.match(styles, /\.popover-layer\s*\{[^}]*position:\s*fixed/);
-  assert.match(app, /<FullWidthPage><SettingsPanel\s*\/><\/FullWidthPage>/);
+  assert.match(app, /<FullWidthPage><SettingsPanel onColorSchemeChange=\{setColorScheme\}\s*\/><\/FullWidthPage>/);
   assert.match(settings, /settings-layout/);
   assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
 });
