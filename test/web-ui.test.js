@@ -191,7 +191,22 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
     styles.indexOf('/* Workflow Studio */')
   );
   assert.match(classicDarkStyles, /\.node-title\s*\{\s*fill:\s*var\(--color-text\)/, 'Classic dark graph titles must use readable light text');
+  assert.match(styles, /--color-nav-active-bg:\s*#e2e8f0/);
+  assert.match(styles, /--color-nav-active-text:\s*#172033/);
+  assert.match(styles, /--color-nav-active-muted:\s*#475569/);
+  assert.match(styles, /\.tabs button\.active\s*\{[^}]*background:\s*var\(--color-nav-active-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
+  assert.match(styles, /\.tabs button\.active span\s*\{\s*color:\s*var\(--color-nav-active-muted\)/);
+  assert.match(styles, /\.project-selector-caret\s*\{[^}]*color:\s*var\(--color-nav-active-muted\)/);
+  assert.match(styles, /\.project-selector-button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
   assert.ok(styles.indexOf(':root[data-color-scheme="matrix"]') > styles.indexOf('@media (prefers-color-scheme: dark)'), 'Matrix overrides must follow system dark-mode rules');
+  const matrixStyles = styles.slice(styles.indexOf(':root[data-color-scheme="matrix"]'));
+  assert.match(matrixStyles, /--color-nav-active-muted:\s*#a7f3a0/);
+  assert.match(matrixStyles, /--color-control-subtle-bg:\s*#071b0d/);
+  assert.match(matrixStyles, /--color-control-subtle-text:\s*#baffbd/);
+  assert.match(matrixStyles, /--color-step-bg:\s*#0a2812/);
+  assert.match(matrixStyles, /--color-step-text:\s*#a7f3a0/);
+  assert.match(styles, /\.wizard-steps li\s*\{[^}]*color:\s*var\(--color-step-text\);[^}]*background:\s*var\(--color-step-bg\)/);
+  assert.match(styles, /\.studio-toolbar button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-control-subtle-text\)/);
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);
   assert.match(panel, /<ConnectionsDoctorPanel \/>/);

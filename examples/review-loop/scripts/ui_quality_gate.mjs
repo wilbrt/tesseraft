@@ -77,7 +77,7 @@ const browserDiagnostics = {
 
 const runBrowser = (args, { allowFailure = false } = {}) => {
   const launchOptions = selectedBrowserExecutable ? ['--executable-path', selectedBrowserExecutable] : [];
-  const result = spawnSync(browserBin, ['--session', session, ...launchOptions, '--color-scheme', 'light', ...args], {
+  const result = spawnSync(browserBin, ['--session', session, ...launchOptions, '--color-scheme', 'dark', ...args], {
     cwd: worktreeRoot,
     encoding: 'utf8',
     timeout: commandTimeoutMs,
@@ -154,6 +154,33 @@ const settingsGeometryExpression = `JSON.stringify((() => {
   };
 })())`;
 
+const contrastExpression = (selectors) => `JSON.stringify((() => {
+  const rgb = (value) => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
+  const luminance = (channels) => {
+    const values = channels.map((channel) => channel / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * values[0] + 0.7152 * values[1] + 0.0722 * values[2];
+  };
+  const opaqueBackground = (element) => {
+    for (let current = element; current; current = current.parentElement) {
+      const channels = (getComputedStyle(current).backgroundColor.match(/\\d+(?:\\.\\d+)?/g) || []).map(Number);
+      if (channels.length >= 3 && (channels.length < 4 || channels[3] > 0)) return channels.slice(0, 3);
+    }
+    return [255, 255, 255];
+  };
+  const inspect = (selector) => {
+    const element = document.querySelector(selector);
+    if (!element) return { selector, visible: false, contrast: 0 };
+    const style = getComputedStyle(element);
+    const foreground = rgb(style.color);
+    const background = opaqueBackground(element);
+    const lighter = Math.max(luminance(foreground), luminance(background));
+    const darker = Math.min(luminance(foreground), luminance(background));
+    return { selector, visible: element.getBoundingClientRect().width > 0, foreground, background, contrast: (lighter + 0.05) / (darker + 0.05) };
+  };
+  const controls = ${JSON.stringify(selectors)}.map(inspect);
+  return { prefers_dark: matchMedia('(prefers-color-scheme: dark)').matches, controls, readable: controls.every((control) => control.visible && control.contrast >= 4.5) };
+})())`;
+
 const matrixThemeExpression = `JSON.stringify((() => {
   const rgb = (value) => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
   const root = document.documentElement;
@@ -220,8 +247,20 @@ try {
   runBrowser(['click', 'button[aria-label^="Settings:"]']);
   runBrowser(['wait', '.settings-panel']);
   runBrowser(['wait', '500']);
+  runBrowser(['click', 'input[name="color-scheme"][value="classic"]']);
+  runBrowser(['click', '.settings-primary .settings-actions button:first-child']);
+  runBrowser(['wait', '.settings-panel .success']);
+  runBrowser(['wait', 'html[data-color-scheme="classic"]']);
+  runBrowser(['click', 'button[aria-label^="Workflows:"]']);
+  const classicDarkNavigation = evalJson(contrastExpression(['.tabs button.active', '.tabs button.active span', '.project-selector-button', '.project-selector-caret']));
+  evidence.geometry.classic_dark_navigation = classicDarkNavigation;
+  check('classic-dark-navigation', classicDarkNavigation.prefers_dark && classicDarkNavigation.readable, classicDarkNavigation);
+
+  runBrowser(['click', 'button[aria-label^="Settings:"]']);
+  runBrowser(['wait', '.settings-panel']);
   runBrowser(['click', 'input[name="color-scheme"][value="matrix"]']);
   runBrowser(['click', '.settings-primary .settings-actions button:first-child']);
+  runBrowser(['wait', '.settings-panel .success']);
   runBrowser(['wait', 'html[data-color-scheme="matrix"]']);
   const matrixTheme = evalJson(matrixThemeExpression);
   evidence.geometry.matrix_theme = matrixTheme;
@@ -246,10 +285,29 @@ try {
   evidence.geometry.settings_mobile = mobileGeometry;
   check('mobile-screenshot', mobileGeometry.visible && !mobileGeometry.horizontal_overflow, mobileGeometry, mobileShot);
 
+  runBrowser(['set', 'viewport', '1440', '900']);
+  runBrowser(['click', 'button[aria-label^="Runs:"]']);
+  runBrowser(['click', '.header-start-button']);
+  runBrowser(['wait', '.wizard-steps']);
+  const matrixWizardControls = evalJson(contrastExpression(['.project-selector-button', '.project-selector-caret', '.wizard-steps li[aria-current="true"]', '.wizard-steps li:not([aria-current="true"])']));
+  runBrowser(['click', '.wizard .modal-header button']);
+  runBrowser(['click', 'button[aria-label^="Workflows:"]']);
+  runBrowser(['wait', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
+  runBrowser(['click', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
+  runBrowser(['wait', '.studio-toolbar']);
+  const matrixStudioControls = evalJson(contrastExpression(['.studio-toolbar button:not(:disabled)']));
+  const matrixControls = {
+    wizard: matrixWizardControls,
+    studio: matrixStudioControls,
+    readable: matrixWizardControls.readable && matrixStudioControls.readable
+  };
+  evidence.geometry.matrix_controls = matrixControls;
+  check('matrix-controls', matrixControls.readable, matrixControls);
+
   evidence.console.errors = runBrowser(['errors'], { allowFailure: true }).stdout;
   evidence.console.messages = runBrowser(['console'], { allowFailure: true }).stdout;
   check('console-clean', evidence.console.errors.trim() === '', { errors: evidence.console.errors });
-  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'matrix-theme'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'open settings', 'select and save Matrix color scheme'] });
+  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'select Classic under system dark mode', 'select and save Matrix color scheme', 'open workflow wizard', 'open Workflow Studio'] });
 } catch (error) {
   evidence.findings.push({
     source: 'ui-quality-gate', severity: 'blocker', category: 'setup', actionable: true,
@@ -260,7 +318,7 @@ try {
   runBrowser(['close'], { allowFailure: true });
 }
 
-const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'matrix-theme', 'console-clean', 'primary-task'];
+const requiredChecks = ['desktop-screenshot', 'compact-screenshot', 'mobile-screenshot', 'overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls', 'console-clean', 'primary-task'];
 const passed = evidence.findings.length === 0 && requiredChecks.every((id) => evidence.checks.some((item) => item.id === id && item.passed));
 fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
 fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
