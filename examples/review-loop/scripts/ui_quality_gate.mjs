@@ -85,7 +85,7 @@ const runBrowser = (args, { allowFailure = false } = {}) => {
   });
   if (!allowFailure && result.status !== 0) {
     const detail = result.error?.message || (result.stderr || result.stdout || '').trim() || `status ${result.status}`;
-    throw new Error(`agent-browser ${args[0]} failed: ${detail}`);
+    throw new Error(`agent-browser ${args.join(' ')} failed: ${detail}`);
   }
   return {
     status: result.status,
@@ -289,13 +289,19 @@ try {
   runBrowser(['click', 'button[aria-label^="Runs:"]']);
   runBrowser(['click', '.header-start-button']);
   runBrowser(['wait', '.wizard-steps']);
-  const matrixWizardControls = evalJson(contrastExpression(['.project-selector-button', '.project-selector-caret', '.wizard-steps li[aria-current="true"]', '.wizard-steps li:not([aria-current="true"])']));
+  runBrowser(['click', '.wizard-workflow-list button']);
+  runBrowser(['wait', '.wizard-fill .required']);
+  const matrixWizardControls = evalJson(contrastExpression(['.project-selector-button', '.project-selector-caret', '.wizard-steps li[aria-current="true"]', '.wizard-steps li:not([aria-current="true"])', '.wizard-fill .required']));
   runBrowser(['click', '.wizard .modal-header button']);
   runBrowser(['click', 'button[aria-label^="Workflows:"]']);
   runBrowser(['wait', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
   runBrowser(['click', 'button[aria-label^="Edit "][aria-label$=" in Studio"]']);
   runBrowser(['wait', '.studio-toolbar']);
-  const matrixStudioControls = evalJson(contrastExpression(['.studio-toolbar button:not(:disabled)']));
+  runBrowser(['eval', 'window.confirm = () => true']);
+  runBrowser(['click', '.studio-toolbar button:nth-child(5)']);
+  runBrowser(['click', '.studio-toolbar button:nth-child(3)']);
+  runBrowser(['wait', '.lint-list li.lint-error']);
+  const matrixStudioControls = evalJson(contrastExpression(['.studio-toolbar button:not(:disabled)', '.lint-list li.lint-error']));
   const matrixControls = {
     wizard: matrixWizardControls,
     studio: matrixStudioControls,
@@ -307,7 +313,7 @@ try {
   evidence.console.errors = runBrowser(['errors'], { allowFailure: true }).stdout;
   evidence.console.messages = runBrowser(['console'], { allowFailure: true }).stdout;
   check('console-clean', evidence.console.errors.trim() === '', { errors: evidence.console.errors });
-  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'select Classic under system dark mode', 'select and save Matrix color scheme', 'open workflow wizard', 'open Workflow Studio'] });
+  check('primary-task', evidence.checks.filter((item) => ['overlay-open-screenshot', 'settings-width-utilization', 'classic-dark-navigation', 'matrix-theme', 'matrix-controls'].includes(item.id)).every((item) => item.passed), { exercised: ['open project selector', 'select Classic under system dark mode', 'select and save Matrix color scheme', 'open workflow wizard required-input state', 'open Workflow Studio and render an invalid lint result'] });
 } catch (error) {
   evidence.findings.push({
     source: 'ui-quality-gate', severity: 'blocker', category: 'setup', actionable: true,

@@ -26,6 +26,13 @@
   --color-control-subtle-text: #1d4ed8;
   --color-step-bg: #f1f5f9;
   --color-step-text: #667085;
+  --color-required: #b91c1c;
+  --color-lint-warning-border: #f59e0b;
+  --color-lint-warning-bg: #fffbeb;
+  --color-lint-warning-text: #713f12;
+  --color-lint-error-border: #dc2626;
+  --color-lint-error-bg: #fef2f2;
+  --color-lint-error-text: #991b1b;
   background: var(--color-app-bg);
   color: var(--color-text);
 }
@@ -189,7 +196,7 @@ pre {
 .workflow-inputs { display: grid; gap: 0.65rem; border: 1px solid var(--color-soft); border-radius: 0.5rem; padding: 0.75rem; background: var(--color-surface); }
 .workflow-inputs h4 { margin: 0; }
 .workflow-input-field small { color: var(--color-muted); font-weight: 500; }
-.required { color: #b91c1c; font-size: 0.75rem; margin-left: 0.35rem; text-transform: uppercase; }
+.required { color: var(--color-required); font-size: 0.75rem; margin-left: 0.35rem; text-transform: uppercase; }
 .control-card button { cursor: pointer; border: 0; border-radius: 0.45rem; padding: 0.55rem 0.75rem; background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
 .link-button { cursor: pointer; border: 0; background: transparent; color: var(--color-accent); font-weight: 700; padding: 0; }
 .event-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline; }
@@ -378,9 +385,9 @@ button.link { background: transparent; border: 0; color: var(--color-accent); te
 .node-form legend { font-weight: 700; color: var(--color-accent); padding: 0 0.35rem; }
 
 .lint-list { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.25rem; }
-.lint-list li { border-left: 3px solid #f59e0b; padding: 0.3rem 0.5rem; background: #fffbeb; border-radius: 0.25rem; font-size: 0.92rem; }
-.lint-list li.lint-error { border-left-color: #dc2626; background: #fef2f2; }
-.lint-list li.lint-warning { border-left-color: #f59e0b; }
+.lint-list li { border-left: 3px solid var(--color-lint-warning-border); padding: 0.3rem 0.5rem; background: var(--color-lint-warning-bg); color: var(--color-lint-warning-text); border-radius: 0.25rem; font-size: 0.92rem; }
+.lint-list li.lint-error { border-left-color: var(--color-lint-error-border); background: var(--color-lint-error-bg); color: var(--color-lint-error-text); }
+.lint-list li.lint-warning { border-left-color: var(--color-lint-warning-border); }
 
 .modal.wide { max-width: 38rem; }
 .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.75rem; }
@@ -465,6 +472,13 @@ button.link { background: transparent; border: 0; color: var(--color-accent); te
   --color-control-subtle-text: #baffbd;
   --color-step-bg: #0a2812;
   --color-step-text: #a7f3a0;
+  --color-required: #ff9aa3;
+  --color-lint-warning-border: #facc15;
+  --color-lint-warning-bg: #2b2205;
+  --color-lint-warning-text: #ffe781;
+  --color-lint-error-border: #ff6b78;
+  --color-lint-error-bg: #2b090d;
+  --color-lint-error-text: #ffb3ba;
 }
 
 :root[data-color-scheme="matrix"] { background: var(--color-app-bg); color: var(--color-text); }

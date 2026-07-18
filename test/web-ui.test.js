@@ -205,7 +205,15 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(matrixStyles, /--color-control-subtle-text:\s*#baffbd/);
   assert.match(matrixStyles, /--color-step-bg:\s*#0a2812/);
   assert.match(matrixStyles, /--color-step-text:\s*#a7f3a0/);
+  assert.match(matrixStyles, /--color-required:\s*#ff9aa3/);
+  assert.match(matrixStyles, /--color-lint-warning-bg:\s*#2b2205/);
+  assert.match(matrixStyles, /--color-lint-warning-text:\s*#ffe781/);
+  assert.match(matrixStyles, /--color-lint-error-bg:\s*#2b090d/);
+  assert.match(matrixStyles, /--color-lint-error-text:\s*#ffb3ba/);
   assert.match(styles, /\.wizard-steps li\s*\{[^}]*color:\s*var\(--color-step-text\);[^}]*background:\s*var\(--color-step-bg\)/);
+  assert.match(styles, /\.required\s*\{[^}]*color:\s*var\(--color-required\)/);
+  assert.match(styles, /\.lint-list li\s*\{[^}]*background:\s*var\(--color-lint-warning-bg\);[^}]*color:\s*var\(--color-lint-warning-text\)/);
+  assert.match(styles, /\.lint-list li\.lint-error\s*\{[^}]*background:\s*var\(--color-lint-error-bg\);[^}]*color:\s*var\(--color-lint-error-text\)/);
   assert.match(styles, /\.studio-toolbar button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-control-subtle-text\)/);
   assert.match(panel, /Source/);
   assert.match(panel, /Git identity/);

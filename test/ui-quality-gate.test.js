@@ -56,7 +56,9 @@ test('rendered UI gate captures required states and rejects clipping/width waste
   assert.equal(evidence.geometry.matrix_theme.near_black, true);
   assert.equal(evidence.geometry.matrix_theme.green_foreground, true);
   assert.equal(evidence.geometry.matrix_controls.wizard.readable, true);
+  assert.ok(evidence.geometry.matrix_controls.wizard.controls.some((control) => control.selector === '.wizard-fill .required' && control.visible && control.contrast >= 4.5));
   assert.equal(evidence.geometry.matrix_controls.studio.readable, true);
+  assert.ok(evidence.geometry.matrix_controls.studio.controls.some((control) => control.selector === '.lint-list li.lint-error' && control.visible && control.contrast >= 4.5));
   assert.equal(evidence.geometry.matrix_controls.readable, true);
   assert.equal(evidence.geometry.settings_mobile.horizontal_overflow, false);
   assert.deepEqual(evidence.findings, []);
