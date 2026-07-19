@@ -29,6 +29,22 @@ type Pw4RunErrorsScenario = {
   terminalRunDir: string;
 };
 
+type Pw7ApprovalScenario = {
+  workflowName: string;
+  workflowPath: string;
+  runId: string;
+  runDir: string;
+  approvalId: string;
+  expectedBlockedState: string;
+  expectedDecision: string;
+  expectedTerminalState: string;
+  question: string;
+  artifactPath: string;
+  artifactKind: string;
+  summary: string;
+  decisions: string[];
+};
+
 type IsolatedWorkspaceFixture = {
   baseURL: string;
   workspaceRoot: string;
@@ -52,6 +68,7 @@ type IsolatedRunFixture = IsolatedWorkspaceFixture & {
 type WorkerFixtures = {
   isolatedWorkspace: IsolatedWorkspaceFixture;
   isolatedRun: IsolatedRunFixture;
+  isolatedApprovalRun: IsolatedWorkspaceFixture & Pw7ApprovalScenario;
 };
 
 const workflowEdn = (name: string): string => `{:api-version "tesseraft.workflow/v1"
@@ -90,6 +107,33 @@ const pw3WorkflowEdn = (name: string): string => `{:api-version "tesseraft.workf
                        :runtime {:timeout "10s"}
                        :next :done}
           :done {:type :terminal :title "Done" :status :success}}}
+`;
+
+const pw7WorkflowEdn = (name: string, question: string, artifactPath: string, artifactKind: string): string => `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "${name}" :title "PW7 Approval Decision Flow"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :timer
+                  :title "Short deterministic timer"
+                  :duration "1ms"
+                  :runtime {:timeout "10s"}
+                  :next :gate-1}
+          :gate-1 {:type :approval
+                   :title "PW7 approval gate"
+                   :message "${question}"
+                   :timeout "1m"
+                   :artifact {:path "${artifactPath}" :kind "${artifactKind}"}
+                   :transitions [{:when {:decision "approve"} :next :done}
+                                  {:when {:decision "changes-requested"} :next :revise}]}
+          :revise {:type :timer
+                   :title "Revision requested"
+                   :duration "1ms"
+                   :runtime {:timeout "10s"}
+                   :next :failed}
+          :done {:type :terminal :title "Approved" :status :success}
+          :failed {:type :terminal :title "Changes requested" :status :failure}}}
 `;
 
 const waitForServer = async (child: ChildProcessWithoutNullStreams): Promise<string> => new Promise((resolve, reject) => {
@@ -191,6 +235,58 @@ export const test = base.extend<{}, WorkerFixtures>({
       if (child) await terminate(child);
       await fs.rm(tempRoot, { recursive: true, force: true });
     }
+  }, { scope: 'worker' }],
+
+  isolatedApprovalRun: [async ({ isolatedWorkspace }, use) => {
+    const workflowName = isolatedWorkspace.uniqueName('pw7-approval');
+    const runId = `pw7-${workflowName.replace(/^pw7-approval-/, '')}`;
+    const workflowDir = isolatedWorkspace.workflowPackagePath(workflowName);
+    const workflowPath = path.join(workflowDir, 'workflow.edn');
+    const question = `PW7 approval question for ${runId}: approve the isolated artifact?`;
+    const artifactPath = 'review-evidence/pw7-approval-context.md';
+    const artifactKind = 'approval-context';
+    const summary = `PW7 UI summary for ${runId}`;
+
+    await fs.mkdir(workflowDir, { recursive: true });
+    await fs.mkdir(path.join(isolatedWorkspace.workspaceRoot, path.dirname(artifactPath)), { recursive: true });
+    await fs.writeFile(workflowPath, pw7WorkflowEdn(workflowName, question, artifactPath, artifactKind));
+    await fs.writeFile(path.join(isolatedWorkspace.workspaceRoot, artifactPath), `# PW7 approval context\n\nRun: ${runId}\nWorkflow: ${workflowName}\n`);
+    expectUnder(isolatedWorkspace.workspaceRoot, workflowPath);
+
+    const startResponse = await fetch(`${isolatedWorkspace.baseURL}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_name: workflowName, run_id: runId, inputs: {} })
+    });
+    expect(startResponse.status, 'PW7 start status').toBe(202);
+
+    await expect.poll(async () => {
+      const body = await isolatedWorkspace.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(runId)}`);
+      return { status: body.run.status, state: body.run.state };
+    }, { timeout: 15_000 }).toEqual({ status: 'blocked', state: 'gate-1' });
+    const blocked = await isolatedWorkspace.apiJson<{ run: { path: string } }>(`/api/runs/${encodeURIComponent(runId)}`);
+    const runDir = path.resolve(isolatedWorkspace.workspaceRoot, blocked.run.path);
+    expectUnder(isolatedWorkspace.workspaceRoot, runDir);
+    const approvals = await isolatedWorkspace.apiJson<{ approvals: Array<{ approval_id: string; state: string; question?: string; decision?: unknown }> }>(`/api/runs/${encodeURIComponent(runId)}/approvals`);
+    const pending = approvals.approvals.find((approval) => approval.state === 'gate-1' && approval.question === question && !approval.decision);
+    expect(pending, 'PW7 pending approval record').toBeTruthy();
+
+    await use({
+      ...isolatedWorkspace,
+      workflowName,
+      workflowPath,
+      runId,
+      runDir,
+      approvalId: pending!.approval_id,
+      expectedBlockedState: 'gate-1',
+      expectedDecision: 'approve',
+      expectedTerminalState: 'done',
+      question,
+      artifactPath,
+      artifactKind,
+      summary,
+      decisions: ['approve', 'changes-requested']
+    });
   }, { scope: 'worker' }],
 
   isolatedRun: [async ({ isolatedWorkspace }, use) => {

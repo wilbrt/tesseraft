@@ -1413,7 +1413,14 @@
                     f)]
         (->> files
              (keep (fn [f]
-                     (try (store/read-json (fs/path f)) (catch Throwable _ nil))))
+                     (try
+                       (let [request (store/read-json (fs/path f))
+                             approval-id (:approval_id request)
+                             dec-path (fs/path dir (str approval-id "-decision.json"))
+                             decision (when (fs/exists? dec-path) (store/read-json dec-path))]
+                         (cond-> request
+                           decision (assoc :decision decision)))
+                       (catch Throwable _ nil))))
              (mapv #(api-value %)))))))
 
 (defn load-approval [run-dir approval-id]
