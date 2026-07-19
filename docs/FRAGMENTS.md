@@ -116,9 +116,9 @@ Implemented checks, when outcomes/exits are present, include:
 - inclusion transitions may only reference declared outcomes;
 - uncovered outcomes produce a warning.
 
-Known contract gap: omitting both `:outcomes` and `:exit` currently passes strict package lint. The JSON Schema also does not require either field.
+Implemented package lint also requires `:interface :outcomes` to be present as a non-empty set of keyword outcomes. The JSON Schema does not require this field.
 
-There is also no implemented relation between an internal terminal state and an exit outcome. The fixture uses terminal statuses `:success`/`:failure`, while exits use `:pass`/`:fail`. Runtime work needs an explicit, linted terminal-to-outcome mapping before execution can be reliable.
+Reachable internal terminal states must keep workflow-style terminal `:status` and explicitly select one declared fragment outcome with `:outcome`. For example, a terminal may use `{:type :terminal :status :success :outcome :pass}` so workflow terminal status remains distinct from the fragment outcome contract.
 
 ### Requirements and resources
 

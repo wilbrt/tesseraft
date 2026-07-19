@@ -1035,6 +1035,34 @@
         (warn :referenced-asset-not-declared [:assets]
               (str "Fragment references an asset that is not declared in :assets: " path))))))
 
+(defn fragment-terminal-outcome-checks [pkg]
+  (let [outcomes (get-in pkg [:interface :outcomes])
+        fragment (:fragment pkg)
+        states (:states fragment {})]
+    (when (and (set? outcomes)
+               (seq outcomes)
+               (every? keyword? outcomes)
+               (map? fragment)
+               (map? states))
+      (let [wf-like {:initial (:initial fragment) :states states}
+            reachable (spec/reachable-states wf-like)]
+        (apply concat
+               (for [[id n] states
+                     :when (and (contains? reachable id)
+                                (map? n)
+                                (= :terminal (:type n)))]
+                 (let [outcome (:outcome n)]
+                   (cond
+                     (nil? outcome)
+                     [(err :fragment-terminal-missing-outcome [:fragment :states id :outcome]
+                           (str "Terminal state " id " must select a declared fragment outcome"))]
+
+                     (not (contains? outcomes outcome))
+                     [(err :fragment-terminal-unknown-outcome [:fragment :states id :outcome]
+                           (str "Terminal state " id " selects unknown fragment outcome " outcome))]
+
+                     :else []))))))))
+
 (defn fragment-internal-inputs [pkg]
   ;; The fragment's internal subgraph references boundary inputs/parameters
   ;; via template vars (e.g. {{inputs.repo-root}}). The boundary contract
@@ -1120,6 +1148,7 @@
                                    (apply concat
                                      [(fragment-package-top-level-checks pkg)
                                       (fragment-interface-checks pkg)
+                                      (fragment-terminal-outcome-checks pkg)
                                       (fragment-internal-subgraph-checks pkg opts)
                                       (fragment-resource-checks pkg)
                                       (fragment-asset-checks pkg)])))
