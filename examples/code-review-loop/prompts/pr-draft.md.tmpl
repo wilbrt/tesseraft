@@ -1,0 +1,25 @@
+Fresh Pi session: PR DRAFTING ONLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/design.md
+- Execution summaries, regression reports, and review reports: {{run.dir}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Draft clear pull request metadata for the accepted change.
+
+Rules:
+- Do not edit source code, call GitHub, or push.
+- Summarize the change, validation performed, and notable risks.
+- Fail only if accurate PR metadata cannot yet be produced; a failed draft is retried.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status: {{run.dir}}/pr/draft-status.json
+
+Status:
+{"status":"pass","summary":"PR metadata drafted","issues_file":null}
+
+The body should include Summary, Implementation notes, Validation, and Risks or follow-up.

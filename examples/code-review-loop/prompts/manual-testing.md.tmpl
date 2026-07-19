@@ -1,0 +1,29 @@
+Fresh Pi session: REGRESSION TESTING.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/design.md
+- Execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Worktree: {{run.worktree-dir}}
+
+The current working directory is the isolated worktree.
+
+Goal:
+Independently check that the change works and that existing behavior did not break.
+
+Rules:
+- Do not edit source code, commit, push, or create a pull request.
+- Inspect the diff and identify the repository's normal validation commands.
+- Run the relevant existing tests, lint, type checks, and build or smoke checks.
+- For a changed user-facing surface, exercise the main changed path when the repository already provides a straightforward way to run it. Do not create screenshot evidence, start special review infrastructure, or invent elaborate visual checks.
+- Fail only for a concrete regression, broken behavior, or failed relevant check. Missing screenshot evidence is not a failure.
+- Write actionable issues for anything that must be fixed. If relevant checks pass and no concrete regression is found, pass.
+
+Write:
+- Report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Status: {{run.dir}}/manual-testing/status-{{run.round}}.json
+- If failing: {{run.dir}}/manual-testing/issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"regression testing passed","issues_file":null}
+{"status":"fail","summary":"regression testing found issues","issues_file":"manual-testing/issues-{{run.round}}.json"}

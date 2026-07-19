@@ -253,6 +253,9 @@
                    "gh" "pr" "view" branch "--json" "number,url,state,headRefName,baseRefName")]
     (when (zero? (:exit r)) (json/parse-string (:out r) true))))
 
+(defn github-ssh-repo-url [repo]
+  (str "git@github.com:" repo ".git"))
+
 (defn github-create-pr! [_wf ctx _state-id node]
   (let [repo (github-repo! ctx node)
         branch (branch-name ctx node)
@@ -261,7 +264,7 @@
         body-file (artifact-path ctx (or (get-in node [:inputs :body-file]) "pr/pr-body.md"))
         pr-file (artifact-path ctx (or (get-in node [:outputs :pr-json :path]) "pr/pr.json"))
         ua (git-user-args)
-        _ (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "-u" "origin" branch]))
+        _ (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" (github-ssh-repo-url repo) branch]))
         pr (or (github-existing-pr ctx node branch)
                (let [payload-file (artifact-path ctx "pr/create-payload.json")]
                  (store/write-json! payload-file {:title (str/trim (slurp title-file))
@@ -442,7 +445,9 @@
      :stopped (boolean stopped?)}))
 
 (defn capture-ui-evidence! [wf ctx state-id node]
-  (let [script-relative (or (get-in node [:inputs :script]) "scripts/ui_quality_gate.mjs")
+  (let [script-relative (get-in node [:inputs :script])
+        _ (when (str/blank? script-relative)
+            (throw (ex-info "UI evidence capture requires an explicit script input" {:state state-id})))
         script (spec/resolve-workflow-path wf script-relative)
         request {:run (:run ctx) :inputs (:inputs ctx) :node (assoc node :id state-id)}
         result (p/shell {:dir (repo-dir ctx node)

@@ -1,0 +1,144 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "code-review-loop"
+            :title "Code Review Loop"
+            :description "Implement, regression test, and code review in a worktree until the change passes, then create a pull request."}
+ :inputs {:prompt {:type :string :required true}
+          :repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :branch {:type :string :required false}}
+ :defaults {:max-rounds 10
+            :state-timeout "45m"
+            :base-branch "main"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :collect-prompt
+ :states
+ {:collect-prompt
+  {:type :process
+   :title "Collect prompt"
+   :command ["./scripts/collect_prompt.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:prompt-json {:path "prompt/prompt.json" :required true}
+             :prompt-md {:path "prompt/prompt.md" :required true}}
+   :next :design}
+
+  :design
+  {:type :agent
+   :title "Design"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/design.md.tmpl"
+   :prompt-output "prompts/generated/design-{{run.attempt}}.md"
+   :session-name "code-review-loop-design-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
+             :design-doc {:path "design/design.md" :required true}
+             :branch-name {:path "design/branch-name.txt" :required true}}
+   :transitions [{:when {:status "pass"} :next :ensure-worktree}
+                 {:when {:status "fail"} :next :design}]}
+
+  :ensure-worktree
+  {:type :deterministic
+   :title "Create isolated worktree"
+   :handler :git/ensure-worktree
+   :runtime {:timeout "5m"}
+   :inputs {:branch-file "design/branch-name.txt"}
+   :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
+   :next :execute}
+
+  :execute
+  {:type :agent
+   :title "Execute in worktree"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.5"
+   :thinking "medium"
+   :prompt-template "prompts/execute.md.tmpl"
+   :prompt-output "prompts/generated/execute-{{run.round}}.md"
+   :session-name "code-review-loop-execute-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary-{{run.round}}.md" :required true}
+             :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :manual-testing}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :manual-testing
+  {:type :agent
+   :title "Regression testing"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.4"
+   :thinking "medium"
+   :prompt-template "prompts/manual-testing.md.tmpl"
+   :prompt-output "prompts/generated/manual-testing-{{run.round}}.md"
+   :session-name "code-review-loop-manual-testing-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "manual-testing/report-{{run.round}}.md" :required true}
+             :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :review}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :review
+  {:type :agent
+   :title "Code review"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/review.md.tmpl"
+   :prompt-output "prompts/generated/review-{{run.round}}.md"
+   :session-name "code-review-loop-review-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "review/report-{{run.round}}.md" :required true}
+             :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :execute}]}
+
+  :pr-draft
+  {:type :agent
+   :title "Draft PR metadata"
+   :executor :pi-cli
+   :prompt-template "prompts/pr-draft.md.tmpl"
+   :prompt-output "prompts/generated/pr-draft-{{run.attempt}}.md"
+   :session-name "code-review-loop-pr-draft-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
+   :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
+             :title {:path "pr/pr-title.txt" :required true}
+             :body {:path "pr/pr-body.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :create-pr}
+                 {:when {:status "fail"} :next :pr-draft}]}
+
+  :create-pr
+  {:type :deterministic
+   :title "Create pull request"
+   :handler :github/create-pr
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:title-file "pr/pr-title.txt"
+            :body-file "pr/pr-body.md"
+            :branch-file "design/branch-name.txt"
+            :repo-dir-file "worktree/path.txt"}
+   :outputs {:pr-json {:path "pr/pr.json" :required true}}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}

@@ -49,15 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, review-loop, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies an invalid fixture fails lint, and exercises the Web UI's deterministic rendered-layout gate with a local headless browser. It does not run Pi, Jira, GitHub, or hosted-service workflows.
-
-The rendered-layout gate honors `AGENT_BROWSER_EXECUTABLE_PATH`. Without an
-explicit executable it prefers Brave on macOS, where Chrome 150 screenshot
-capture is incompatible with the pinned `agent-browser`, and otherwise uses
-`agent-browser`'s default browser discovery. Evidence records the selected
-strategy, executable/version, tool version, platform, and command timeout.
-Set `TESSERAFT_UI_BROWSER_COMMAND_TIMEOUT_MS` to override the default bounded
-per-command timeout.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then performs a read-only Chromium inspection of the bundled
@@ -74,26 +66,19 @@ npm run web:e2e
 npm run web:e2e:ui
 ```
 
-This gate is localhost-only and does not create workflows, start runs, or
-replace the existing `agent-browser` rendered-layout gate.
+This gate is localhost-only and does not create workflows or start runs.
 
 ## Mock executor dry run
 
 Use runner-level mock mode to validate workflow transitions without invoking Pi, GitHub, Jira, or notification services:
 
 ```bash
-./bin/tesseraft run examples/review-loop/workflow.edn \
+./bin/tesseraft run examples/mock-run-workflow/workflow.edn \
   --executor mock \
   --run-id dry-run-demo \
   --input prompt='Test dry run' \
   --input repo-root=. \
   --format json
-```
-
-The compatibility entry point supports the same option:
-
-```bash
-./bin/agent-workflow-run examples/review-loop/workflow.edn --executor mock --input prompt='Test dry run'
 ```
 
 Mock mode is opt-in; default execution still uses each workflow's real executor and deterministic handlers. In mock mode, agent nodes render their prompts and write required artifacts with passing placeholder content. Known side-effect handlers for Jira, Git, GitHub, and Pinga return deterministic mock results instead of calling external services.
@@ -103,14 +88,15 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/smoke/workflow.edn` — local-only runner smoke test.
 - `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
-- `examples/review-loop/workflow.edn` — prompt-to-PR variant with an explicit pass/fail code-review artifact and review-fix loop before PR drafting and creation.
-- See `docs/WORKFLOW_RUNS.md` for safe prompt-to-PR and review-loop run instructions.
+- `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
+- `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
+- See `docs/WORKFLOW_RUNS.md` for safe prompt-to-PR and code-review-loop run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
-./bin/tesseraft lint examples/review-loop/workflow.edn
+./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ```
 
@@ -171,8 +157,6 @@ src/tesseraft/adapters/*      deterministic handler adapters
 <!-- BEGIN STATUS — generated from STATUS.edn by `bb status`. Do not edit by hand. -->
 Implemented:
 
-- **ui-quality-gates** (implemented) — Rendered UI quality gates for review-loop: portal-based overlays and full-width page primitives, deterministic desktop/compact/mobile/open-overlay screenshots with geometry assertions, separate functional and independent visual-review agents, machine-enforced evidence/verdict validation, and branch-committed screenshot sets linked from PR descriptions.
-  _Evidence:_ web/src/components/Popover.tsx, web/src/components/PageLayout.tsx, examples/review-loop/scripts/ui_quality_gate.mjs, examples/review-loop/prompts/visual-review.md.tmpl, src/tesseraft/adapters/builtin.clj validate-ui-review!/publish-visual-evidence!, schemas/ui-evidence.schema.json, schemas/ui-review-status.schema.json
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
 - **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.

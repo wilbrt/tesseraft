@@ -68,7 +68,7 @@ Treat PR state as stale unless rechecked immediately before acting.
 
 ## How to use this document
 
-Each item is sized as a review-loop or prompt-to-pr task. Before starting an
+Each item is sized as a code-review-loop or prompt-to-pr task. Before starting an
 item, re-check current repo state and open PR state.
 
 Governance note: tasks that edit committed workflow definitions or example
@@ -124,7 +124,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P0.1 Rebase/merge the runner-level mock executor (#8) — ✅ DONE (PR #8 merged)
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** CI green
 - **Parallelizable with:** P0.0, P0.2, P1.1
 - **Side effects:** runtime/executor semantics; no external service mutations
@@ -132,7 +132,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
   (merge commit 6cb3858). Runner-level mock/dry-run mode, executor-mode
   persistence in run state, deterministic placeholder artifact generation,
   and mock handlers for external integrations are preserved and exercised by
-  `scripts/test.sh` (mock dry-run of the review-loop workflow).
+  `scripts/test.sh` (local mock-executor fixture).
 - **Prompt:**
   > Re-check PR #8 and either rebase/merge it or write down the design
   > reservation blocking it. Preserve runner-level mock/dry-run mode,
@@ -162,7 +162,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P0.3 Merge approval/manual-input runtime support (#44) after schema review — ✅ DONE
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.2, CI green
 - **Parallelizable with:** P1 catalog work; not with Run Console approval UI
 - **Side effects:** runtime + control-plane + web write surface
@@ -181,7 +181,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P0.4 CI/manual-testing coverage audit for Web UI surfaces
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P1.1, P1.4
 - **Side effects:** tests/docs only
@@ -200,7 +200,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.1 Expose scope and shadowing metadata in workflow discovery
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P0.1, P0.2, P1.4
 - **Side effects:** control-plane/API + tests
@@ -215,7 +215,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.2 Build the catalog-as-lens UI
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P1.1
 - **Parallelizable with:** P1.4, P2.1
 - **Side effects:** Web UI only
@@ -230,7 +230,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.3 Add linter info diagnostics for cross-scope shadowing
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P1.1
 - **Parallelizable with:** P1.2 after API shape settles
 - **Side effects:** linter/control-plane diagnostics
@@ -243,7 +243,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.4 Define first-class fragment packages in the same scope system — ✅ DONE (spec/linter/docs + fixture + `bb fragment lint|import`; boundary inclusion lints without duplicating internal proof)
 
-- **Workflow:** design-doc-first review-loop
+- **Workflow:** design-doc-first code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P1.1, P2.1
 - **Side effects:** spec/linter/docs; defer broad example rewrites unless approved
@@ -259,7 +259,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.5 Seed a fragment gallery from examples
 
-- **Workflow:** human-approved authoring session + review-loop validation
+- **Workflow:** human-approved authoring session + code-review-loop validation
 - **Depends on:** P1.4
 - **Parallelizable with:** P2.2
 - **Governance note:** edits example/package definitions; keep changes explicit
@@ -273,7 +273,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P1.6 Add connections doctor for first-run setup — ✅ DONE
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P1.2, P2.1
 - **Side effects:** Web UI + safe no-op handler checks
@@ -296,7 +296,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P2.1 Continuous lint in context
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P1.1, P1.4
 - **Side effects:** Web UI + linter integration
@@ -310,7 +310,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P2.2 One-key mock-run from Studio
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.1
 - **Parallelizable with:** P1.5
 - **Side effects:** Web UI run creation; mock mode only by default
@@ -324,7 +324,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P2.3 Resolved prompt preview
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P2.1
 - **Parallelizable with:** P2.2
 - **Side effects:** Web UI + template resolution endpoint if needed
@@ -337,7 +337,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P2.4 Schema-driven launch forms and recent inputs
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0, P2.1
 - **Parallelizable with:** P1.6
 - **Side effects:** Web UI + local config/history
@@ -351,7 +351,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P2.5 CLI ↔ UI deep links
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P2.1, P3.1
 - **Side effects:** CLI + Web UI
@@ -368,7 +368,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P3.1 Diff-centric self-checkpoint decision screen
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.3
 - **Parallelizable with:** P2.3
 - **Side effects:** Web UI + approval control-plane route
@@ -383,7 +383,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P3.2 Needs-you strip and notification deep links
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.3, P3.1
 - **Parallelizable with:** P3.3
 - **Side effects:** Web UI + optional Pinga notification wiring
@@ -396,7 +396,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P3.3 My-runs console refinement
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.0
 - **Parallelizable with:** P3.1
 - **Side effects:** Web UI only
@@ -409,7 +409,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P3.4 Paired-event timeline and artifact validation drill-down
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P3.3
 - **Parallelizable with:** P2.5
 - **Side effects:** Web UI only
@@ -426,7 +426,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P4.1 Golden event-log fixtures for UI-visible behavior
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.1, P2.2
 - **Parallelizable with:** P3.3
 - **Side effects:** tests/fixtures only
@@ -439,7 +439,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P4.2 Re-run with delta and downstream diff
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P0.1, P2.2, P2.3
 - **Parallelizable with:** P4.3
 - **Side effects:** Web UI + run metadata
@@ -452,7 +452,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P4.3 Extract-fragment refactor
 
-- **Workflow:** review-loop with human approval for package edits
+- **Workflow:** code-review-loop with human approval for package edits
 - **Depends on:** P1.4
 - **Parallelizable with:** P4.2
 - **Side effects:** Workflow Studio package authoring
@@ -465,7 +465,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P4.4 Budget and cost readouts
 
-- **Workflow:** review-loop
+- **Workflow:** code-review-loop
 - **Depends on:** P3.3
 - **Parallelizable with:** P4.2
 - **Side effects:** Web UI only unless runtime accounting is missing
@@ -477,7 +477,7 @@ P1.4 fragment package contract ─────────┬─> P1.5 fragment 
 
 ### P4.5 Personal-library polish
 
-- **Workflow:** prompt-to-pr / review-loop depending on scope
+- **Workflow:** prompt-to-pr / code-review-loop depending on scope
 - **Depends on:** P1.2
 - **Parallelizable with:** P4.4
 - **Side effects:** UI/docs; no hosted sync

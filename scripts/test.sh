@@ -6,7 +6,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 RUN_DIRS=(".agent-runs/smoke-demo/smoke-test"
-          ".agent-runs/review-loop/mock-test"
           ".agent-runs/recovery-fixture/recovery-test"
           ".agent-runs/process-failure-fixture/process-failure-test"
           ".agent-runs/agent-model-provider-fixture/agent-model-provider-test")
@@ -22,7 +21,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/smoke/workflow.edn
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/worktree-to-pr/workflow.edn
-./bin/tesseraft lint examples/review-loop/workflow.edn
+./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
@@ -882,9 +881,10 @@ bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
                attempts [{:state "work" :status "running" :attempt 1}]]
            (assert (= "executing" (:liveness (cp/derive-liveness summary attempts))) "future updated_at => executing")))'
 
-echo "Checking GitHub PR URL normalization..."
-bb -e '(require (quote tesseraft.adapters.builtin))
-       (let [u tesseraft.adapters.builtin/github-pr-url]
+echo "Checking GitHub PR URL normalization and SSH push transport..."
+bb -e '(require (quote [tesseraft.adapters.builtin :as b])
+                (quote [babashka.fs :as fs]))
+       (let [u b/github-pr-url]
          (assert (= "https://github.com/owner/repo/pull/123"
                     (u "owner/repo" {:url "https://api.github.com/repos/owner/repo/pulls/123" :number 123})))
          (assert (= "https://github.com/owner/repo/pull/123"
@@ -894,7 +894,28 @@ bb -e '(require (quote tesseraft.adapters.builtin))
          (assert (= "https://github.com/owner/repo/pull/124"
                     (u "owner/repo" {:url "https://github.com/owner/repo/pull/124" :number 124})))
          (assert (= "https://github.com/owner/repo/pull/125"
-                    (u "owner/repo" {:number 125}))))'
+                    (u "owner/repo" {:number 125})))
+         (assert (= "git@github.com:owner/repo.git" (b/github-ssh-repo-url "owner/repo"))))
+       (let [run-dir (str (java.nio.file.Files/createTempDirectory
+                           "tesseraft-create-pr-ssh"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))
+             calls (atom [])
+             ctx {:inputs {:branch "test/ssh-push" :base-branch "main"}
+                  :run {:dir run-dir :worktree-dir run-dir}}
+             node {:outputs {:pr-json {:path "pr/pr.json"}}}]
+         (try
+           (with-redefs [b/github-repo! (fn [_ctx _node] "owner/repo")
+                         b/github-existing-pr (fn [_ctx _node _branch]
+                                                {:number 123
+                                                 :url "https://github.com/owner/repo/pull/123"
+                                                 :state "OPEN"})
+                         b/git-user-args (constantly [])
+                         b/shell! (fn [_opts & args] (swap! calls conj (vec args)) "")]
+             (let [result (b/github-create-pr! nil ctx :create-pr node)]
+               (assert (= [["git" "push" "git@github.com:owner/repo.git" "test/ssh-push"]] @calls) @calls)
+               (assert (= "ok" (:status result)) result)
+               (assert (fs/exists? (fs/path run-dir "pr" "pr.json")))))
+           (finally (fs/delete-tree run-dir))))'
 
 echo "Checking invalid fixture fails lint..."
 set +e

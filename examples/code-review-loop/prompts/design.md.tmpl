@@ -1,0 +1,29 @@
+Fresh Pi session: DESIGN ONLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Turn the user prompt into a concise implementation design and choose a safe branch name.
+
+Rules:
+- Inspect the repository as needed.
+- Do not edit source code.
+- Do not push, create pull requests, or call external product APIs.
+- Identify relevant files, risks, and validation commands.
+- Keep the design focused.
+- Branch names must use lowercase letters, numbers, slashes, and hyphens only.
+- Prefer prefixes such as `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`.
+- Do not use `agent/` as the branch prefix.
+- If the prompt is ambiguous, make the smallest reasonable interpretation supported by repository evidence. Fail only when implementation would be unsafe or impossible; a failed design is retried.
+
+Write:
+- Design: {{run.dir}}/design/design.md
+- Branch name: {{run.dir}}/design/branch-name.txt
+- Status: {{run.dir}}/design/status.json
+
+Status examples:
+{"status":"pass","summary":"design ready","issues_file":null}
+{"status":"fail","summary":"design needs another attempt","issues_file":null}

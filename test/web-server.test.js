@@ -276,47 +276,12 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const workflows = await workflowsResponse.json();
   assert.ok(workflows.workflows.some((workflow) => workflow.name === 'smoke-demo'));
 
-  const reviewLoopResponse = await fetch(`${base}/api/workflows/review-loop`);
-  assert.equal(reviewLoopResponse.status, 200);
-  const reviewLoopDetail = await reviewLoopResponse.json();
-  const executeState = reviewLoopDetail.workflow.normalized.states.execute;
-  assert.equal(executeState.resources.requires[0].kind, 'worktree');
-  assert.equal(executeState.transitions[0].next, 'start-test-server');
-  assert.ok(executeState.resources.produces.some((resource) => resource.name === 'execution-status'));
-  const designState = reviewLoopDetail.workflow.normalized.states.design;
-  assert.equal(designState.outputs['manual-testing-spec'].path, 'manual-testing/spec.md');
-  assert.ok(designState.resources.produces.some((resource) => resource.kind === 'manual-testing-spec'));
-  const startServerState = reviewLoopDetail.workflow.normalized.states['start-test-server'];
-  assert.equal(startServerState.handler, 'start-test-server');
-  assert.ok(startServerState.resources.produces.some((resource) => resource.kind === 'web-service'));
-  const manualTestingState = reviewLoopDetail.workflow.normalized.states['manual-testing'];
-  assert.ok(manualTestingState.resources.requires.some((resource) => resource.kind === 'manual-testing-spec'));
-  assert.ok(manualTestingState.resources.requires.some((resource) => resource.name === 'ui-evidence'));
-  assert.ok(manualTestingState.resources.consumes.some((resource) => resource.kind === 'web-service'));
-  const visualReviewState = reviewLoopDetail.workflow.normalized.states['visual-review'];
-  assert.equal(visualReviewState.model, 'gpt-5.6-sol');
-  assert.ok(visualReviewState.resources.requires.some((resource) => resource.name === 'open-overlay-screenshot'));
-
   const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
   assert.equal(graphResponse.status, 200);
   const graph = await graphResponse.json();
   assert.equal(graph.workflow_name, 'smoke-demo');
   assert.ok(graph.nodes.some((node) => node.id === 'start'));
   assert.ok(graph.edges.some((edge) => edge.from === 'start' && edge.to === 'done'));
-
-  const reviewLoopGraphResponse = await fetch(`${base}/api/workflows/review-loop/graph`);
-  assert.equal(reviewLoopGraphResponse.status, 200);
-  const reviewLoopGraph = await reviewLoopGraphResponse.json();
-  const executeNode = reviewLoopGraph.nodes.find((node) => node.id === 'execute');
-  assert.ok(executeNode, 'expected review-loop execute graph node');
-  assert.equal(executeNode.resources.requires[0].kind, 'worktree');
-  assert.ok(executeNode.resources.produces.some((resource) => resource.name === 'execution-status'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'execute' && edge.to === 'start-test-server'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'start-test-server' && edge.to === 'ui-quality-gate'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'ui-quality-gate' && edge.to === 'manual-testing'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'manual-testing' && edge.to === 'visual-review'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'visual-review' && edge.to === 'validate-ui-review'));
-  assert.ok(reviewLoopGraph.edges.some((edge) => edge.from === 'validate-ui-review' && edge.to === 'stop-test-server-pass'));
 
   const runsResponse = await fetch(`${base}/api/runs`);
   assert.equal(runsResponse.status, 200);

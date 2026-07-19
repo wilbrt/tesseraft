@@ -248,8 +248,8 @@ Response sketch:
 {
   "workflows": [
     {
-      "name": "review-loop",
-      "path": "examples/review-loop/workflow.edn",
+      "name": "code-review-loop",
+      "path": "examples/code-review-loop/workflow.edn",
       "source": "configured",
       "api_version": "tesseraft.workflow/v1",
       "lint": {"ok": true, "errors": 0, "warnings": 0}

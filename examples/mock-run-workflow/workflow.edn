@@ -2,7 +2,7 @@
  :kind :workflow
  :metadata {:name "mock-run-workflow"
             :title "Mock Run Workflow"
-            :description "Side-effect-free review-loop mirror for runner/UI testing."}
+            :description "Side-effect-free implementation/review workflow for runner and UI testing."}
  :inputs {:prompt {:type :string :required true}
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
