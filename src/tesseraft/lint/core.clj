@@ -1043,14 +1043,11 @@
   (let [fragment (:fragment pkg)
         states (:states fragment {})]
     (when (and (map? fragment) (map? states))
-      (let [wf-like {:initial (:initial fragment) :states states}
-            reachable (spec/reachable-states wf-like)]
-        (for [[id n] states
-              :when (and (contains? reachable id)
-                         (map? n)
-                         (= :fragment (:type n)))]
-          (err :nested-fragment [:fragment :states id :type]
-               "Nested fragment states are unsupported by the tesseraft.fragment/v1 contract"))))))
+      (for [[id n] states
+            :when (and (map? n)
+                       (= :fragment (:type n)))]
+        (err :nested-fragment [:fragment :states id :type]
+             "Nested fragment states are unsupported by the tesseraft.fragment/v1 contract")))))
 
 (defn fragment-terminal-outcome-checks [pkg]
   (let [outcomes (get-in pkg [:interface :outcomes])

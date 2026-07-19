@@ -394,6 +394,7 @@ check_invalid_fragment fragment-terminal-unknown-outcome fragment-terminal-unkno
 check_invalid_fragment fragment-terminal-multi-outcome fragment-terminal-ambiguous-outcome '["fragment","states","done","outcome"]'
 check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome '["interface","outcomes"]'
 check_invalid_fragment fragment-nested-fragment nested-fragment '["fragment","states","run-tests","type"]'
+check_invalid_fragment fragment-unreachable-nested-fragment nested-fragment '["fragment","states","unreachable-child","type"]'
 check_invalid_fragment fragment-unsafe-asset invalid-asset-path
 check_invalid_fragment fragment-missing-required-input fragment-missing-interface
 # P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is
