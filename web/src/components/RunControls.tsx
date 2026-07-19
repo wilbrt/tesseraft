@@ -4,7 +4,6 @@ import { useProject, projectApiUrl } from '../lib/project';
 import { snippet } from '../lib/runConsole';
 import { StartWorkflowWizard, type StartPayload } from './StartWorkflowWizard';
 import type { MutationResult, RunDetail, WorkflowSummary } from '../types/runConsole';
-import { isDeletableLiveness } from '../types/runConsole';
 
 type Props = {
   workflows: WorkflowSummary[];
@@ -103,9 +102,9 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
         </div>
         <div className="control-card">
           <h3>Delete selected run</h3>
-          <p className="muted">Removes the run directory from <code>.agent-runs/</code>. Local and irreversible. Disabled while a run is executing.</p>
+          <p className="muted">Removes the run directory from <code>.agent-runs/</code>. Local and irreversible. The server refuses actively executing runs.</p>
           <label className="check"><input type="checkbox" checked={confirmDelete} onChange={(event) => setConfirmDelete(event.target.checked)} /> Confirm permanent deletion of this run's directory.</label>
-          <button type="button" disabled={!selectedRun || !isDeletableLiveness(runDetail?.liveness) || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}`, projectId)), undefined)}>Delete run</button>
+          <button type="button" disabled={!selectedRun || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}`, projectId)), undefined)}>Delete run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>
