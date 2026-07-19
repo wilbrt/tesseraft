@@ -1,7 +1,7 @@
 Fresh Pi session: CODE AND CANON TDD REVIEW.
 
 Inputs:
-- Prompt, approved use case, test-list history, TDD reports, and regression report: {{run.dir}}
+- Prompt, approved use case, test-list history, TDD reports, deterministic validation reports, and regression report: {{run.dir}}
 - Worktree: {{run.worktree-dir}}
 - Base branch: {{inputs.base-branch}}
 
@@ -12,7 +12,9 @@ Rules:
 - Do not edit source code, tests, commits, push, or create a PR.
 - Review the diff against the base branch.
 - Check correctness, regressions, security, maintainability, and focused scope.
-- Confirm every completed scenario has a meaningful concrete test, no pending scenarios remain, assertions were not weakened, discoveries were not silently dropped, and refactoring did not introduce behavior.
+- Confirm every completed scenario has a meaningful concrete test and focused manifest, no pending scenarios remain, assertions were not weakened, discoveries were not silently dropped, and refactoring did not introduce behavior.
+- Confirm each red test exercised only its selected scenario rather than borrowing a different scenario to manufacture failure.
+- Verify deterministic red/green/refactor and final validation evidence rather than rerunning commands unless evidence is inconsistent; missing changed-file or diff evidence is inconsistent and must not be waived.
 - Confirm the implementation satisfies the use case without speculative extra scope.
 - Produce only concrete actionable findings. On failure, write issues for repair.
 

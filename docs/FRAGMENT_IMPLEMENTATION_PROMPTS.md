@@ -63,7 +63,7 @@ Start from a clean base branch containing all listed dependencies:
   --format json
 ```
 
-Use bounded `step`/`resume`, review the generated use case, and explicitly approve it before worktree creation.
+Use bounded `step`/`resume` if you want to review the generated use case before allowing the workflow to continue to test-list and worktree preparation.
 
 ---
 

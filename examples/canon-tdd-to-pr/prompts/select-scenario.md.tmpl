@@ -12,7 +12,8 @@ Select one pending behavioral scenario whose concrete test should be written nex
 
 Rules:
 - Read the newest valid test-list snapshot; use the initial list when no update exists.
-- Select exactly one pending scenario. Test order is a design decision: prefer the smallest scenario likely to provide useful interface feedback.
+- Select exactly one pending scenario. Test order is a design decision: prefer the smallest scenario likely to provide useful interface feedback and meaningful red against current behavior.
+- Do not select an already-satisfied scenario on the theory that its test can be made red by adding a different pending scenario as a negative control.
 - Do not edit repository files or the test list.
 - Do not design implementation or write a test.
 - If no pending scenarios remain, write an empty scenario object and status `no_actions`.

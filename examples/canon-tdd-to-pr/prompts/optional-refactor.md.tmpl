@@ -2,7 +2,7 @@ Fresh Pi session: OPTIONAL REFACTORING / IMPLEMENTATION DESIGN.
 
 Inputs:
 - Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
-- Latest green verification under {{run.dir}}/tdd/
+- Latest deterministic green verification under {{run.dir}}/tdd/
 - Prior issues: {{run.issues-file}}
 - Worktree: {{run.worktree-dir}}
 
@@ -13,7 +13,7 @@ Rules:
 - Behavior is already green. Do not add behavior or tests for pending scenarios.
 - Duplication is a hint, not a command. Avoid speculative abstractions and cleanup beyond this increment.
 - If no refactoring is justified, do not edit files and return `no_actions`.
-- If refactoring, keep it focused, run relevant tests, and commit it separately when green.
+- If refactoring, keep it focused, run relevant tests while working, and commit it separately when green. The next process node independently reruns all accumulated focused checks.
 - Do not push or create a PR.
 
 Write:

@@ -3,7 +3,7 @@ Fresh Pi session: UPDATE THE CANON TDD TEST LIST.
 Inputs:
 - Test-list history under {{run.dir}}/test-list/
 - Latest selected scenario under {{run.dir}}/tdd/
-- Latest green/refactor verification under {{run.dir}}/tdd/
+- Latest deterministic green/refactor verification under {{run.dir}}/tdd/
 - All discovered-scenarios-*.json not already incorporated
 - Worktree: {{run.worktree-dir}}
 
@@ -16,7 +16,7 @@ Rules:
 - Mark exactly the selected scenario `complete` and retain its id.
 - Append genuinely new discoveries as `pending` with new stable ids; deduplicate behavior already represented.
 - Preserve all other scenario states and scope.
-- Record evidence linking the completed scenario to its concrete test.
+- Record evidence linking the completed scenario to its concrete test and focused check manifest.
 - Return `actions_needed` if pending scenarios remain, otherwise `no_actions`.
 
 Write:

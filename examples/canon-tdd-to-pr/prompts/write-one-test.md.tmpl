@@ -14,20 +14,27 @@ Turn exactly the selected scenario into a real runnable automated test with mean
 
 Rules:
 - Edit test code only. Do not implement or change production behavior.
-- Do not turn any other pending scenario into a concrete test.
+- Do not turn any other pending scenario into a concrete test, assertion, fixture mutation, or negative control. A control may demonstrate already-supported behavior only.
+- The selected scenario itself must account for the red result. If it is already satisfied, report failure instead of manufacturing red by asserting a different missing behavior.
 - Interface decisions required to express this one test are allowed; avoid implementation design.
 - Derive expected values independently. Never paste actual computed output into expectations merely to pass.
 - Include setup, invocation, and assertions using repository conventions.
 - A compile/interface failure is acceptable only when it directly demonstrates the selected missing interface; unrelated syntax, fixture, dependency, or environment failures are not meaningful red.
-- Run the narrow test command once to establish the observed failure, but leave verification to the next session.
+- Run the narrow test command once to establish the observed failure, but leave independent execution to the next process node.
+- Create a version-1 focused-check manifest. Prefer an argv-array command; a compound shell command must be an explicit string with `"shell": true`.
+- Include a bounded timeout and one or more stable `red.output_contains` markers that identify the intended test/assertion failure rather than generic error text.
+- Reuse the selected scenario id exactly. The same command must be suitable for red now and green after implementation.
 - Do not commit, push, or create a PR.
 
 Write:
 - Report including test file/name, interface choices, exact observed failure, and expected failure reason: {{run.dir}}/tdd/test-{{run.round}}.md
-- Exact focused command: {{run.dir}}/tdd/test-command-{{run.round}}.txt
+- Focused check: {{run.dir}}/tdd/check-{{run.round}}.json
 - Status: {{run.dir}}/tdd/write-test-status-{{run.round}}.json
 - On failure: {{run.dir}}/tdd/write-test-issues-{{run.round}}.json
 
+Focused-check shape:
+{"version":1,"scenario_id":"SC-001","id":"focused-scenario-001","command":["npm","test","--","specific-test"],"timeout_seconds":120,"red":{"expected_exit":"nonzero","output_contains":["specific-test","expected assertion text"]}}
+
 Status examples:
-{"status":"pass","summary":"one concrete test written","issues_file":null}
+{"status":"pass","summary":"one concrete test and focused check manifest written","issues_file":null}
 {"status":"fail","summary":"test is not yet a meaningful runnable red","issues_file":"tdd/write-test-issues-{{run.round}}.json"}

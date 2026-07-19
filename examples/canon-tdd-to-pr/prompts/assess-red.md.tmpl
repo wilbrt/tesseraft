@@ -1,0 +1,30 @@
+Fresh Pi session: SEMANTICALLY ASSESS DETERMINISTIC RED EVIDENCE.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Test-authoring report: latest {{run.dir}}/tdd/test-*.md
+- Deterministic red report: {{run.dir}}/tdd/red-verification-{{run.round}}.md
+- Focused check manifest: {{run.dir}}/tdd/check-{{run.round}}.json
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Decide whether the deterministic nonzero result is a meaningful failing test for exactly the selected behavior.
+
+Rules:
+- Do not execute commands, edit files, or commit. This is semantic assessment only.
+- Require non-empty deterministic changed-file and diff evidence. Fail when it is absent or inconsistent; do not replace it with claims from agent reports, session traces, or current-tree inspection.
+- Inspect the evidenced test files when needed and confirm the test has meaningful assertions with independently justified expectations.
+- Confirm exactly one selected scenario became concrete and no production behavior was implemented during test writing.
+- Reject a test that makes an already-satisfied selected scenario fail by adding an assertion, fixture mutation, or negative control for a different pending behavior.
+- Confirm the observed failure corresponds to the selected missing/incorrect behavior rather than syntax, dependency, fixture, environment, timeout, or unrelated test failure.
+- The process runner has already checked exit status and required output markers; do not substitute model judgment for that evidence.
+- Pass only when the test is a trustworthy red oracle for the selected scenario.
+
+Write:
+- Assessment: {{run.dir}}/tdd/red-report-{{run.round}}.md
+- Status: {{run.dir}}/tdd/red-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/red-issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"meaningful red semantically confirmed","issues_file":null}
+{"status":"fail","summary":"red evidence does not represent the selected behavior","issues_file":"tdd/red-issues-{{run.round}}.json"}

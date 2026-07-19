@@ -2,7 +2,7 @@ Fresh Pi session: MAKE THE CURRENT AND ALL PREVIOUS TESTS PASS.
 
 Inputs:
 - Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
-- Red verification: latest red report under {{run.dir}}/tdd/
+- Deterministic red execution and semantic assessment: latest red verification/report under {{run.dir}}/tdd/
 - Repository constraints: {{run.dir}}/design/repository-constraints.md
 - Prior issues: {{run.issues-file}}
 - Worktree: {{run.worktree-dir}}
@@ -13,7 +13,7 @@ Change production code only as needed to make the new test and all previous test
 Rules:
 - Do not delete, skip, or weaken assertions and do not rewrite expected values from observed output without independent justification.
 - Keep red-to-green separate from refactoring; make the smallest clear behavior change.
-- Run the focused test and relevant prior tests.
+- Run the focused test and relevant prior tests while implementing when useful. The next process node independently executes the latest focused manifest for every scenario.
 - If implementation reveals another behavioral case, record it in the discoveries JSON instead of implementing or testing it now.
 - Always write discoveries JSON; use an empty `scenarios` array when none were found.
 - Do not push or create a PR.

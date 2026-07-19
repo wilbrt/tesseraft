@@ -2,14 +2,13 @@
  :kind :workflow
  :metadata {:name "canon-tdd-to-pr"
             :title "Canon TDD to PR"
-            :description "Turn a prompt into an approved agile use case, then implement one behavioral scenario at a time with Canon TDD in an isolated worktree before review and PR creation."}
+            :description "Turn a prompt into an agile use case, then implement one behavioral scenario at a time with Canon TDD in an isolated worktree before review and PR creation."}
  :inputs {:prompt {:type :string :required true}
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
           :branch {:type :string :required false}}
  :defaults {:max-rounds 50
             :state-timeout "45m"
-            :approval-timeout "7d"
             :base-branch "main"}
  :policies {:runtime-cannot-edit-workflow true
             :authoring-cannot-edit-runs true
@@ -45,22 +44,8 @@
    :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
    :outputs {:status {:path "use-case/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :use-case {:path "use-case/use-case-{{run.round}}.md" :required true}}
-   :transitions [{:when {:status "pass"} :next :approve-use-case}
+   :transitions [{:when {:status "pass"} :next :build-test-list}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :write-use-case}]}
-
-  :approve-use-case
-  {:type :approval
-   :title "Approve use case"
-   :message "Review the agile use case. Approve its behavioral scope or request a revision before test-list creation."
-   :timeout "7d"
-   :artifact {:path "use-case/use-case-{{run.round}}.md" :type "text/markdown"}
-   :presentation {:question "Does this use case accurately describe the requested actor goal, observable behavior, alternate flows, and scope?"
-                  :artifacts [{:path "use-case/use-case-{{run.round}}.md" :type "text/markdown" :label "Use case"}]
-                  :decisions [{:decision "approve" :label "Approve use case" :next "build-test-list"}
-                              {:decision "revise" :label "Request revision" :next "write-use-case"}]
-                  :routing {:kind :self}}
-   :transitions [{:when {:decision "approve"} :next :build-test-list}
-                 {:when {:decision "revise"} :effects [:inc-round] :next :write-use-case}]}
 
   :build-test-list
   {:type :agent
@@ -94,6 +79,7 @@
    :runtime {:cwd "{{inputs.repo-root}}" :timeout "30m"}
    :outputs {:status {:path "design/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :constraints {:path "design/repository-constraints.md" :required true}
+             :validation-plan {:path "design/validation-plan.json" :schema "schemas/validation-plan.schema.json" :required true}
              :branch-name {:path "design/branch-name.txt" :required true}}
    :transitions [{:when {:status "pass"} :next :ensure-worktree}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :choose-branch}]}
@@ -123,7 +109,7 @@
              :scenario {:path "tdd/current-scenario-{{run.round}}.json" :required true}
              :selection-notes {:path "tdd/selection-{{run.round}}.md" :required true}}
    :transitions [{:when {:status "actions_needed"} :next :write-one-test}
-                 {:when {:status "no_actions"} :next :regression-testing}
+                 {:when {:status "no_actions"} :next :run-regression-plan}
                  {:when {:status "pass"} :next :write-one-test}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :select-scenario}]}
 
@@ -141,23 +127,36 @@
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "60m"}
    :outputs {:status {:path "tdd/write-test-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "tdd/test-{{run.round}}.md" :required true}
-             :test-command {:path "tdd/test-command-{{run.round}}.txt" :required true}
+             :check-manifest {:path "tdd/check-{{run.round}}.json" :schema "schemas/focused-check.schema.json" :required true}
              :issues {:path "tdd/write-test-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :verify-red}
+   :transitions [{:when {:status "pass"} :next :run-red-check}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :write-one-test}]}
 
-  :verify-red
+  :run-red-check
+  {:type :process
+   :title "Run deterministic red check"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "red" :manifest-file "tdd/check-{{run.round}}.json"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "tdd/red-verification-{{run.round}}.md" :required true}
+             :issues {:path "tdd/red-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :assess-red}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :write-one-test}]}
+
+  :assess-red
   {:type :agent
-   :title "Verify meaningful red"
+   :title "Assess meaningful red"
    :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.4"
    :thinking "medium"
-   :prompt-template "prompts/verify-red.md.tmpl"
-   :prompt-output "prompts/generated/verify-red-{{run.round}}.md"
-   :session-name "canon-tdd-red-{{run.round}}"
-   :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :prompt-template "prompts/assess-red.md.tmpl"
+   :prompt-output "prompts/generated/assess-red-{{run.round}}.md"
+   :session-name "canon-tdd-assess-red-{{run.round}}"
+   :tools [:read :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "30m"}
    :outputs {:status {:path "tdd/red-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "tdd/red-report-{{run.round}}.md" :required true}
              :issues {:path "tdd/red-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
@@ -180,23 +179,18 @@
              :summary {:path "tdd/green-summary-{{run.round}}.md" :required true}
              :discoveries {:path "tdd/discovered-scenarios-{{run.round}}.json" :required true}
              :issues {:path "tdd/green-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :verify-green}
+   :transitions [{:when {:status "pass"} :next :run-green-check}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :make-green}]}
 
-  :verify-green
-  {:type :agent
-   :title "Verify green"
-   :executor :pi-cli
-   :provider "openai-codex"
-   :model "gpt-5.4"
-   :thinking "medium"
-   :prompt-template "prompts/verify-green.md.tmpl"
-   :prompt-output "prompts/generated/verify-green-{{run.round}}.md"
-   :session-name "canon-tdd-verify-green-{{run.round}}"
-   :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
-   :outputs {:status {:path "tdd/green-verification-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :report {:path "tdd/green-verification-{{run.round}}.md" :required true}
+  :run-green-check
+  {:type :process
+   :title "Run deterministic green checks"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "green"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "tdd/green-verification-{{run.round}}.md" :required true}
              :issues {:path "tdd/green-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :optional-refactor}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :make-green}]}
@@ -216,24 +210,19 @@
    :outputs {:status {:path "tdd/refactor-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "tdd/refactor-summary-{{run.round}}.md" :required true}
              :issues {:path "tdd/refactor-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :verify-refactor}
+   :transitions [{:when {:status "pass"} :next :run-refactor-check}
                  {:when {:status "no_actions"} :next :update-test-list}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :optional-refactor}]}
 
-  :verify-refactor
-  {:type :agent
-   :title "Verify refactoring preserved behavior"
-   :executor :pi-cli
-   :provider "openai-codex"
-   :model "gpt-5.4"
-   :thinking "medium"
-   :prompt-template "prompts/verify-refactor.md.tmpl"
-   :prompt-output "prompts/generated/verify-refactor-{{run.round}}.md"
-   :session-name "canon-tdd-verify-refactor-{{run.round}}"
-   :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
-   :outputs {:status {:path "tdd/refactor-verification-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :report {:path "tdd/refactor-verification-{{run.round}}.md" :required true}
+  :run-refactor-check
+  {:type :process
+   :title "Run deterministic post-refactor checks"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "refactor"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "tdd/refactor-verification-{{run.round}}.md" :required true}
              :issues {:path "tdd/refactor-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :update-test-list}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :optional-refactor}]}
@@ -254,24 +243,19 @@
              :test-list-json {:path "test-list/scenarios-{{run.round}}.json" :required true}
              :test-list-md {:path "test-list/scenarios-{{run.round}}.md" :required true}}
    :transitions [{:when {:status "actions_needed"} :effects [:inc-round] :next :select-scenario}
-                 {:when {:status "no_actions"} :next :regression-testing}
+                 {:when {:status "no_actions"} :next :run-regression-plan}
                  {:when {:status "pass"} :effects [:inc-round] :next :select-scenario}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :update-test-list}]}
 
-  :regression-testing
-  {:type :agent
-   :title "Independent regression testing"
-   :executor :pi-cli
-   :provider "openai-codex"
-   :model "gpt-5.4"
-   :thinking "medium"
-   :prompt-template "prompts/regression-testing.md.tmpl"
-   :prompt-output "prompts/generated/regression-testing-{{run.round}}.md"
-   :session-name "canon-tdd-regression-{{run.round}}"
-   :tools [:read :bash :grep :find :ls :write]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "60m"}
-   :outputs {:status {:path "manual-testing/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :report {:path "manual-testing/report-{{run.round}}.md" :required true}
+  :run-regression-plan
+  {:type :process
+   :title "Run deterministic regression plan"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "regression"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "manual-testing/report-{{run.round}}.md" :required true}
              :issues {:path "manual-testing/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :review}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :repair}]}
@@ -309,7 +293,7 @@
    :outputs {:status {:path "repair/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "repair/summary-{{run.round}}.md" :required true}
              :issues {:path "repair/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :regression-testing}
+   :transitions [{:when {:status "pass"} :next :run-regression-plan}
                  {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :repair}]}
 
   :pr-draft

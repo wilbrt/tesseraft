@@ -9,20 +9,30 @@ Inputs:
 - Base branch: {{inputs.base-branch}}
 
 Goal:
-Choose a safe branch name and record repository guidance needed by later TDD sessions.
+Choose a safe branch name and record repository guidance plus an explicit deterministic final-validation plan.
 
 Rules:
 - Do not edit repository files.
 - Do not produce an upfront implementation design.
 - Record applicable repository instructions, normal focused/full test commands, and relevant test locations without choosing an implementation.
+- Write a version-1 validation plan containing at least one broad repository check. Prefer argv arrays. Compound shell commands must be explicit strings with `"shell": true`.
+- Checks must be non-interactive, bounded by `timeout_seconds` (1–7200), appropriate to run in the future worktree, and free of hidden credentials or external product side effects.
+- Use stable unique check ids. The deterministic regression process will combine this plan with all completed focused TDD checks.
 - Branch names use lowercase letters, numbers, slashes, and hyphens only.
 - Prefer `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`; never use `agent/`.
 - Honor a valid requested branch; otherwise derive a concise semantic name.
 
 Write:
 - Constraints: {{run.dir}}/design/repository-constraints.md
+- Validation plan: {{run.dir}}/design/validation-plan.json
 - Branch: {{run.dir}}/design/branch-name.txt
 - Status: {{run.dir}}/design/status-{{run.round}}.json
+
+Validation-plan shape:
+{"version":1,"checks":[{"id":"full-suite","command":["bb","test"],"timeout_seconds":1800}]}
+
+For a compound command only:
+{"version":1,"checks":[{"id":"ci-equivalent","command":"npm ci && bb test && npm run web:test","shell":true,"timeout_seconds":3600}]}
 
 Status:
 {"status":"pass","summary":"branch and repository constraints ready","issues_file":null}

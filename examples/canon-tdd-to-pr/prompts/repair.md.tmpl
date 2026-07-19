@@ -14,7 +14,7 @@ Rules:
 - For a non-behavioral implementation defect, repair it and rerun relevant tests.
 - Never weaken assertions, delete coverage, or copy actual output into expected values merely to pass.
 - Avoid unrelated refactoring. Do not push or create a PR.
-- Commit a coherent validated repair when passing.
+- Commit a coherent validated repair when passing. The next process node independently reruns the broad validation plan and accumulated focused checks.
 
 Write:
 - Summary including red/green evidence when behavior changed: {{run.dir}}/repair/summary-{{run.round}}.md

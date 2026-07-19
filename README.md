@@ -89,7 +89,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
-- `examples/canon-tdd-to-pr/workflow.edn` — approved agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
+- `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
 - See `docs/WORKFLOW_RUNS.md` for safe side-effecting workflow run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.

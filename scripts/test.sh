@@ -31,6 +31,9 @@ echo "Linting safe example workflows..."
 printf '\nChecking PR housekeeping base synchronization...\n'
 python3 test/pr-housekeeping-sync.test.py
 
+printf '\nChecking Canon TDD deterministic validation runner...\n'
+python3 test/canon-validation-runner.test.py
+
 printf '\nChecking agent node model/provider plumbing...\n'
 AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"
 AGENT_MODEL_PROMPT_DIR="$TMP_DIR/prompts"

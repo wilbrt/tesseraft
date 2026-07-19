@@ -12,6 +12,8 @@ List behavioral test scenarios before writing any concrete test code.
 Rules:
 - Inspect existing tests and behavior as needed, but do not edit repository files.
 - Cover the main success flow, important alternatives/errors, boundaries, and relevant behavior that must not regress.
+- Keep the list minimal and non-overlapping: each scenario must add one independently observable rule, not restate a broader scenario or split normal/strict modes into duplicate increments.
+- A pending scenario must be capable of producing meaningful red against current behavior. Put already-working controls and general regression expectations in a change-detecting scenario's acceptance details or the broad validation plan, not in separate pending scenarios.
 - Keep scenarios behavioral: invocation context plus observable expected result.
 - Do not choose implementation, test framework details, files, classes, mocks, or internal architecture.
 - Do not turn scenarios into test code.
