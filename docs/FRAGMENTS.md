@@ -118,7 +118,7 @@ Implemented checks, when outcomes/exits are present, include:
 
 Implemented package lint also requires `:interface :outcomes` to be present as a non-empty set of keyword outcomes. The JSON Schema does not require this field.
 
-Reachable internal terminal states must keep workflow-style terminal `:status` and explicitly select one declared fragment outcome with `:outcome`. For example, a terminal may use `{:type :terminal :status :success :outcome :pass}` so workflow terminal status remains distinct from the fragment outcome contract.
+Reachable internal terminal states must keep workflow-style terminal `:status` and explicitly select one declared fragment outcome with `:outcome`. Every declared outcome must be produced by at least one reachable terminal state; multiple reachable terminals may select the same declared outcome only when every declared outcome remains producible. For example, a terminal may use `{:type :terminal :status :success :outcome :pass}` so workflow terminal status remains distinct from the fragment outcome contract.
 
 ### Requirements and resources
 

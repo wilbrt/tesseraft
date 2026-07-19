@@ -1,0 +1,17 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "unreachable-outcome-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass :fail}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :lint
+            :exit [{:on :pass :produces {:status "status/status.json"}}
+                   {:on :fail :produces {:status "status/status.json"}}]
+            :states {:lint {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "lint/status.json" :required true}}
+                            :next :done}
+                     ;; SC-005: all declared outcomes have exits, but no
+                     ;; reachable terminal selects the declared :fail outcome.
+                     :done {:type :terminal :status :success :outcome :pass}}}}

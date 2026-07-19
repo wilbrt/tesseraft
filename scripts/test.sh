@@ -350,6 +350,7 @@ check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch
 check_invalid_fragment fragment-missing-outcomes fragment-outcome-mismatch
 check_invalid_fragment fragment-terminal-missing-outcome fragment-terminal-missing-outcome
 check_invalid_fragment fragment-terminal-multi-outcome ambiguous
+check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome
 check_invalid_fragment fragment-unsafe-asset invalid-asset-path
 check_invalid_fragment fragment-missing-required-input fragment-missing-interface
 # P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is

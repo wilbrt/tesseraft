@@ -1045,27 +1045,37 @@
                (map? fragment)
                (map? states))
       (let [wf-like {:initial (:initial fragment) :states states}
-            reachable (spec/reachable-states wf-like)]
-        (apply concat
-               (for [[id n] states
-                     :when (and (contains? reachable id)
-                                (map? n)
-                                (= :terminal (:type n)))]
-                 (let [outcome (:outcome n)]
-                   (cond
-                     (nil? outcome)
-                     [(err :fragment-terminal-missing-outcome [:fragment :states id :outcome]
-                           (str "Terminal state " id " must select a declared fragment outcome"))]
+            reachable (spec/reachable-states wf-like)
+            reachable-terminals (for [[id n] states
+                                      :when (and (contains? reachable id)
+                                                 (map? n)
+                                                 (= :terminal (:type n)))]
+                                  [id n])
+            produced-outcomes (set (for [[_ n] reachable-terminals
+                                    :let [outcome (:outcome n)]
+                                    :when (contains? outcomes outcome)]
+                                outcome))]
+        (concat
+          (apply concat
+                 (for [[id n] reachable-terminals]
+                   (let [outcome (:outcome n)]
+                     (cond
+                       (nil? outcome)
+                       [(err :fragment-terminal-missing-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " must select a declared fragment outcome"))]
 
-                     (and (set? outcome) (> (count outcome) 1))
-                     [(err :fragment-terminal-ambiguous-outcome [:fragment :states id :outcome]
-                           (str "Terminal state " id " ambiguously selects multiple fragment outcomes " outcome))]
+                       (and (set? outcome) (> (count outcome) 1))
+                       [(err :fragment-terminal-ambiguous-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " ambiguously selects multiple fragment outcomes " outcome))]
 
-                     (not (contains? outcomes outcome))
-                     [(err :fragment-terminal-unknown-outcome [:fragment :states id :outcome]
-                           (str "Terminal state " id " selects unknown fragment outcome " outcome))]
+                       (not (contains? outcomes outcome))
+                       [(err :fragment-terminal-unknown-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " selects unknown fragment outcome " outcome))]
 
-                     :else []))))))))
+                       :else []))))
+          (for [o outcomes :when (not (contains? produced-outcomes o))]
+            (err :fragment-unreachable-outcome [:interface :outcomes]
+                 (str "Declared fragment outcome " o " is not produced by any reachable terminal state"))))))))
 
 (defn fragment-internal-inputs [pkg]
   ;; The fragment's internal subgraph references boundary inputs/parameters
