@@ -58,6 +58,9 @@ test('visibly refuses deleting an executing run and deletes a terminal run', asy
 
   await expect(page.getByText('Mutation delete ok')).toBeVisible();
   await expect(terminalRow).toHaveCount(0, { timeout: 15_000 });
+  await expect(terminalInspection).toHaveCount(0);
+  await expect(page.getByLabel('Current console context')).toContainText('No run selected');
+  await expect(page.getByLabel('Run control context')).toContainText('No run selected');
   await expect.poll(async () => runApiStatus(isolatedRun.baseURL, isolatedRun.pw4.terminalRunId), { timeout: 15_000 }).toBe(404);
   await expect.poll(async () => fs.access(isolatedRun.pw4.terminalRunDir).then(() => true, () => false), { timeout: 15_000 }).toBe(false);
 
