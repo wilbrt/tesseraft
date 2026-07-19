@@ -13,6 +13,14 @@ const serverEntry = path.join(repoRoot, 'web', 'dist-server', 'server.js');
 
 type CliResult = { stdout: string; stderr: string; json: unknown };
 
+type Pw3RunControlScenario = {
+  workflowName: string;
+  workflowPath: string;
+  runId: string;
+  expectedAfterStartState: string;
+  expectedAfterStepState: string;
+};
+
 type IsolatedRunFixture = {
   baseURL: string;
   workspaceRoot: string;
@@ -21,6 +29,7 @@ type IsolatedRunFixture = {
   workflowPath: string;
   runId: string;
   runDir: string;
+  pw3: Pw3RunControlScenario;
   runCli: (args: string[], options?: { timeout?: number }) => Promise<CliResult>;
   apiJson: <T = unknown>(path: string) => Promise<T>;
 };
@@ -38,6 +47,30 @@ const workflowEdn = (name: string): string => `{:api-version "tesseraft.workflow
                   :handler :noop/succeed
                   :runtime {:timeout "10s"}
                   :next :done}
+          :done {:type :terminal :title "Done" :status :success}}}
+`;
+
+const pw3WorkflowEdn = (name: string): string => `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "${name}" :title "PW3 Run Controls"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :deterministic
+                  :title "Start"
+                  :handler :noop/succeed
+                  :runtime {:timeout "10s"}
+                  :next :after-start}
+          :after-start {:type :deterministic
+                        :title "After start"
+                        :handler :noop/succeed
+                        :runtime {:timeout "10s"}
+                        :next :after-step}
+          :after-step {:type :deterministic
+                       :title "After step"
+                       :handler :noop/succeed
+                       :runtime {:timeout "10s"}
+                       :next :done}
           :done {:type :terminal :title "Done" :status :success}}}
 `;
 
@@ -89,14 +122,19 @@ const expectUnder = (parent: string, child: string): void => {
 
 export const test = base.extend<Fixtures>({
   isolatedRun: [async ({}, use) => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tesseraft-pw2-'));
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tesseraft-e2e-'));
     const workspaceRoot = path.join(tempRoot, 'workspace');
     const tesseraftHome = path.join(tempRoot, 'home');
     const unique = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
     const workflowName = `pw2-${unique}`;
     const runId = `run-${unique}`;
+    const pw3Unique = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    const pw3WorkflowName = `pw3-${pw3Unique}`;
+    const pw3RunId = `pw3-${pw3Unique}`;
     const workflowDir = path.join(workspaceRoot, '.tesseraft', 'workflows', workflowName);
     const workflowPath = path.join(workflowDir, 'workflow.edn');
+    const pw3WorkflowDir = path.join(workspaceRoot, '.tesseraft', 'workflows', pw3WorkflowName);
+    const pw3WorkflowPath = path.join(pw3WorkflowDir, 'workflow.edn');
     let child: ChildProcessWithoutNullStreams | null = null;
 
     const env = { ...process.env, TESSERAFT_WORKSPACE_ROOT: workspaceRoot, TESSERAFT_HOME: tesseraftHome };
@@ -116,8 +154,10 @@ export const test = base.extend<Fixtures>({
 
     try {
       await fs.mkdir(workflowDir, { recursive: true });
+      await fs.mkdir(pw3WorkflowDir, { recursive: true });
       await fs.mkdir(tesseraftHome, { recursive: true });
       await fs.writeFile(workflowPath, workflowEdn(workflowName));
+      await fs.writeFile(pw3WorkflowPath, pw3WorkflowEdn(pw3WorkflowName));
       child = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', '0'], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const baseURL = await waitForServer(child);
       const ready = await fetch(baseURL);
@@ -128,6 +168,7 @@ export const test = base.extend<Fixtures>({
       const runDir = body.run?.dir || path.join(workspaceRoot, '.agent-runs', workflowName, runId);
       expectUnder(workspaceRoot, runDir);
       expectUnder(workspaceRoot, workflowPath);
+      expectUnder(workspaceRoot, pw3WorkflowPath);
 
       const apiJson = async <T = unknown>(apiPath: string): Promise<T> => {
         const response = await fetch(`${baseURL}${apiPath}`);
@@ -135,7 +176,24 @@ export const test = base.extend<Fixtures>({
         return await response.json() as T;
       };
 
-      await use({ baseURL, workspaceRoot, tesseraftHome, workflowName, workflowPath, runId, runDir, runCli, apiJson });
+      await use({
+        baseURL,
+        workspaceRoot,
+        tesseraftHome,
+        workflowName,
+        workflowPath,
+        runId,
+        runDir,
+        pw3: {
+          workflowName: pw3WorkflowName,
+          workflowPath: pw3WorkflowPath,
+          runId: pw3RunId,
+          expectedAfterStartState: 'after-start',
+          expectedAfterStepState: 'after-step'
+        },
+        runCli,
+        apiJson
+      });
     } finally {
       if (child) await terminate(child);
       await fs.rm(tempRoot, { recursive: true, force: true });
