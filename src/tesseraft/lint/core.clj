@@ -1057,6 +1057,10 @@
                      [(err :fragment-terminal-missing-outcome [:fragment :states id :outcome]
                            (str "Terminal state " id " must select a declared fragment outcome"))]
 
+                     (and (set? outcome) (> (count outcome) 1))
+                     [(err :fragment-terminal-ambiguous-outcome [:fragment :states id :outcome]
+                           (str "Terminal state " id " ambiguously selects multiple fragment outcomes " outcome))]
+
                      (not (contains? outcomes outcome))
                      [(err :fragment-terminal-unknown-outcome [:fragment :states id :outcome]
                            (str "Terminal state " id " selects unknown fragment outcome " outcome))]
