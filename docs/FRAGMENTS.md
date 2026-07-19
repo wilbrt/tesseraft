@@ -1,37 +1,41 @@
 # Tesseraft Self-contained Fragments
 
-Status: Draft  
+Status: Draft — authoring and lint support implemented; runtime execution not implemented
+
 Version: `tesseraft.fragment/v1`
 
-Self-contained fragments are portable **multi-node subgraph** packages with a declared
-**boundary contract**: inputs, parameters, outputs, outcomes, and resource
-consumption/production. A fragment owns its internal subgraph; an importing workflow
-owns integration. The package contract is the durable boundary.
+Self-contained fragments are portable **multi-node subgraph** packages with a declared boundary contract. A fragment owns its internal graph and assets; an importing workflow owns the inclusion state id, bindings, outgoing transitions, and eventual path namespace.
 
-This is the multi-node extension of the single-node contract in
-[`docs/NODES.md`](NODES.md). Nodes and fragments share the same scope model and resource
-vocabulary.
+> **Current safety boundary:** fragment packages can be read, linted, discovered, and imported as authoring stubs. A workflow containing `{:type :fragment}` can pass lint but cannot run: the runner has no `:fragment` dispatch and currently fails with `No matching clause: :fragment`. Do not use fragments in production workflows yet.
 
-## Goals
+This document distinguishes the implemented P1.4 surface from the target executable contract. The ordered implementation prompts are in [FRAGMENT_IMPLEMENTATION_PROMPTS.md](FRAGMENT_IMPLEMENTATION_PROMPTS.md).
 
-A fragment package should contain enough information to validate one reusable subgraph
-without requiring the importing workflow. A compliant implementation must be able to:
+## Current implementation status
 
-- parse a fragment package without side effects,
-- validate the package, its internal subgraph, and its referenced assets as one unit,
-- lint a workflow that *includes* the fragment as a boundary contract call — **without
-  re-running the fragment's internal proof obligations at every import site**,
-- copy/import the fragment into a workflow package as a `{:type :fragment}` boundary node.
+| Capability | State |
+|---|---|
+| EDN fragment package parsing | Implemented |
+| Package and internal-subgraph lint | Implemented |
+| Inclusion input/outcome diagnostics | Implemented |
+| Asset validation and collision-safe copying | Implemented |
+| Project/global/example discovery helpers | Implemented |
+| `tesseraft fragment lint` | Implemented |
+| `tesseraft fragment import` authoring stub | Implemented |
+| Equivalent JSON package input | Not implemented |
+| JSON Schema enforcement | Not wired into the linter |
+| Required outcome/exit enforcement when omitted | Incomplete |
+| Parameter, version, and prefix semantics | Incomplete or not implemented |
+| Boundary resource projection into workflow lint | Not implemented |
+| Runtime fragment execution | Not implemented |
+| Public fragment control-plane API / Studio catalog | Not implemented |
+| Fragment gallery | Deferred (roadmap P1.5) |
+| Fragment export/extraction | Deferred (roadmap P4.3) |
 
-## Non-goals
+P1.4 is complete in its deliberately bounded sense: spec/linter/docs, discovery helpers, one fixture, and `fragment lint|import`. It did not deliver runtime execution.
 
-- The public registry protocol (deferred).
-- Runner execution/inlining of fragments (out of scope for v1; the runner treats
-  `{:type :fragment}` as an opaque boundary node for now).
-- Broad example rewrites / a fragment gallery (see the roadmap; P1.5).
-- Extract-fragment refactor UI / boundary inference from cut edges (P4.3).
+## Implemented package shape
 
-## Package shape
+The operational package format is currently EDN:
 
 ```edn
 {:api-version "tesseraft.fragment/v1"
@@ -50,7 +54,7 @@ without requiring the importing workflow. A compliant implementation must be abl
                        :issues {:path "issues/issues.json" :required false}}
              :outcomes #{:pass :fail}}
  :requirements {:executors [:pi-cli]
-                :handlers [:git/ensure-branch]
+                :handlers [:noop/succeed]
                 :tools [:read :bash :write :grep]
                 :secrets []
                 :template-vars ["inputs.repo-root" "inputs.test-cmd"
@@ -58,8 +62,10 @@ without requiring the importing workflow. A compliant implementation must be abl
                 :resources {:requires [{:kind :input :name "repo-root" :mode :reusable}
                                        {:kind :input :name "test-cmd" :mode :reusable}
                                        {:kind :capability :name "pi-cli"}]
-                            :produces [{:kind :artifact :name "status" :path "status/status.json"}
-                                       {:kind :issue-file :name "issues" :path "issues/issues.json"}]}}
+                            :produces [{:kind :artifact :name "status"
+                                        :path "status/status.json"}
+                                       {:kind :issue-file :name "issues"
+                                        :path "issues/issues.json"}]}}
  :assets {:prompts ["prompts/fix.md.tmpl"]
           :schemas ["schemas/status.schema.json"]}
  :fragment {:initial :lint
@@ -69,139 +75,175 @@ without requiring the importing workflow. A compliant implementation must be abl
             :exit [{:on :pass :produces {:status "status/status.json"}}
                    {:on :fail :produces {:status "status/status.json"
                                          :issues "issues/issues.json"}}]
-            :states {:lint   {...}
-                     :test   {...}
-                     :fix    {...}
-                     :done   {:type :terminal :status :success}
+            :states {:lint {...}
+                     :test {...}
+                     :fix {...}
+                     :done {:type :terminal :status :success}
                      :failed {:type :terminal :status :failure}}}}
 ```
 
-Required top-level fields are `:api-version`, `:kind`, `:metadata`, `:interface`, and
-`:fragment`.
+Required top-level fields currently enforced are `:api-version`, `:kind`, `:metadata`, `:interface`, and `:fragment`. The internal fragment requires `:initial` and `:states`.
 
-### Boundary contract (`:interface`)
+`schemas/fragment-package.schema.json` describes a JSON-shaped package, but it is not currently loaded by fragment lint. JSON values are not normalized into the keyword ids, node types, effects, and outcome set expected by the Clojure linter. Treat EDN as the only operational input format until normalization is implemented.
 
-- `:inputs` / `:parameters` — bindable from the importing workflow. Inputs with
-  `:required true` must be bound at inclusion time.
-- `:outputs` — artifacts the fragment produces at exit. Required outputs must be produced
-  on **every** `:exit` path; optional outputs may be absent.
-- `:outcomes` — a non-empty set of keywords the fragment may exit with (e.g.
-  `#{:pass :fail}`). Outcomes drive the importing workflow's transitions, exactly like
-  agent-node `:status` values drive `:when` transitions.
+## Boundary contract
 
-### Internal subgraph (`:fragment`)
+### Inputs
 
-- `:initial` — internal entry state (must exist in `:states`).
-- `:defaults` / `:policies` — scoped to the internal subgraph (e.g. `:max-rounds` to
-  bound internal cycles).
-- `:entry :inputs` / `:entry :parameters` — names from `:interface` bound at inclusion
-  time; they become template vars inside the fragment.
-- `:exit` — vector of `{:on <outcome> :produces {...}}` mapping each declared outcome to
-  the artifacts produced on that exit path. Every `:interface :outcomes` member must have
-  an `:exit` entry, and `:produces` must satisfy required `:interface :outputs`.
-- `:states` — internal nodes using the same node types and fields as workflow states,
-  **except** routing out of the fragment is expressed via terminal states whose `:status`
-  corresponds to an `:interface :outcomes` member. The fragment owns internal transitions
-  and does **not** name importing-workflow states.
+`:interface :inputs` describes values supplied by an importing workflow. Inclusion lint currently verifies that inputs whose contracts are considered required are present in the inclusion node's `:inputs` map.
 
-### Requirements and assets
+Current limitations:
 
-`:requirements` and `:assets` mirror the node package contract (see
-[`docs/NODES.md`](NODES.md)). `:requirements :resources` is the boundary-level contract
-the importer must satisfy and is linted as proof evidence. Internal-only resources are
-proven within the subgraph and are **not** re-checked at the import site.
+- unknown input bindings are not rejected;
+- binding value types are not checked;
+- bindings are not made available to runtime because fragment execution is absent.
+
+### Parameters
+
+`:interface :parameters` describes configurable fragment behavior and defaults. Package lint synthesizes inputs and parameters into the internal template-variable environment so internal prompt/template checks can resolve them.
+
+Current inclusion lint does not validate required parameters, defaults, unknown parameters, or value types. Parameter data on an inclusion node is presently declarative only.
+
+### Outputs and outcomes
+
+`:interface :outputs` describes artifacts exposed by fragment exits. `:interface :outcomes` is intended to be a non-empty set of keyword outcomes such as `#{:pass :fail}`. `:fragment :exit` maps each outcome to its exposed outputs.
+
+Implemented checks, when outcomes/exits are present, include:
+
+- exit outcomes must be declared by the interface;
+- declared outcomes must have exit entries;
+- every exit must produce each required interface output;
+- inclusion transitions may only reference declared outcomes;
+- uncovered outcomes produce a warning.
+
+Known contract gap: omitting both `:outcomes` and `:exit` currently passes strict package lint. The JSON Schema also does not require either field.
+
+There is also no implemented relation between an internal terminal state and an exit outcome. The fixture uses terminal statuses `:success`/`:failure`, while exits use `:pass`/`:fail`. Runtime work needs an explicit, linted terminal-to-outcome mapping before execution can be reliable.
+
+### Requirements and resources
+
+`:requirements` records executors, handlers, tools, secrets, template variables, and boundary resources. Package lint validates resource declaration shape. Internal `:fragment :resources` and node `:resources` participate in the internal-subgraph proof.
+
+Current limitation: package boundary `:requirements :resources` is **not projected** onto the workflow's `{:type :fragment}` inclusion node. Workflow resource flow reads only the inclusion node's own `:resources`. A downstream node that requires a package-declared output therefore reports `resource-missing-producer` unless the importer duplicates an equivalent production manually.
+
+## Internal subgraph lint
+
+`lint-fragment-package` constructs a workflow-like value from the internal graph and applies the workflow primitives once at package-validation time:
+
+- initial and terminal checks;
+- node type and node contract checks;
+- transition and reachability checks;
+- output/path/schema checks;
+- duplicate output checks;
+- resource shape and flow checks;
+- bounded-cycle checks;
+- template-variable checks;
+- prompt, script, schema, and declared-asset checks.
+
+When a workflow includes the same fragment package, internal results are cached per package path and surfaced at most once as `fragment-internal-lint-failed`. Import sites do not independently duplicate all internal diagnostics.
+
+Nested `{:type :fragment}` nodes inside a fragment are not given meaningful lint or runtime semantics today. They should be rejected until an explicit nesting model exists.
+
+See [LINTER.md](LINTER.md) for current diagnostics.
 
 ## Inclusion model
 
-A workflow includes a fragment at a state id via a new `{:type :fragment}` node:
+A lintable inclusion currently looks like:
 
 ```edn
 :run-tests
 {:type :fragment
  :fragment "test-fix-loop"
- :scope :project            ;; optional; default discovery
- :version "0.1.0"           ;; optional pin
+ :scope :project
  :inputs {:repo-root "{{inputs.repo-root}}"
           :test-cmd "bb test"}
- :parameters {:max-rounds 3 :base-branch "{{inputs.base-branch}}"}
- :prefix "test-fix/"        ;; artifact/path prefix
+ :parameters {:max-rounds 3
+              :base-branch "{{inputs.base-branch}}"}
  :transitions [{:when {:fragment/outcome "pass"} :next :pr}
-               {:when {:fragment/outcome "fail"} :effects [:merge-issues] :next :abort}]}
+               {:when {:fragment/outcome "fail"} :next :abort}]}
 ```
 
-The importing workflow owns:
+Implemented inclusion semantics:
 
-- the state id under which the fragment is referenced,
-- binding of workflow inputs/defaults/artifacts to `:interface :inputs`/`:parameters`,
-- exit transitions keyed by `{:fragment/outcome "<outcome>"}`,
-- asset destination prefix and artifact path prefix (to avoid collisions).
+- `:fragment` selects a package by metadata name;
+- keyword `:scope` can restrict lookup to project, global, or examples/configured roots;
+- project packages take precedence over global packages, which take precedence over examples by default;
+- required interface input names are checked;
+- transition outcomes are checked against the interface;
+- broken package lint is surfaced as one aggregate inclusion error.
 
-The linter treats `{:type :fragment}` as a **boundary contract call**, not as an inlined
-subgraph to re-prove internally. This is the key property: **inclusion lints the boundary
-contract without duplicating internal proof obligations.** Resource flow at the import
-site only considers the fragment's boundary `:requires`/`:produces`.
+Documented or plausible fields that are not yet operational:
 
-## Linter behavior
+- `:version` does not pin or validate the resolved package version;
+- `:prefix` does not namespace assets or runtime artifacts;
+- parameter contracts are not enforced;
+- package boundary resources are not projected;
+- no fragment outcome can be produced at runtime.
 
-`lint-fragment-package` mirrors `lint-node-package`:
+The importing workflow ultimately needs to own the state id, scope/version selection, explicit bindings, path prefix, outgoing outcome transitions, and collision handling. Those target semantics are not all implemented in v1 today.
 
-1. Top-level checks: required keys, `tesseraft.fragment/v1`, `:kind :fragment`,
-   `:metadata` map with non-blank `:name`, `:interface` map, `:fragment` map.
-2. Interface checks: `:outcomes` non-empty keyword set; every `:exit` outcome is in
-   `:outcomes` and vice versa; `:exit :produces` satisfies required `:interface :outputs`.
-3. Internal subgraph checks (reuse workflow linter primitives over `:fragment :states`):
-   node-type/transition/reachability/path-contract checks.
-4. Boundary resource checks (reuse `resource-declaration-checks`) on
-   `:requirements :resources` and `:fragment :resources`.
-5. Asset checks: declared assets exist and are safe relative paths; referenced
-   prompt/script/schema assets are declared.
+## Discovery and control-plane state
 
-Workflow-level checks for `{:type :fragment}` nodes:
-
-- `fragment-unknown-package` — referenced fragment package not discoverable.
-- `fragment-input-binding-missing` — a required `:interface :inputs` input is not bound.
-- `fragment-unknown-outcome` — a transition references an outcome not in
-  `:interface :outcomes`.
-- `fragment-uncovered-outcome` — an `:interface :outcomes` member has no covering
-  transition (warning).
-- `fragment-internal-lint-failed` — the fragment package itself failed lint (aggregated).
-
-New diagnostic codes are listed in [`docs/LINTER.md`](LINTER.md).
-
-## Local package locations
-
-Fragment packages use the same scope model as workflows and nodes:
+Fragment packages use the same filesystem scope convention as workflows and nodes:
 
 - `examples/fragments/<name>/fragment.edn`
-- `~/.tesseraft/fragments/<name>/fragment.edn` (`$TESSERAFT_HOME` honored)
-- `.tesseraft/fragments/<name>/fragment.edn` (project; highest precedence)
+- `~/.tesseraft/fragments/<name>/fragment.edn` (`TESSERAFT_HOME` is honored)
+- `.tesseraft/fragments/<name>/fragment.edn`
 
-Discovery precedence is lowest → highest (highest wins on name conflicts), identical to
-workflows and nodes. The generic `discovery-roots`/`package-files` helpers are reused
-unchanged (`:fragments` → `"fragments"`).
+Generic control-plane discovery and resolution helpers exist, including precedence/conflict handling. There are no public fragment list/detail/graph routes and no Studio catalog surface yet.
 
 ## Local CLI
 
-Validate a fragment package:
+Validate a package:
 
 ```bash
 ./bin/tesseraft fragment lint path/to/fragment.edn
 ./bin/tesseraft fragment lint path/to/fragment.edn --format json --strict
 ```
 
-Import a fragment package into a workflow as a `{:type :fragment}` node:
+Import a package as an authoring stub:
 
 ```bash
-./bin/tesseraft fragment import path/to/fragment.edn workflow.edn --as run-tests --next done
+./bin/tesseraft fragment import path/to/fragment.edn workflow.edn \
+  --as run-tests --next done
 ```
 
-Import validates the fragment, copies assets into the workflow package, inserts the
-boundary node, and lints the workflow after writing it. `export` (extracting a subgraph
-into a fragment package with boundary inference) is deferred to P4.3.
+Import currently:
 
-## Fixture
+1. lints the package;
+2. refuses unsafe, missing, or conflicting assets;
+3. copies declared assets into the workflow package;
+4. inserts a node containing `:type`, `:fragment`, and optional `:next`;
+5. runs workflow lint in memory;
+6. deliberately tolerates expected authoring-pending diagnostics such as missing bindings or incomplete outcomes;
+7. writes the workflow stub.
 
-A minimal, self-contained fixture lives under `examples/fragments/test-fix-loop/`:
+The user must still add inputs, parameters, and outcome transitions. The resulting workflow may not pass lint. Import is not runtime composition.
+
+`fragment export` is explicitly deferred to P4.3 and exits without extracting anything.
+
+## Runtime behavior
+
+There is no runtime fragment boundary implementation. Starting a lint-valid fragment workflow succeeds, but stepping the fragment node records `node.started`, then `node.failed` with `No matching clause: :fragment`.
+
+Runtime implementation must eventually define:
+
+- input and parameter binding;
+- package/version resolution pinned to the run;
+- internal state, attempts, rounds, and max-round behavior;
+- namespaced prompt/schema/command asset resolution;
+- namespaced output artifacts and exposed exit outputs;
+- terminal-to-outcome selection;
+- nested events and inspection;
+- mock executor behavior;
+- pause/resume, approvals, cancellation, recovery, and orphan handling;
+- whether nested fragments are forbidden or supported.
+
+Until those semantics land with tests, a fragment-containing workflow must be treated as lintable authoring data only.
+
+## Fixture and tests
+
+The single fixture is:
 
 ```text
 examples/fragments/test-fix-loop/
@@ -210,6 +252,24 @@ examples/fragments/test-fix-loop/
   schemas/status.schema.json
 ```
 
-It is a minimal lint-test-fix loop with two outcomes (`:pass`/`:fail`), one agent fix
-node, deterministic lint/test nodes, and terminal exit states. It passes
-`tesseraft fragment lint` and is importable into a workflow without external services.
+It proves package lint and import scaffolding. It does **not** prove runtime behavior; its deterministic `lint` and `test` nodes use `:noop/succeed`, and the package is never executed as a fragment.
+
+Focused tests in `scripts/test.sh` cover valid lint, strict lint, malformed interfaces/exits/assets, internal graph checks, inclusion input/outcome diagnostics, and authoring import. The import assertion checks that a boundary node was written, not that the resulting workflow is complete or runnable.
+
+## Target contract and delivery order
+
+The intended end state remains a portable, executable subgraph boundary, but implementation should proceed in dependency order:
+
+1. enforce complete outcome/exit and terminal mapping invariants;
+2. align EDN, normalized data, and JSON Schema behavior;
+3. enforce inclusion inputs, parameters, versions, prefixes, and scope;
+4. project boundary resources into workflow lint;
+5. make CLI import transactional and capable of producing an explicitly complete integration;
+6. add minimal deterministic runtime execution;
+7. add full ordinary node, output, loop, and mock behavior;
+8. add resumability, approvals, recovery, and nested observability;
+9. expose public discovery/inspection surfaces;
+10. seed runnable gallery fragments;
+11. add Studio composition and later extraction/export.
+
+Each increment and its ready-to-run Canon TDD prompt is specified in [FRAGMENT_IMPLEMENTATION_PROMPTS.md](FRAGMENT_IMPLEMENTATION_PROMPTS.md).
