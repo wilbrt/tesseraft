@@ -18,9 +18,19 @@
  :policies {:require-timeouts true
             :require-max-rounds true
             :forbid-inline-secrets true}
- :initial :list-open-prs
+ :initial :sync-base-branch
  :states
- {:list-open-prs
+ {:sync-base-branch
+  {:type :process
+   :title "Pull latest base branch"
+   :command ["./scripts/sync_base_branch.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "2m"}
+   :outputs {:base-sync {:path "housekeeping/base-sync.json" :required true}}
+   :next :list-open-prs}
+
+  :list-open-prs
   {:type :process
    :title "List open pull requests"
    :command ["./scripts/list_prs.py"]

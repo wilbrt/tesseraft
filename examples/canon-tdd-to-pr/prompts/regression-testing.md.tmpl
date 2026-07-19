@@ -1,0 +1,26 @@
+Fresh Pi session: INDEPENDENT FINAL REGRESSION TESTING.
+
+Inputs:
+- Prompt: {{run.dir}}/prompt/prompt.md
+- Approved use case and complete test-list history: {{run.dir}}
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Check that the new behavior works, everything that used to work still works, and the repository is ready for review.
+
+Rules:
+- Do not edit source code, tests, commits, or run artifacts other than declared outputs.
+- Confirm the newest test-list snapshot has no pending scenarios.
+- Inspect the diff and run the repository's relevant full tests, lint, type checks, builds, or smoke checks.
+- Exercise a changed user-facing path when the repository already provides a straightforward local method.
+- Fail only for concrete regressions, broken behavior, incomplete scenarios, or failed relevant checks.
+
+Write:
+- Report: {{run.dir}}/manual-testing/report-{{run.round}}.md
+- Status: {{run.dir}}/manual-testing/status-{{run.round}}.json
+- On failure: {{run.dir}}/manual-testing/issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"final regression testing passed","issues_file":null}
+{"status":"fail","summary":"regression testing found issues","issues_file":"manual-testing/issues-{{run.round}}.json"}

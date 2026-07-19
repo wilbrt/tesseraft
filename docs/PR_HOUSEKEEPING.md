@@ -9,7 +9,8 @@ The workflow's process helpers are small Python scripts because process nodes co
 ## What it does
 
 ```text
-list-open-prs
+sync-base-branch
+  -> list-open-prs
   -> fetch-pr-states
   -> classify-prs
   -> plan-actions
@@ -22,9 +23,12 @@ list-open-prs
   -> done
 ```
 
+The workflow first requires `repo-root` to have `base-branch` checked out and runs `git pull --ff-only origin <base-branch>`. This updates the local base without creating a merge commit and fails safely if the checkout is on another branch or cannot fast-forward. The default base branch is `main`.
+
 The workflow writes:
 
 ```text
+housekeeping/base-sync.json
 housekeeping/open-prs.json
 housekeeping/pr-states.json
 housekeeping/actions.json
@@ -45,7 +49,7 @@ housekeeping/processed-prs.json
   --format json
 ```
 
-The command above runs the workflow for real using the workflow defaults. To preview the full housekeeping flow without mutating anything, opt into dry-run explicitly:
+The command above runs the workflow for real using the workflow defaults. To preview the GitHub repair/response actions without mutating GitHub, opt into dry-run explicitly. Base synchronization still runs first and may fast-forward the local checkout:
 
 ```bash
 ./bin/tesseraft run examples/pr-housekeeping/workflow.edn \

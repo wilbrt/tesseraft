@@ -22,10 +22,14 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/worktree-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
+./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-ambient-path.workflow.edn
+
+printf '\nChecking PR housekeeping base synchronization...\n'
+python3 test/pr-housekeeping-sync.test.py
 
 printf '\nChecking agent node model/provider plumbing...\n'
 AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"

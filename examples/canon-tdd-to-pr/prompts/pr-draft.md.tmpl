@@ -1,0 +1,24 @@
+Fresh Pi session: PR DRAFTING ONLY.
+
+Inputs:
+- Prompt, approved use case, completed test-list history, TDD evidence, regression report, and review report: {{run.dir}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Draft accurate pull request metadata for the accepted Canon TDD change.
+
+Rules:
+- Do not edit source code, call GitHub, or push.
+- Summarize the actor outcome, implementation, scenarios completed, validation performed, refactoring decisions, and risks.
+- Verify the worktree has committed changes ready to push.
+- If the change alters a Tesseraft capability, ensure `STATUS.edn` and generated README status are truthful before passing.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status: {{run.dir}}/pr/draft-status-{{run.round}}.json
+
+Status:
+{"status":"pass","summary":"PR metadata drafted","issues_file":null}
+
+The body should include Summary, Use case, Test scenarios, Implementation notes, Validation, Refactoring, and Risks or follow-up.

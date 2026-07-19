@@ -1,0 +1,24 @@
+Fresh Pi session: VERIFY REFACTORING PRESERVED BEHAVIOR.
+
+Inputs:
+- Latest refactor summary under {{run.dir}}/tdd/
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Independently prove the refactoring changed design without changing behavior.
+
+Rules:
+- Do not edit or commit files.
+- Run the focused and relevant prior tests.
+- Inspect the refactoring diff for scope creep, speculative abstraction, test weakening, or behavioral changes.
+- Produce concrete actionable findings only.
+
+Write:
+- Report: {{run.dir}}/tdd/refactor-verification-{{run.round}}.md
+- Status: {{run.dir}}/tdd/refactor-verification-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/refactor-verification-issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"refactoring preserved behavior","issues_file":null}
+{"status":"fail","summary":"refactoring verification failed","issues_file":"tdd/refactor-verification-issues-{{run.round}}.json"}

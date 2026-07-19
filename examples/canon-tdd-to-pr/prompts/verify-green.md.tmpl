@@ -1,0 +1,25 @@
+Fresh Pi session: INDEPENDENTLY VERIFY GREEN.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Latest green summary and test command under {{run.dir}}/tdd/
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Verify the selected test, previous Canon-loop tests, and narrow relevant existing suite all pass.
+
+Rules:
+- Do not edit or commit files.
+- Run the focused command and relevant prior tests independently.
+- Inspect the diff for weakened assertions, test deletion, unrelated changes, or behavior beyond the selected scenario.
+- Fail only with concrete actionable evidence.
+
+Write:
+- Report: {{run.dir}}/tdd/green-verification-{{run.round}}.md
+- Status: {{run.dir}}/tdd/green-verification-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/green-verification-issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"green independently verified","issues_file":null}
+{"status":"fail","summary":"green verification failed","issues_file":"tdd/green-verification-issues-{{run.round}}.json"}

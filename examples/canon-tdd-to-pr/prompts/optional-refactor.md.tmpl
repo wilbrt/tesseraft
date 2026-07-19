@@ -1,0 +1,27 @@
+Fresh Pi session: OPTIONAL REFACTORING / IMPLEMENTATION DESIGN.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Latest green verification under {{run.dir}}/tdd/
+- Prior issues: {{run.issues-file}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Decide whether a small implementation-design improvement is justified now; perform it only when valuable.
+
+Rules:
+- Behavior is already green. Do not add behavior or tests for pending scenarios.
+- Duplication is a hint, not a command. Avoid speculative abstractions and cleanup beyond this increment.
+- If no refactoring is justified, do not edit files and return `no_actions`.
+- If refactoring, keep it focused, run relevant tests, and commit it separately when green.
+- Do not push or create a PR.
+
+Write:
+- Summary and rationale: {{run.dir}}/tdd/refactor-summary-{{run.round}}.md
+- Status: {{run.dir}}/tdd/refactor-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/refactor-issues-{{run.round}}.json
+
+Status examples:
+{"status":"no_actions","summary":"no refactoring justified","issues_file":null}
+{"status":"pass","summary":"focused refactoring completed","issues_file":null}
+{"status":"fail","summary":"refactoring needs repair","issues_file":"tdd/refactor-issues-{{run.round}}.json"}

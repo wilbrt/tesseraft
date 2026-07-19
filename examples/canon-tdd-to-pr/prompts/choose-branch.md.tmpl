@@ -1,0 +1,28 @@
+Fresh Pi session: REPOSITORY CONSTRAINTS AND BRANCH NAME ONLY.
+
+Inputs:
+- Prompt: {{run.dir}}/prompt/prompt.md
+- Approved use case: latest file under {{run.dir}}/use-case/
+- Initial test list: {{run.dir}}/test-list/scenarios-initial.md
+- Repository root: {{inputs.repo-root}}
+- Requested branch, if supplied: {{inputs.branch}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Choose a safe branch name and record repository guidance needed by later TDD sessions.
+
+Rules:
+- Do not edit repository files.
+- Do not produce an upfront implementation design.
+- Record applicable repository instructions, normal focused/full test commands, and relevant test locations without choosing an implementation.
+- Branch names use lowercase letters, numbers, slashes, and hyphens only.
+- Prefer `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`; never use `agent/`.
+- Honor a valid requested branch; otherwise derive a concise semantic name.
+
+Write:
+- Constraints: {{run.dir}}/design/repository-constraints.md
+- Branch: {{run.dir}}/design/branch-name.txt
+- Status: {{run.dir}}/design/status-{{run.round}}.json
+
+Status:
+{"status":"pass","summary":"branch and repository constraints ready","issues_file":null}

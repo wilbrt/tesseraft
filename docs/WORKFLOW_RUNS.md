@@ -4,6 +4,7 @@ This guide covers the side-effecting implementation workflows:
 
 - `examples/prompt-to-pr/workflow.edn`
 - `examples/code-review-loop/workflow.edn`
+- `examples/canon-tdd-to-pr/workflow.edn`
 
 Linting and prompt-collection checks are safe. Full or unbounded runs invoke Pi
 with `--approve` and can create worktrees, change files in the target repository,
@@ -28,6 +29,7 @@ These checks do not run Pi or GitHub commands:
 bb test
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
+./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ```
 
 For a prompt-collection-only check, start a run and execute just the first node:
@@ -123,12 +125,32 @@ dependency, subprocess crash, malformed output, timeout, or missing required
 artifact. External failures leave durable `node.failed` evidence and require
 explicit recovery or a replacement run.
 
+The Canon TDD workflow adds an approval boundary and a behavior-driven loop:
+
+```text
+collect-prompt -> write-use-case -> approve-use-case
+  -> build-test-list -> choose-branch -> ensure-worktree
+  -> select-scenario -> write-one-test -> verify-red
+  -> make-green -> verify-green -> optional-refactor
+  -> update-test-list -> select-scenario (while pending)
+  -> regression-testing -> review -> pr-draft -> create-pr -> done
+```
+
+`approve-use-case` parks the run before worktree creation. Decide with
+`approve` to continue or `revise` to generate another use-case revision. See
+[CANON_TDD_WORKFLOW.md](CANON_TDD_WORKFLOW.md) for the exact approval command,
+artifact model, Canon loop semantics, and mock-mode limitation.
+
 ## Where side effects happen
 
 - `collect-prompt` runs a local process and writes `prompt/prompt.json`,
   `prompt/prompt.md`, and logs under the run directory.
-- Agent nodes (`design`, `execute`, `manual-testing`, `review`, and `pr-draft`)
-  render prompts, then run `pi --approve` in their configured working directory.
+- Agent nodes render prompts, then run `pi --approve` in their configured
+  working directory. The Canon TDD workflow has additional use-case,
+  test-list, red/green, refactoring, and repair agent nodes.
+- `approve-use-case` in the Canon TDD workflow is a durable human gate; it
+  blocks before `ensure-worktree` until an `approve` or `revise` decision is
+  recorded.
 - `ensure-worktree` fetches `origin` and creates or reuses an isolated Git
   worktree and implementation branch.
 - `create-pr` pushes the branch directly to the repository's GitHub SSH URL,

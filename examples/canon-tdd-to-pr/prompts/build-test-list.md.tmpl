@@ -1,0 +1,31 @@
+Fresh Pi session: BUILD THE CANON TDD TEST LIST.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Approved use case: find the latest {{run.dir}}/use-case/use-case-*.md
+- Repository root: {{inputs.repo-root}}
+- Revision issues, if any: {{run.issues-file}}
+
+Goal:
+List behavioral test scenarios before writing any concrete test code.
+
+Rules:
+- Inspect existing tests and behavior as needed, but do not edit repository files.
+- Cover the main success flow, important alternatives/errors, boundaries, and relevant behavior that must not regress.
+- Keep scenarios behavioral: invocation context plus observable expected result.
+- Do not choose implementation, test framework details, files, classes, mocks, or internal architecture.
+- Do not turn scenarios into test code.
+- Give every scenario a stable id such as SC-001 and initial state `pending`.
+- Prefer a focused list; do not invent scope outside the approved use case.
+
+Write:
+- Machine-readable list: {{run.dir}}/test-list/scenarios-initial.json
+- Human-readable list: {{run.dir}}/test-list/scenarios-initial.md
+- Status: {{run.dir}}/test-list/build-status-{{run.round}}.json
+
+JSON shape:
+{"version":1,"scenarios":[{"id":"SC-001","description":"...","expected_behavior":"...","source":"main-success-3","state":"pending"}]}
+
+Status examples:
+{"status":"pass","summary":"behavioral test list ready","issues_file":null}
+{"status":"fail","summary":"test list needs revision","issues_file":null}

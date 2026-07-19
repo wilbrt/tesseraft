@@ -1,0 +1,26 @@
+Fresh Pi session: CODE AND CANON TDD REVIEW.
+
+Inputs:
+- Prompt, approved use case, test-list history, TDD reports, and regression report: {{run.dir}}
+- Worktree: {{run.worktree-dir}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Review the accepted behavior, implementation, tests, and Canon TDD evidence and explicitly pass or fail.
+
+Rules:
+- Do not edit source code, tests, commits, push, or create a PR.
+- Review the diff against the base branch.
+- Check correctness, regressions, security, maintainability, and focused scope.
+- Confirm every completed scenario has a meaningful concrete test, no pending scenarios remain, assertions were not weakened, discoveries were not silently dropped, and refactoring did not introduce behavior.
+- Confirm the implementation satisfies the use case without speculative extra scope.
+- Produce only concrete actionable findings. On failure, write issues for repair.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- On failure: {{run.dir}}/review/issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"code and Canon TDD review passed","issues_file":null}
+{"status":"fail","summary":"review found issues","issues_file":"review/issues-{{run.round}}.json"}

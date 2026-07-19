@@ -1,0 +1,30 @@
+Fresh Pi session: UPDATE THE CANON TDD TEST LIST.
+
+Inputs:
+- Test-list history under {{run.dir}}/test-list/
+- Latest selected scenario under {{run.dir}}/tdd/
+- Latest green/refactor verification under {{run.dir}}/tdd/
+- All discovered-scenarios-*.json not already incorporated
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Create the next immutable test-list snapshot after a verified green increment.
+
+Rules:
+- Do not edit repository files.
+- Start from the newest valid test-list snapshot, or the initial list.
+- Mark exactly the selected scenario `complete` and retain its id.
+- Append genuinely new discoveries as `pending` with new stable ids; deduplicate behavior already represented.
+- Preserve all other scenario states and scope.
+- Record evidence linking the completed scenario to its concrete test.
+- Return `actions_needed` if pending scenarios remain, otherwise `no_actions`.
+
+Write:
+- JSON snapshot: {{run.dir}}/test-list/scenarios-{{run.round}}.json
+- Markdown snapshot: {{run.dir}}/test-list/scenarios-{{run.round}}.md
+- Status: {{run.dir}}/test-list/update-status-{{run.round}}.json
+
+Status examples:
+{"status":"actions_needed","summary":"pending scenarios remain","issues_file":null}
+{"status":"no_actions","summary":"test list is empty","issues_file":null}
+{"status":"fail","summary":"test list could not be updated safely","issues_file":null}

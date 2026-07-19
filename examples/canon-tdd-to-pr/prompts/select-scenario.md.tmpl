@@ -1,0 +1,28 @@
+Fresh Pi session: SELECT EXACTLY ONE CANON TDD SCENARIO.
+
+Inputs:
+- Approved use case: latest file under {{run.dir}}/use-case/
+- Test-list history: {{run.dir}}/test-list/scenarios-initial.json and any scenarios-*.json snapshots
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Worktree: {{run.worktree-dir}}
+- Issues, if any: {{run.issues-file}}
+
+Goal:
+Select one pending behavioral scenario whose concrete test should be written next.
+
+Rules:
+- Read the newest valid test-list snapshot; use the initial list when no update exists.
+- Select exactly one pending scenario. Test order is a design decision: prefer the smallest scenario likely to provide useful interface feedback.
+- Do not edit repository files or the test list.
+- Do not design implementation or write a test.
+- If no pending scenarios remain, write an empty scenario object and status `no_actions`.
+- Otherwise copy the selected scenario exactly and use status `actions_needed`.
+
+Write:
+- Selected scenario: {{run.dir}}/tdd/current-scenario-{{run.round}}.json
+- Selection rationale: {{run.dir}}/tdd/selection-{{run.round}}.md
+- Status: {{run.dir}}/tdd/select-status-{{run.round}}.json
+
+Status examples:
+{"status":"actions_needed","summary":"selected SC-001","issues_file":null}
+{"status":"no_actions","summary":"test list is empty","issues_file":null}

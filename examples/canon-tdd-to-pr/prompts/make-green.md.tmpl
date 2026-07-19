@@ -1,0 +1,33 @@
+Fresh Pi session: MAKE THE CURRENT AND ALL PREVIOUS TESTS PASS.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Red verification: latest red report under {{run.dir}}/tdd/
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Prior issues: {{run.issues-file}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Change production code only as needed to make the new test and all previous tests pass.
+
+Rules:
+- Do not delete, skip, or weaken assertions and do not rewrite expected values from observed output without independent justification.
+- Keep red-to-green separate from refactoring; make the smallest clear behavior change.
+- Run the focused test and relevant prior tests.
+- If implementation reveals another behavioral case, record it in the discoveries JSON instead of implementing or testing it now.
+- Always write discoveries JSON; use an empty `scenarios` array when none were found.
+- Do not push or create a PR.
+- Commit the coherent green increment locally when tests pass.
+
+Write:
+- Summary: {{run.dir}}/tdd/green-summary-{{run.round}}.md
+- Discoveries: {{run.dir}}/tdd/discovered-scenarios-{{run.round}}.json
+- Status: {{run.dir}}/tdd/green-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/green-issues-{{run.round}}.json
+
+Discovery shape:
+{"scenarios":[{"description":"...","expected_behavior":"...","source":"discovered-while-making-green"}]}
+
+Status examples:
+{"status":"pass","summary":"current and previous tests pass","issues_file":null}
+{"status":"fail","summary":"green work remains","issues_file":"tdd/green-issues-{{run.round}}.json"}

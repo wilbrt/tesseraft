@@ -1,0 +1,28 @@
+Fresh Pi session: WRITE AN AGILE USE CASE, NOT AN IMPLEMENTATION DESIGN.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+- Revision issues, if any: {{run.issues-file}}
+
+Goal:
+Translate the request into one concise agile use case describing actor intent and externally observable behavior.
+
+Rules:
+- Inspect the repository only to understand existing behavior and vocabulary.
+- Do not edit source code, tests, workflow definitions, or repository files.
+- Do not prescribe files, classes, architecture, algorithms, or implementation steps.
+- Include: title, primary actor, goal, trigger, preconditions, numbered main success scenario, alternate/exception flows, postconditions, scope boundaries, and explicit assumptions/open questions.
+- Keep actor actions and system responses distinct.
+- Include relevant behavior that must remain unchanged.
+- Use the smallest coherent interpretation supported by the prompt and repository.
+- Resolve revision issues when present. Fail only if a safe behavioral scope cannot be stated.
+
+Write:
+- Use case: {{run.dir}}/use-case/use-case-{{run.round}}.md
+- Status: {{run.dir}}/use-case/status-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"use case ready for approval","issues_file":null}
+{"status":"fail","summary":"use case needs revision","issues_file":null}

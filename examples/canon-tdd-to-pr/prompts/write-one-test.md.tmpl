@@ -1,0 +1,33 @@
+Fresh Pi session: WRITE ONE CONCRETE FAILING TEST.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Approved use case: latest file under {{run.dir}}/use-case/
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Prior issues: {{run.issues-file}}
+- Worktree: {{run.worktree-dir}}
+
+The current working directory is the isolated worktree.
+
+Goal:
+Turn exactly the selected scenario into a real runnable automated test with meaningful assertions.
+
+Rules:
+- Edit test code only. Do not implement or change production behavior.
+- Do not turn any other pending scenario into a concrete test.
+- Interface decisions required to express this one test are allowed; avoid implementation design.
+- Derive expected values independently. Never paste actual computed output into expectations merely to pass.
+- Include setup, invocation, and assertions using repository conventions.
+- A compile/interface failure is acceptable only when it directly demonstrates the selected missing interface; unrelated syntax, fixture, dependency, or environment failures are not meaningful red.
+- Run the narrow test command once to establish the observed failure, but leave verification to the next session.
+- Do not commit, push, or create a PR.
+
+Write:
+- Report including test file/name, interface choices, exact observed failure, and expected failure reason: {{run.dir}}/tdd/test-{{run.round}}.md
+- Exact focused command: {{run.dir}}/tdd/test-command-{{run.round}}.txt
+- Status: {{run.dir}}/tdd/write-test-status-{{run.round}}.json
+- On failure: {{run.dir}}/tdd/write-test-issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"one concrete test written","issues_file":null}
+{"status":"fail","summary":"test is not yet a meaningful runnable red","issues_file":"tdd/write-test-issues-{{run.round}}.json"}

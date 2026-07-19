@@ -1,0 +1,26 @@
+Fresh Pi session: REPAIR FINAL REGRESSION OR REVIEW FINDINGS.
+
+Inputs:
+- Prompt, approved use case, test-list history, and TDD evidence: {{run.dir}}
+- Current issues: {{run.issues-file}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Resolve all concrete final regression or review findings without bypassing test-first evidence.
+
+Rules:
+- Keep changes within the approved use case.
+- For a missing or incorrect behavior, first add one focused regression test and observe it fail for the intended reason, then make it and prior tests pass.
+- For a non-behavioral implementation defect, repair it and rerun relevant tests.
+- Never weaken assertions, delete coverage, or copy actual output into expected values merely to pass.
+- Avoid unrelated refactoring. Do not push or create a PR.
+- Commit a coherent validated repair when passing.
+
+Write:
+- Summary including red/green evidence when behavior changed: {{run.dir}}/repair/summary-{{run.round}}.md
+- Status: {{run.dir}}/repair/status-{{run.round}}.json
+- On failure: {{run.dir}}/repair/issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"findings repaired and validated","issues_file":null}
+{"status":"fail","summary":"repair work remains","issues_file":"repair/issues-{{run.round}}.json"}
