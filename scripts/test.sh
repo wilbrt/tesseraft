@@ -350,6 +350,7 @@ check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch
 check_invalid_fragment fragment-duplicate-exit duplicate-exit
 check_invalid_fragment fragment-missing-outcomes fragment-outcome-mismatch
 check_invalid_fragment fragment-terminal-missing-outcome fragment-terminal-missing-outcome
+check_invalid_fragment fragment-terminal-unknown-outcome fragment-terminal-unknown-outcome
 check_invalid_fragment fragment-terminal-multi-outcome ambiguous
 check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome
 check_invalid_fragment fragment-nested-fragment nested-fragment

@@ -1,0 +1,16 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "terminal-unknown-outcome-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :lint
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:lint {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "lint/status.json" :required true}}
+                            :next :done}
+                     ;; SC-003: this reachable internal terminal selects an
+                     ;; outcome that is not declared by the fragment interface.
+                     :done {:type :terminal :status :success :outcome :maybe}}}}
