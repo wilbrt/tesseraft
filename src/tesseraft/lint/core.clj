@@ -989,8 +989,12 @@
             [(err :fragment-outcome-mismatch [:interface :outcomes]
                   ":outcomes must be a non-empty set of keywords")])
           (when outcomes
-            (let [exit-outcomes (set (keep #(some-> (:on %) keyword) exit))]
+            (let [exit-outcome-counts (frequencies (keep #(some-> (:on %) keyword) exit))
+                  exit-outcomes (set (keys exit-outcome-counts))]
               (concat
+                (for [[o n] exit-outcome-counts :when (> n 1)]
+                  (err :duplicate-exit [:fragment :exit]
+                       (str "Outcome has more than one exit entry: " o)))
                 (for [o exit-outcomes :when (not (contains? outcomes o))]
                   (err :fragment-outcome-mismatch [:fragment :exit]
                        (str "Exit references unknown outcome: " o)))
