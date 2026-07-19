@@ -21,6 +21,14 @@ type Pw3RunControlScenario = {
   expectedAfterStepState: string;
 };
 
+type Pw4RunErrorsScenario = {
+  workflowName: string;
+  executingRunId: string;
+  executingRunDir: string;
+  terminalRunId: string;
+  terminalRunDir: string;
+};
+
 type IsolatedWorkspaceFixture = {
   baseURL: string;
   workspaceRoot: string;
@@ -38,6 +46,7 @@ type IsolatedRunFixture = IsolatedWorkspaceFixture & {
   runId: string;
   runDir: string;
   pw3: Pw3RunControlScenario;
+  pw4: Pw4RunErrorsScenario;
 };
 
 type WorkerFixtures = {
@@ -129,6 +138,16 @@ const expectUnder = (parent: string, child: string): void => {
   expect(rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))).toBeTruthy();
 };
 
+const writeSeededRun = async (workspaceRoot: string, workflowName: string, runId: string, status: 'running' | 'done', state: string, events = ''): Promise<string> => {
+  const runDir = path.join(workspaceRoot, '.agent-runs', workflowName, runId);
+  await fs.mkdir(runDir, { recursive: true });
+  const updatedAt = status === 'running' ? ' :updated-at "2999-01-01T00:00:00Z"' : '';
+  await fs.writeFile(path.join(runDir, 'state.edn'), `{:workflow {:name "${workflowName}" :version "v1"} :run {:id "${runId}" :status "${status}" :state ${state}${updatedAt}}}`);
+  await fs.writeFile(path.join(runDir, 'events.jsonl'), events);
+  expectUnder(workspaceRoot, runDir);
+  return runDir;
+};
+
 export const test = base.extend<{}, WorkerFixtures>({
   isolatedWorkspace: [async ({}, use) => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tesseraft-pw-'));
@@ -182,6 +201,9 @@ export const test = base.extend<{}, WorkerFixtures>({
     const pw3WorkflowName = isolatedWorkspace.uniqueName('pw3');
     const pw3WorkflowPath = path.join(isolatedWorkspace.workflowPackagePath(pw3WorkflowName), 'workflow.edn');
     const pw3RunId = `pw3-${pw3WorkflowName.replace(/^pw3-/, '')}`;
+    const pw4WorkflowName = isolatedWorkspace.uniqueName('pw4');
+    const pw4ExecutingRunId = `pw4-executing-${pw4WorkflowName.replace(/^pw4-/, '')}`;
+    const pw4TerminalRunId = `pw4-terminal-${pw4WorkflowName.replace(/^pw4-/, '')}`;
 
     await fs.mkdir(workflowDir, { recursive: true });
     await fs.mkdir(path.dirname(pw3WorkflowPath), { recursive: true });
@@ -191,9 +213,21 @@ export const test = base.extend<{}, WorkerFixtures>({
     const started = await isolatedWorkspace.runCli(['run', 'start', workflowPath, '--run-id', runId, '--format', 'json']);
     const body = started.json as { run?: { dir?: string } };
     const runDir = body.run?.dir || path.join(isolatedWorkspace.workspaceRoot, '.agent-runs', workflowName, runId);
+    const pw4ExecutingRunDir = await writeSeededRun(
+      isolatedWorkspace.workspaceRoot,
+      pw4WorkflowName,
+      pw4ExecutingRunId,
+      'running',
+      ':work',
+      `${JSON.stringify({ event: 'node.started', state: 'work', attempt: 1, at: '2999-01-01T00:00:00Z' })}\n`
+    );
+    const pw4TerminalRunDir = await writeSeededRun(isolatedWorkspace.workspaceRoot, pw4WorkflowName, pw4TerminalRunId, 'done', ':done');
+
     expectUnder(isolatedWorkspace.workspaceRoot, runDir);
     expectUnder(isolatedWorkspace.workspaceRoot, workflowPath);
     expectUnder(isolatedWorkspace.workspaceRoot, pw3WorkflowPath);
+    expectUnder(isolatedWorkspace.workspaceRoot, pw4ExecutingRunDir);
+    expectUnder(isolatedWorkspace.workspaceRoot, pw4TerminalRunDir);
 
     await use({
       ...isolatedWorkspace,
@@ -207,6 +241,13 @@ export const test = base.extend<{}, WorkerFixtures>({
         runId: pw3RunId,
         expectedAfterStartState: 'after-start',
         expectedAfterStepState: 'after-step'
+      },
+      pw4: {
+        workflowName: pw4WorkflowName,
+        executingRunId: pw4ExecutingRunId,
+        executingRunDir: pw4ExecutingRunDir,
+        terminalRunId: pw4TerminalRunId,
+        terminalRunDir: pw4TerminalRunDir
       }
     });
   }, { scope: 'worker' }]

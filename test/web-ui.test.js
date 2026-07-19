@@ -338,7 +338,8 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   assert.match(controls, /Delete selected run/);
   assert.match(controls, /Confirm permanent deletion of this run's directory/);
   assert.match(controls, /deleteJson<MutationResult>\(projectApiUrl\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
-  assert.match(controls, /isDeletableLiveness/);
+  assert.match(controls, /The server refuses actively executing runs/);
+  assert.doesNotMatch(controls, /isDeletableLiveness\(runDetail\?\.liveness\)/);
   assert.match(runListTable, /Show only deletable runs/);
   assert.match(controls, /Confirm one local node execution/);
   assert.match(workflowPanels, /aria-current=\{selected \? 'true' : undefined\}/);

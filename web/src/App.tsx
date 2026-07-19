@@ -166,9 +166,12 @@ export const App = () => {
     }
   };
 
-  const refreshAfterMutation = async (runId?: string): Promise<void> => {
+  const refreshAfterMutation = async (runId?: string | null): Promise<void> => {
     await loadRuns();
-    if (runId) {
+    if (runId === null) {
+      setActiveTab('runs');
+      collapseRun();
+    } else if (runId) {
       setActiveTab('runs');
       await selectRun(runId);
     } else if (selectedRun) {
