@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { ROOT_DIR, tesseraftBin } from './paths.js';
+import path from 'node:path';
+import { WORKSPACE_ROOT, tesseraftBin } from './paths.js';
 import { errorBody } from './http.js';
 
 export type ControlPlaneResult = { status: number; body: unknown };
@@ -14,7 +15,7 @@ const statusFromControlPlane = (data: unknown, fallback: number): number => {
 const hasControlPlaneError = (data: unknown): boolean => Boolean(data && typeof data === 'object' && 'error' in data);
 
 export const runControlPlane = (args: string[], options: { timeout?: number } = {}): Promise<ControlPlaneResult> => new Promise((resolve) => {
-  execFile(tesseraftBin(), ['control-plane', ...args], { cwd: ROOT_DIR, timeout: options.timeout || 15000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+  execFile(tesseraftBin(), ['control-plane', ...args], { cwd: WORKSPACE_ROOT, timeout: options.timeout || 15000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(stdout || '{}');
@@ -34,7 +35,7 @@ export const runControlPlane = (args: string[], options: { timeout?: number } = 
 });
 
 export const startRuntime = (args: string[]): BackgroundRuntime => {
-  const child = spawn(tesseraftBin(), ['run', ...args], { cwd: ROOT_DIR, detached: true, stdio: 'ignore' });
+  const child = spawn(tesseraftBin(), ['run', ...args], { cwd: WORKSPACE_ROOT, detached: true, stdio: 'ignore' });
   child.unref();
   return { pid: child.pid };
 };
@@ -43,10 +44,10 @@ export type LintResult = { ok: boolean; errors: unknown[]; warnings: unknown[]; 
 
 export const runLint = async (filePath: string, options: { workspaceRoot?: string; tesseraftHome?: string; timeout?: number } = {}): Promise<LintResult> => new Promise((resolve) => {
   const args = ['lint', filePath, '--format', 'json'];
-  const env = process.env;
+  const env = { ...process.env };
   if (options.workspaceRoot) env.TESSERAFT_WORKSPACE_ROOT = options.workspaceRoot;
   if (options.tesseraftHome) env.TESSERAFT_HOME = options.tesseraftHome;
-  execFile(tesseraftBin(), args, { cwd: ROOT_DIR, timeout: options.timeout || 15000, maxBuffer: 10 * 1024 * 1024, env }, (error, stdout, stderr) => {
+  execFile(tesseraftBin(), args, { cwd: options.workspaceRoot ? path.resolve(options.workspaceRoot) : WORKSPACE_ROOT, timeout: options.timeout || 15000, maxBuffer: 10 * 1024 * 1024, env }, (error, stdout, stderr) => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(stdout || '{}');
@@ -60,7 +61,7 @@ export const runLint = async (filePath: string, options: { workspaceRoot?: strin
 });
 
 export const runRuntime = (args: string[], options: { timeout?: number } = {}): Promise<RuntimeResult> => new Promise((resolve) => {
-  execFile(tesseraftBin(), ['run', ...args], { cwd: ROOT_DIR, timeout: options.timeout || 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+  execFile(tesseraftBin(), ['run', ...args], { cwd: WORKSPACE_ROOT, timeout: options.timeout || 30000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
     const exitCode = error && typeof error.code === 'number' ? error.code : null;
     let parsed: unknown = null;
     if (String(stdout || '').trim()) {

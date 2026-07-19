@@ -148,6 +148,51 @@ test('built web wrapper starts and serves HTTP', async () => {
   }
 });
 
+test('server subprocesses resolve default workspace under TESSERAFT_WORKSPACE_ROOT', async () => {
+  fs.mkdirSync(path.join(process.cwd(), '.agent-runs'), { recursive: true });
+  const workspace = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'server-workspace-root-'));
+  const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'server-workspace-home-'));
+  const workflowDir = path.join(workspace, '.tesseraft', 'workflows', 'server-isolated');
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "server-isolated" :title "Server Isolated"}
+ :initial :done
+ :states {:done {:type :terminal}}}
+`);
+
+  const child = spawn(process.execPath, ['web/dist-server/server.js', '--host', '127.0.0.1', '--port', '0'], {
+    cwd: process.cwd(),
+    env: { ...process.env, TESSERAFT_WORKSPACE_ROOT: workspace, TESSERAFT_HOME: home },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`isolated server did not start: ${stderr}`)), 10000);
+      child.once('error', (error) => { clearTimeout(timeout); reject(error); });
+      child.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`isolated server exited with ${code}: ${stderr}`)); });
+      child.stdout.on('data', (chunk) => {
+        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timeout); resolve(`http://127.0.0.1:${match[1]}`); }
+      });
+    });
+
+    const response = await fetch(`${url}/api/workflows`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const isolated = body.workflows.find((workflow) => workflow.name === 'server-isolated');
+    assert.equal(isolated.source, 'project');
+    assert.equal(isolated.path, path.join('.tesseraft', 'workflows', 'server-isolated', 'workflow.edn'));
+  } finally {
+    child.kill('SIGTERM');
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('routeApi maps supported API routes to control-plane commands', () => {
   assert.deepEqual(routeApi('/api/workflows'), ['workflows']);
   assert.deepEqual(routeApi('/api/workflows/smoke-demo/graph'), ['graph', 'smoke-demo']);
