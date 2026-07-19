@@ -982,8 +982,10 @@
             exit (:exit (:fragment pkg) [])
             required-outputs (set (for [[k c] outputs :when (fragment-node-output-required? c)] k))]
         (concat
-          (when (and (contains? iface :outcomes)
-                     (or (not (set? outcomes)) (empty? outcomes)))
+          (when (or (not (contains? iface :outcomes))
+                    (not (set? outcomes))
+                    (empty? outcomes)
+                    (not (every? keyword? outcomes)))
             [(err :fragment-outcome-mismatch [:interface :outcomes]
                   ":outcomes must be a non-empty set of keywords")])
           (when outcomes
