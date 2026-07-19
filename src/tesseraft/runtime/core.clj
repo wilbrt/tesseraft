@@ -35,6 +35,12 @@
                (= pid (:pid (store/read-json path))))
       (fs/delete-if-exists path))))
 
+(defn- normalized-run-dir [run-dir]
+  (str (fs/normalize (fs/absolutize run-dir))))
+
+(defn run-owner-env [ctx]
+  {"AGENT_RUN_DIR" (normalized-run-dir (get-in ctx [:run :dir]))})
+
 (defn- process-enumeration-denied? [error]
   (let [message (some-> error .getMessage str/lower-case)]
     (boolean (and message
@@ -60,6 +66,40 @@
         (zero? remaining) (do (doseq [handle alive] (.destroyForcibly ^java.lang.ProcessHandle handle)) false)
         :else (do (Thread/sleep 50) (recur (dec remaining)))))))
 
+(defn- linux-process-environment [pid]
+  (let [path (fs/path "/proc" (str pid) "environ")]
+    (when (fs/exists? path)
+      (try
+        (str/split (slurp (str path)) #"\u0000")
+        (catch Exception _ nil)))))
+
+(defn- owned-process-handles [run-dir]
+  (let [owner (normalized-run-dir run-dir)
+        prefix "AGENT_RUN_DIR="
+        owned? (fn [handle]
+                 (some (fn [entry]
+                         (when (str/starts-with? entry prefix)
+                           (= owner (normalized-run-dir (subs entry (count prefix))))))
+                       (linux-process-environment (.pid ^java.lang.ProcessHandle handle))))
+        current-pid (.pid (java.lang.ProcessHandle/current))]
+    (if-not (fs/exists? "/proc")
+      {:handles [] :enumerated false}
+      (with-open [stream (java.lang.ProcessHandle/allProcesses)]
+        {:handles (->> (iterator-seq (.iterator stream))
+                       (remove #(= current-pid (.pid ^java.lang.ProcessHandle %)))
+                       (filter owned?)
+                       vec)
+         :enumerated true}))))
+
+(defn stop-owned-processes! [run-dir]
+  (let [{:keys [handles enumerated]} (owned-process-handles run-dir)]
+    (doseq [handle handles]
+      (when (.isAlive ^java.lang.ProcessHandle handle)
+        (.destroy ^java.lang.ProcessHandle handle)))
+    {:owned_processes (count handles)
+     :owned_processes_enumerated enumerated
+     :owned_processes_stopped (if (seq handles) (wait-for-process-exit handles) true)}))
+
 (defn stop-runtime-process! [run-dir]
   (let [path (runtime-process-path run-dir)
         record (when (fs/exists? path) (store/read-json path))
@@ -75,13 +115,15 @@
     (doseq [handle handles]
       (when (.isAlive ^java.lang.ProcessHandle handle)
         (.destroy ^java.lang.ProcessHandle handle)))
-    (let [stopped? (if (seq handles) (wait-for-process-exit handles) true)]
+    (let [stopped? (if (seq handles) (wait-for-process-exit handles) true)
+          owned (stop-owned-processes! run-dir)]
       (fs/delete-if-exists path)
-      {:pid pid
-       :process_found (boolean root)
-       :descendants (count descendants)
-       :descendants_enumerated (:enumerated descendant-result)
-       :stopped stopped?})))
+      (merge {:pid pid
+              :process_found (boolean root)
+              :descendants (count descendants)
+              :descendants_enumerated (:enumerated descendant-result)
+              :stopped (and stopped? (:owned_processes_stopped owned))}
+             owned))))
 
 (defn cancel! [run-dir]
   (let [before (store/load-context run-dir)]
@@ -99,6 +141,9 @@
                                  :process_found (:process_found process)
                                  :descendants (:descendants process)
                                  :descendants_enumerated (:descendants_enumerated process)
+                                 :owned_processes (:owned_processes process)
+                                 :owned_processes_enumerated (:owned_processes_enumerated process)
+                                 :owned_processes_stopped (:owned_processes_stopped process)
                                  :stopped (:stopped process)})
         (store/save-context! cancelled)))))
 
@@ -170,7 +215,8 @@
         cmd (:command node)
         result (apply p/shell {:dir (spec/workflow-dir wf)
                                :in (json/generate-string request)
-                               :out :string :err :string :continue true}
+                               :out :string :err :string :continue true
+                               :extra-env (run-owner-env ctx)}
                       cmd)
         log-file (str (fs/path (get-in ctx [:run :dir]) "logs" (str (name state-id) "-process-" (get-in ctx [:run :attempt]) ".log")))]
     (fs/create-dirs (fs/parent log-file))
@@ -291,7 +337,8 @@
                             (when-not (:ok exec-result)
                               (throw (ex-info "Agent executor failed" exec-result)))
                             (merge exec-result (status-result ctx node)))
-                   :deterministic (adapters/run-handler! wf ctx state-id node {:mock? (mock-mode? ctx)})
+                   :deterministic (binding [adapters/*process-extra-env* (run-owner-env ctx)]
+                                    (adapters/run-handler! wf ctx state-id node {:mock? (mock-mode? ctx)}))
                    :process (run-process-node! wf ctx state-id node)
                    :timer (run-timer-node! wf ctx state-id node)
                    :approval (throw (ex-info "Approval nodes require a control plane" {:state state-id}))

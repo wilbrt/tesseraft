@@ -497,6 +497,40 @@ test('web server exposes fake Pi session routes as local JSON APIs', async (t) =
   assert.equal((await missingResponse.json()).error.code, 'not_found');
 });
 
+test('Pi session stream serializes slow snapshots instead of overlapping polls', async (t) => {
+  const delegate = createFakePiSessionAdapter();
+  await delegate.createSession({ id: 'slow-stream', title: 'Slow stream' });
+  let active = 0;
+  let maximumActive = 0;
+  let calls = 0;
+  const adapter = {
+    ...delegate,
+    listMessages: async (sessionId) => {
+      active += 1;
+      calls += 1;
+      maximumActive = Math.max(maximumActive, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1600));
+        return await delegate.listMessages(sessionId);
+      } finally {
+        active -= 1;
+      }
+    }
+  };
+  const server = createServer({ piSessionAdapter: adapter });
+  const port = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/pi-sessions/slow-stream/stream`);
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  await new Promise((resolve) => setTimeout(resolve, 3800));
+  await reader.cancel();
+
+  assert.ok(calls >= 2, `expected multiple snapshots, received ${calls}`);
+  assert.equal(maximumActive, 1, 'slow snapshot polls overlapped');
+});
+
 test('web server supports local smoke start-and-run, step, and resume mutations', async (t) => {
   const runId = `web-mutation-${Date.now()}`;
   removeRun(runId);
@@ -558,6 +592,44 @@ test('web server supports local smoke start-and-run, step, and resume mutations'
   assert.equal(run.run.run_id, runId);
 });
 
+test('completed runtime cleans up detached processes carrying its run owner marker', (t) => {
+  if (process.platform !== 'linux') return t.skip('/proc ownership cleanup is Linux-specific');
+  const runId = `owned-cleanup-${Date.now()}`;
+  const workflowName = 'owned-cleanup';
+  const fixtureDir = path.join(process.cwd(), '.agent-runs', 'test-fixtures', runId);
+  const workflowFile = path.join(fixtureDir, 'workflow.edn');
+  const helperFile = path.join(fixtureDir, 'launch-detached.sh');
+  const runDir = path.join(process.cwd(), '.agent-runs', workflowName, runId);
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  fs.writeFileSync(helperFile, [
+    '#!/bin/sh',
+    'setsid sleep 60 </dev/null >/dev/null 2>&1 &',
+    'echo $! > "$AGENT_RUN_DIR/owned.pid"',
+    'printf \'{"status":"ok","ok":true}\\n\''
+  ].join('\n'));
+  fs.chmodSync(helperFile, 0o755);
+  fs.writeFileSync(workflowFile, [
+    `{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "${workflowName}"}`,
+    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :launch',
+    ` :states {:launch {:type :process :command [${JSON.stringify(helperFile)}] :runtime {:timeout "30s"} :next :done}`,
+    '          :done {:type :terminal :status :success}}}'
+  ].join('\n'));
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
+
+  execFileSync('./bin/tesseraft', ['run', workflowFile, '--run-id', runId, '--format', 'json'], {
+    cwd: process.cwd(),
+    stdio: 'pipe'
+  });
+
+  const ownedPid = Number(fs.readFileSync(path.join(runDir, 'owned.pid'), 'utf8').trim());
+  assert.ok(Number.isInteger(ownedPid) && ownedPid > 0);
+  assert.throws(() => process.kill(ownedPid, 0), /ESRCH/, 'detached run-owned process survived normal completion');
+  assert.equal(fs.existsSync(path.join(runDir, 'runtime-process.json')), false);
+});
+
 test('web server cancels a detached runtime and persists terminal cancellation', async (t) => {
   const runId = `web-cancel-${Date.now()}`;
   const workflowName = 'cancel-smoke';
@@ -611,6 +683,7 @@ test('web server cancels a detached runtime and persists terminal cancellation',
   assert.throws(() => process.kill(runtimePid, 0), /ESRCH/);
   const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
   assert.match(events, /"event":"run.cancelled"/);
+  assert.match(events, /"owned_processes_enumerated":true/);
 });
 
 test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {

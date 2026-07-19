@@ -7,8 +7,13 @@
     [cheshire.core :as json]
     [clojure.string :as str]))
 
+(def ^:dynamic *process-extra-env* {})
+
+(defn- process-opts [opts]
+  (update opts :extra-env #(merge *process-extra-env* %)))
+
 (defn shell! [opts & args]
-  (let [r (apply p/shell (merge {:out :string :err :string :continue true} opts) args)]
+  (let [r (apply p/shell (process-opts (merge {:out :string :err :string :continue true} opts)) args)]
     (when-not (zero? (:exit r))
       (throw (ex-info "Command failed" {:args args :exit (:exit r) :out (:out r) :err (:err r)})))
     (:out r)))
@@ -396,7 +401,7 @@
           ;; API spend. Respect an explicitly inherited TESSERAFT_PI_ADAPTER
           ;; so real-SDK manual testing remains opt-in via the parent env.
           pi-env {"TESSERAFT_PI_ADAPTER" (or (System/getenv "TESSERAFT_PI_ADAPTER") "fake")}
-          proc (p/process command {:dir cwd :out :pipe :err :pipe :extra-env pi-env})
+          proc (p/process command (process-opts {:dir cwd :out :pipe :err :pipe :extra-env pi-env}))
           java-proc (:proc proc)
           pid (java-pid java-proc)
           stdout-reader (java.io.BufferedReader. (java.io.InputStreamReader. (:out proc)))
@@ -459,9 +464,9 @@
             (throw (ex-info "UI evidence capture requires an explicit script input" {:state state-id})))
         script (spec/resolve-workflow-path wf script-relative)
         request {:run (:run ctx) :inputs (:inputs ctx) :node (assoc node :id state-id)}
-        result (p/shell {:dir (repo-dir ctx node)
-                         :in (json/generate-string request)
-                         :out :string :err :string :continue true}
+        result (p/shell (process-opts {:dir (repo-dir ctx node)
+                                       :in (json/generate-string request)
+                                       :out :string :err :string :continue true})
                         "node" script)]
     (when-not (zero? (:exit result))
       (throw (ex-info "UI quality gate process failed"

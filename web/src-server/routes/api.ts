@@ -743,6 +743,7 @@ const handlePiSessionStream = async (req: Request, res: Response, adapter: PiSes
   });
   res.write(': connected\n\n');
   let closed = false;
+  let snapshotInFlight = false;
   let lastPayload = '';
   let interval: ReturnType<typeof setInterval> | null = null;
 
@@ -755,6 +756,7 @@ const handlePiSessionStream = async (req: Request, res: Response, adapter: PiSes
   const sendSnapshot = async (): Promise<void> => {
     if (closed) return;
     const snapshot = await piSessionSnapshot(adapter, sessionId);
+    if (closed) return;
     if (!snapshot) return closeStream();
     const payload = JSON.stringify(snapshot);
     if (payload !== lastPayload) {
@@ -764,9 +766,16 @@ const handlePiSessionStream = async (req: Request, res: Response, adapter: PiSes
       res.write(': heartbeat\n\n');
     }
   };
+  const poll = (): void => {
+    if (closed || snapshotInFlight) return;
+    snapshotInFlight = true;
+    void sendSnapshot()
+      .catch((error) => { if (!closed) res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`); })
+      .finally(() => { snapshotInFlight = false; });
+  };
 
   await sendSnapshot();
-  if (!closed) interval = setInterval(() => { void sendSnapshot().catch((error) => res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`)); }, 1000);
+  if (!closed) interval = setInterval(poll, 1000);
   req.on('close', closeStream);
 };
 
@@ -778,6 +787,7 @@ const handleRunStream = async (req: Request, res: Response, runId: string, proje
   });
   res.write(': connected\n\n');
   let closed = false;
+  let snapshotInFlight = false;
   let lastPayload = '';
   let interval: ReturnType<typeof setInterval> | null = null;
 
@@ -794,6 +804,7 @@ const handleRunStream = async (req: Request, res: Response, runId: string, proje
   const sendSnapshot = async (): Promise<void> => {
     if (closed) return;
     const snapshot = await runSnapshot(runId, projectId);
+    if (closed) return;
     const payload = JSON.stringify(snapshot);
     if (payload !== lastPayload) {
       lastPayload = payload;
@@ -803,9 +814,16 @@ const handleRunStream = async (req: Request, res: Response, runId: string, proje
     }
     if (isTerminalSnapshot(snapshot)) closeStream();
   };
+  const poll = (): void => {
+    if (closed || snapshotInFlight) return;
+    snapshotInFlight = true;
+    void sendSnapshot()
+      .catch((error) => { if (!closed) res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`); })
+      .finally(() => { snapshotInFlight = false; });
+  };
 
   await sendSnapshot();
-  if (!closed) interval = setInterval(() => { void sendSnapshot().catch((error) => res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : String(error) })}\n\n`)); }, 1000);
+  if (!closed) interval = setInterval(poll, 1000);
   req.on('close', closeStream);
 };
 

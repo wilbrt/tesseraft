@@ -91,6 +91,17 @@
 (defn validate-options! [opts]
   (-> opts validate-git-user! validate-executor!))
 
+(defn run-registered! [run-dir f]
+  (let [pid (runtime/register-runtime-process! run-dir)]
+    (try
+      (f)
+      (finally
+        (try
+          (when (runtime/terminal-run? (store/load-context run-dir))
+            (runtime/stop-owned-processes! run-dir))
+          (finally
+            (runtime/unregister-runtime-process! run-dir pid)))))))
+
 (defn -main [& args]
   (try
     (let [opts (validate-options! (parse-args args))]
@@ -109,12 +120,10 @@
         (do (when (str/blank? (:run-dir opts)) (usage!))
             (let [run-dir (:run-dir opts)
                   ctx (apply-run-options (store/load-context run-dir) opts)
-                  wf (spec/read-workflow (get-in ctx [:workflow :file]))
-                  pid (runtime/register-runtime-process! run-dir)]
-              (try
-                (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))
-                (finally
-                  (runtime/unregister-runtime-process! run-dir pid)))))
+                  wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+              (run-registered!
+                run-dir
+                #(print-result opts (runtime/run-until-done! wf ctx (:max-steps opts))))))
 
         "cancel"
         (do (when (str/blank? (:run-dir opts)) (usage!))
@@ -141,8 +150,11 @@
         "run"
         (do (when (str/blank? (:workflow opts)) (usage!))
             (let [ctx (runtime/start! (:workflow opts) opts)
-                  wf (spec/read-workflow (:workflow opts))]
-              (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))))))
+                  wf (spec/read-workflow (:workflow opts))
+                  run-dir (get-in ctx [:run :dir])]
+              (run-registered!
+                run-dir
+                #(print-result opts (runtime/run-until-done! wf ctx (:max-steps opts))))))))
     (catch Throwable t
       (binding [*out* *err*]
         (println (.getMessage t)))
