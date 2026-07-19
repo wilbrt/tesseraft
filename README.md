@@ -59,6 +59,24 @@ strategy, executable/version, tool version, platform, and command timeout.
 Set `TESSERAFT_UI_BROWSER_COMMAND_TIMEOUT_MS` to override the default bounded
 per-command timeout.
 
+The Playwright browser gate builds and serves the production Web UI on
+localhost, then performs a read-only Chromium inspection of the bundled
+`smoke-demo` workflow graph. Install the pinned Chromium revision once with:
+
+```bash
+npx playwright install --with-deps chromium
+```
+
+Run it headlessly or in Playwright UI mode with:
+
+```bash
+npm run web:e2e
+npm run web:e2e:ui
+```
+
+This gate is localhost-only and does not create workflows, start runs, or
+replace the existing `agent-browser` rendered-layout gate.
+
 ## Mock executor dry run
 
 Use runner-level mock mode to validate workflow transitions without invoking Pi, GitHub, Jira, or notification services:
