@@ -816,6 +816,15 @@ test('web server exposes approval pause, decide, and resume via the control plan
   const doneRun = await waitForRunStatus(base, runId, 'done');
   assert.equal(doneRun.state, 'done');
 
+  // Approval summaries include the durable decision after decide so UI refresh
+  // filters out completed approvals instead of re-rendering a stale panel.
+  const approvalsAfterDecisionResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals`);
+  assert.equal(approvalsAfterDecisionResponse.status, 200);
+  const approvalsAfterDecision = await approvalsAfterDecisionResponse.json();
+  const decidedSummary = approvalsAfterDecision.approvals.find((approval) => approval.approval_id === approvalId);
+  assert.equal(decidedSummary.decision.decision, 'approve');
+  assert.equal(decidedSummary.decision.summary, 'LGTM');
+
   // A second decide on the same approval is rejected (idempotent-ish).
   const replay = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
     method: 'POST',
