@@ -232,7 +232,7 @@ const NodeForm = ({ form, setForm, draft, excludeId, onCompose }: { form: NodeFo
 
   return (
     <div className="node-form">
-      <div className="row"><label>ID (state keyword)</label><input type="text" value={form.id} onChange={(e) => set({ id: e.target.value })} placeholder="e.g. start" required pattern="[a-z][a-z0-9-]{0,62}" /></div>
+      <div className="row"><label htmlFor="studio-node-id">ID (state keyword)</label><input id="studio-node-id" type="text" value={form.id} onChange={(e) => set({ id: e.target.value })} placeholder="e.g. start" required pattern="[a-z][a-z0-9-]{0,62}" /></div>
       <div className="row"><label>Title</label><input type="text" value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="optional" /></div>
       {form.type === ':agent' && (
         <>
@@ -290,7 +290,7 @@ const NodeForm = ({ form, setForm, draft, excludeId, onCompose }: { form: NodeFo
         </>
       )}
       {form.type === ':terminal' && (
-        <div className="row"><label>Status</label><select value={form.terminalStatus} onChange={(e) => set({ terminalStatus: e.target.value })}><option value=":success">:success</option><option value=":failure">:failure</option></select></div>
+        <div className="row"><label htmlFor="studio-terminal-status">Status</label><select id="studio-terminal-status" value={form.terminalStatus} onChange={(e) => set({ terminalStatus: e.target.value })}><option value=":success">:success</option><option value=":failure">:failure</option></select></div>
       )}
       {(form.type === ':agent' || form.type === ':approval' || form.type === ':router') && (
         <fieldset>
@@ -316,7 +316,7 @@ const CreateWorkflowModal = ({ onClose, onCreate }: { onClose: () => void; onCre
   const [error, setError] = useState<string | null>(null);
   return (
     <ModalShell title="Create workflow" onClose={onClose}>
-      <div className="row"><label>Name (lowercase, hyphens)</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} required pattern="[a-z][a-z0-9-]{0,62}" /></div>
+      <div className="row"><label htmlFor="studio-workflow-name">Name (lowercase, hyphens)</label><input id="studio-workflow-name" type="text" value={name} onChange={(e) => setName(e.target.value)} required pattern="[a-z][a-z0-9-]{0,62}" /></div>
       <div className="row"><label>Description (optional)</label><input type="text" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
       {error && <div className="error">{error}</div>}
       <div className="modal-actions">
@@ -993,8 +993,8 @@ const NodeFormModal = ({ title, draft, initial, excludeId, onClose, onSubmit }: 
 
   return (
     <ModalShell title={title} onClose={onClose} wide>
-      <div className="row"><label>Node type</label>
-        <select value={form.type} onChange={(e) => { const t = e.target.value as NodeTypeId; setForm((prev) => ({ ...emptyForm(t), id: prev.id, title: prev.id ? titleFromId(prev.id) : '' })); rederive(form.id, t, true); }}>
+      <div className="row"><label htmlFor="studio-node-type">Node type</label>
+        <select id="studio-node-type" value={form.type} onChange={(e) => { const t = e.target.value as NodeTypeId; setForm((prev) => ({ ...emptyForm(t), id: prev.id, title: prev.id ? titleFromId(prev.id) : '' })); rederive(form.id, t, true); }}>
           {NODE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
