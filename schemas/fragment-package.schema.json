@@ -41,6 +41,30 @@
         "executor": { "type": "string" }
       },
       "additionalProperties": true
+    },
+    "fragmentState": {
+      "type": "object",
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "terminal" } }, "required": ["type"] },
+          "then": {
+            "required": ["outcome"],
+            "properties": {
+              "outcome": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "not": {
+            "properties": { "type": { "const": "fragment" } },
+            "required": ["type"]
+          }
+        }
+      ],
+      "properties": {
+        "type": { "type": "string" }
+      },
+      "additionalProperties": true
     }
   },
   "properties": {
@@ -61,13 +85,14 @@
     },
     "interface": {
       "type": "object",
+      "required": ["outcomes"],
       "properties": {
         "inputs": { "type": "object" },
         "parameters": { "type": "object" },
         "outputs": { "type": "object" },
         "outcomes": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true,
           "minItems": 1
         }
@@ -97,7 +122,7 @@
     },
     "fragment": {
       "type": "object",
-      "required": ["initial", "states"],
+      "required": ["initial", "exit", "states"],
       "properties": {
         "initial": { "type": "string" },
         "defaults": { "type": "object" },
@@ -112,16 +137,24 @@
         },
         "exit": {
           "type": "array",
+          "minItems": 1,
           "items": {
             "type": "object",
+            "required": ["on"],
             "properties": {
-              "on": { "type": "string" },
+              "on": { "type": "string", "minLength": 1 },
               "produces": { "type": "object" }
             },
             "additionalProperties": true
           }
         },
-        "states": { "type": "object" },
+        "states": {
+          "type": "object",
+          "patternProperties": {
+            ".*": { "$ref": "#/$defs/fragmentState" }
+          },
+          "additionalProperties": false
+        },
         "resources": { "$ref": "#/$defs/resourceDeclaration" }
       },
       "additionalProperties": true

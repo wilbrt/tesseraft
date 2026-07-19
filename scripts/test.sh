@@ -312,6 +312,9 @@ EOF
 ./bin/tesseraft node import test/fixtures/valid/simple-node/node.edn "$TMP_DIR/import-target.workflow.edn" --as imported-design --next done
 ./bin/tesseraft lint "$TMP_DIR/import-target.workflow.edn"
 
+printf '\nChecking fragment package schema FI1 contract...\n'
+python3 test/fragment_schema_contract.test.py
+
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json
@@ -325,35 +328,72 @@ rm -f /tmp/tesseraft-fragment-lint.json
 printf '\nLinting fragment-including workflow fixtures...\n'
 ./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn
 
-check_invalid_fragment () {
+assert_lint_json_has_error () {
+  local output="$1"
+  local expected_code="$2"
+  local expected_path_json="${3:-}"
+  LINT_OUTPUT="$output" EXPECTED_CODE="$expected_code" EXPECTED_PATH_JSON="$expected_path_json" python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(os.environ['LINT_OUTPUT'])
+try:
+    payload = json.loads(path.read_text())
+except json.JSONDecodeError as exc:
+    print(path.read_text(), file=sys.stderr)
+    raise AssertionError(f"lint output is not JSON: {exc}") from exc
+expected = os.environ['EXPECTED_CODE']
+expected_path_json = os.environ.get('EXPECTED_PATH_JSON') or ''
+expected_path = json.loads(expected_path_json) if expected_path_json else None
+errors = payload.get('errors') or []
+matches = [error for error in errors if error.get('code') == expected]
+if expected_path is not None:
+    matches = [error for error in matches if error.get('path') == expected_path]
+if not matches:
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    detail = f" with path {expected_path}" if expected_path is not None else ""
+    raise AssertionError(f"expected errors[].code {expected!r}{detail}")
+PY
+}
+
+check_invalid_fragment_once () {
   local fixture="$1"
   local expected="$2"
-  local output="/tmp/tesseraft-${fixture}-lint.out"
+  local mode_label="$3"
+  local expected_path_json="${4:-}"
+  shift 4 || true
+  local output="/tmp/tesseraft-${fixture}-${mode_label}-lint.out"
   set +e
-  ./bin/tesseraft fragment lint "test/fixtures/invalid/${fixture}/fragment.edn" --format json >"$output" 2>&1
+  ./bin/tesseraft fragment lint "test/fixtures/invalid/${fixture}/fragment.edn" "$@" --format json >"$output" 2>&1
   local status=$?
   set -e
   if [[ "$status" -eq 0 ]]; then
     cat "$output" >&2
-    echo "Expected invalid fragment fixture to fail: $fixture" >&2
+    echo "Expected invalid fragment fixture to fail in ${mode_label} mode: $fixture" >&2
     exit 1
   fi
-  if ! grep -q "$expected" "$output"; then
-    cat "$output" >&2
-    echo "Expected $fixture to report $expected" >&2
-    exit 1
-  fi
+  assert_lint_json_has_error "$output" "$expected" "$expected_path_json"
   rm -f "$output"
 }
 
-check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch
-check_invalid_fragment fragment-duplicate-exit duplicate-exit
-check_invalid_fragment fragment-missing-outcomes fragment-outcome-mismatch
-check_invalid_fragment fragment-terminal-missing-outcome fragment-terminal-missing-outcome
-check_invalid_fragment fragment-terminal-unknown-outcome fragment-terminal-unknown-outcome
-check_invalid_fragment fragment-terminal-multi-outcome ambiguous
-check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome
-check_invalid_fragment fragment-nested-fragment nested-fragment
+check_invalid_fragment () {
+  local fixture="$1"
+  local expected="$2"
+  local expected_path_json="${3:-}"
+  check_invalid_fragment_once "$fixture" "$expected" normal "$expected_path_json"
+  check_invalid_fragment_once "$fixture" "$expected" strict "$expected_path_json" --strict
+}
+
+check_invalid_fragment fragment-missing-exit-fragment fragment-outcome-mismatch '["fragment","exit"]'
+check_invalid_fragment fragment-duplicate-exit duplicate-exit '["fragment","exit"]'
+check_invalid_fragment fragment-missing-outcomes fragment-outcome-mismatch '["interface","outcomes"]'
+check_invalid_fragment fragment-terminal-missing-outcome fragment-terminal-missing-outcome '["fragment","states","done","outcome"]'
+check_invalid_fragment fragment-terminal-unknown-outcome fragment-terminal-unknown-outcome '["fragment","states","done","outcome"]'
+check_invalid_fragment fragment-terminal-multi-outcome fragment-terminal-ambiguous-outcome '["fragment","states","done","outcome"]'
+check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome '["interface","outcomes"]'
+check_invalid_fragment fragment-nested-fragment nested-fragment '["fragment","states","run-tests","type"]'
 check_invalid_fragment fragment-unsafe-asset invalid-asset-path
 check_invalid_fragment fragment-missing-required-input fragment-missing-interface
 # P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is
@@ -365,41 +405,34 @@ check_invalid_fragment fragment-missing-prompt agent-missing-prompt-template
 check_invalid_fragment fragment-bad-template-var unknown-template-root
 # Unbounded internal cycle is a warning non-strict; under --strict it is an
 # error, so the broken fragment cannot pass lint.
-set +e
-./bin/tesseraft fragment lint test/fixtures/invalid/fragment-unbounded-cycle/fragment.edn --strict --format json >/tmp/tesseraft-fragment-cycle.out 2>&1
-_cycle_status=$?
-set -e
-if [[ "$_cycle_status" -eq 0 ]]; then
-  cat /tmp/tesseraft-fragment-cycle.out >&2
-  echo "Expected unbounded-cycle fragment to fail under --strict" >&2
-  exit 1
-fi
-if ! grep -q "cycle-without-explicit-limit" /tmp/tesseraft-fragment-cycle.out; then
-  cat /tmp/tesseraft-fragment-cycle.out >&2
-  echo "Expected fragment-unbounded-cycle to report cycle-without-explicit-limit" >&2
-  exit 1
-fi
-rm -f /tmp/tesseraft-fragment-cycle.out
+check_invalid_fragment_once fragment-unbounded-cycle cycle-without-explicit-limit strict '' --strict
 
-check_invalid_fragment_workflow () {
+check_invalid_fragment_workflow_once () {
   local fixture="$1"
   local expected="$2"
-  local output="/tmp/tesseraft-${fixture}-lint.out"
+  local mode_label="$3"
+  local expected_path_json="${4:-}"
+  shift 4 || true
+  local output="/tmp/tesseraft-${fixture}-${mode_label}-lint.out"
   set +e
-  ./bin/tesseraft lint "test/fixtures/invalid/${fixture}.workflow.edn" --format json >"$output" 2>&1
+  ./bin/tesseraft lint "test/fixtures/invalid/${fixture}.workflow.edn" "$@" --format json >"$output" 2>&1
   local status=$?
   set -e
   if [[ "$status" -eq 0 ]]; then
     cat "$output" >&2
-    echo "Expected invalid fragment workflow fixture to fail: $fixture" >&2
+    echo "Expected invalid fragment workflow fixture to fail in ${mode_label} mode: $fixture" >&2
     exit 1
   fi
-  if ! grep -q "$expected" "$output"; then
-    cat "$output" >&2
-    echo "Expected $fixture to report $expected" >&2
-    exit 1
-  fi
+  assert_lint_json_has_error "$output" "$expected" "$expected_path_json"
   rm -f "$output"
+}
+
+check_invalid_fragment_workflow () {
+  local fixture="$1"
+  local expected="$2"
+  local expected_path_json="${3:-}"
+  check_invalid_fragment_workflow_once "$fixture" "$expected" normal "$expected_path_json"
+  check_invalid_fragment_workflow_once "$fixture" "$expected" strict "$expected_path_json" --strict
 }
 
 check_invalid_fragment_workflow fragment-missing-input fragment-input-binding-missing
@@ -407,12 +440,18 @@ check_invalid_fragment_workflow fragment-unknown-outcome fragment-unknown-outcom
 
 # Uncovered outcome is a warning, not an error: assert it surfaces but lint passes (non-strict).
 ./bin/tesseraft lint test/fixtures/invalid/fragment-uncovered-outcome.workflow.edn --format json >/tmp/tesseraft-fragment-uncovered.out
-if ! grep -q "fragment-uncovered-outcome" /tmp/tesseraft-fragment-uncovered.out; then
-  cat /tmp/tesseraft-fragment-uncovered.out >&2
-  echo "Expected fragment-uncovered-outcome warning" >&2
-  exit 1
-fi
+LINT_OUTPUT=/tmp/tesseraft-fragment-uncovered.out EXPECTED_CODE=fragment-uncovered-outcome python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+payload = json.loads(Path(os.environ['LINT_OUTPUT']).read_text())
+if not any(warning.get('code') == os.environ['EXPECTED_CODE'] for warning in payload.get('warnings') or []):
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise AssertionError('expected fragment-uncovered-outcome warning')
+PY
 rm -f /tmp/tesseraft-fragment-uncovered.out
+check_invalid_fragment_workflow_once fragment-uncovered-outcome fragment-uncovered-outcome strict '' --strict
 
 printf '\nChecking fragment import into a workflow...\n'
 cat >"$TMP_DIR/fragment-import-target.workflow.edn" <<'EOF'
