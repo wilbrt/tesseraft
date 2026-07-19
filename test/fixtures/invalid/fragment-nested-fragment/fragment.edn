@@ -1,0 +1,20 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "nested-fragment-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}
+                      :test-cmd {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :run-tests
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:run-tests
+                     ;; SC-007: v1 fragments must reject reachable internal
+                     ;; fragment states because nested-fragment semantics are
+                     ;; intentionally unsupported.
+                     {:type :fragment
+                      :fragment "test-fix-loop"
+                      :inputs {:repo-root "{{inputs.repo-root}}"
+                               :test-cmd "{{inputs.test-cmd}}"}
+                      :transitions [{:when {:fragment/outcome "pass"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}
