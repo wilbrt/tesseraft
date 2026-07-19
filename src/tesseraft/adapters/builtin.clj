@@ -195,8 +195,17 @@
     (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "origin" branch]))
     {:status "ok" :branch branch}))
 
+(defn github-token []
+  (let [token (System/getenv "GH_TOKEN")]
+    (when-not (str/blank? token) token)))
+
+(defn github-command-opts [ctx node]
+  (let [token (github-token)]
+    (cond-> {:dir (repo-dir ctx node)}
+      token (assoc :extra-env {"GH_TOKEN" token}))))
+
 (defn github-repo! [ctx node]
-  (str/trim (shell! {:dir (repo-dir ctx node)} "gh" "repo" "view" "--json" "nameWithOwner" "--jq" ".nameWithOwner")))
+  (str/trim (shell! (github-command-opts ctx node) "gh" "repo" "view" "--json" "nameWithOwner" "--jq" ".nameWithOwner")))
 
 (defn non-empty-string [v]
   (when (string? v)
@@ -249,7 +258,7 @@
       (and (not-empty repo) number) (str "https://github.com/" repo "/pull/" number))))
 
 (defn github-existing-pr [ctx node branch]
-  (let [r (p/shell {:dir (repo-dir ctx node) :out :string :err :string :continue true}
+  (let [r (p/shell (merge (github-command-opts ctx node) {:out :string :err :string :continue true})
                    "gh" "pr" "view" branch "--json" "number,url,state,headRefName,baseRefName")]
     (when (zero? (:exit r)) (json/parse-string (:out r) true))))
 
@@ -270,7 +279,7 @@
                  (store/write-json! payload-file {:title (str/trim (slurp title-file))
                                                   :body (slurp body-file)
                                                   :head branch :base base :draft false})
-                 (json/parse-string (shell! {:dir (repo-dir ctx node)} "gh" "api" "--method" "POST"
+                 (json/parse-string (shell! (github-command-opts ctx node) "gh" "api" "--method" "POST"
                                             (str "repos/" repo "/pulls") "--input" payload-file) true)))
         normalized (cond-> {:number (:number pr) :url (github-pr-url repo pr) :state (:state pr)
                             :headRefName (or (:headRefName pr) branch) :baseRefName (or (:baseRefName pr) base)}
@@ -280,7 +289,7 @@
     {:status "ok" :pr normalized :pr-file pr-file}))
 
 (defn gh-api-all [ctx node endpoint]
-  (let [raw (shell! {:dir (repo-dir ctx node)} "gh" "api" "--paginate" "--slurp" endpoint)
+  (let [raw (shell! (github-command-opts ctx node) "gh" "api" "--paginate" "--slurp" endpoint)
         pages (json/parse-string raw true)]
     (->> pages (mapcat #(if (sequential? %) % [%])) vec)))
 (defn github-fetch-pr-feedback! [_wf ctx _state-id node]
@@ -288,7 +297,7 @@
         pr-path (artifact-path ctx (or (get-in node [:inputs :pr-json]) "pr/pr.json"))
         pr (store/read-json pr-path)
         number (:number pr)
-        feedback {:pr (json/parse-string (shell! {:dir (repo-dir ctx node)} "gh" "pr" "view" (str number)
+        feedback {:pr (json/parse-string (shell! (github-command-opts ctx node) "gh" "pr" "view" (str number)
                                                   "--json" "number,url,title,body,state,comments,reviews,reviewDecision,statusCheckRollup,mergeStateStatus") true)
                   :issue-comments (gh-api-all ctx node (str "repos/" repo "/issues/" number "/comments?per_page=100"))
                   :reviews (gh-api-all ctx node (str "repos/" repo "/pulls/" number "/reviews?per_page=100"))

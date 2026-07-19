@@ -134,7 +134,9 @@ explicit recovery or a replacement run.
 - `create-pr` pushes the branch directly to the repository's GitHub SSH URL,
   then creates or reuses a GitHub pull request via `gh`, writing `pr/pr.json`.
   The push does not depend on an HTTPS OAuth token's `workflow` scope and does
-  not rewrite `origin`.
+  not rewrite `origin`. When `GH_TOKEN` is nonblank, Tesseraft passes it to all
+  `gh` subprocesses and GitHub attributes the PR to that token's account. When
+  it is absent, `gh` falls back to its active keyring login.
 
 ## Stopping before PR creation
 

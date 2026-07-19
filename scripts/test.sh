@@ -896,6 +896,14 @@ bb -e '(require (quote [tesseraft.adapters.builtin :as b])
          (assert (= "https://github.com/owner/repo/pull/125"
                     (u "owner/repo" {:number 125})))
          (assert (= "git@github.com:owner/repo.git" (b/github-ssh-repo-url "owner/repo"))))
+       (let [ctx {:inputs {:repo-root "/tmp/repo"}}
+             node {}]
+         (with-redefs [b/github-token (constantly nil)]
+           (assert (not (contains? (b/github-command-opts ctx node) :extra-env))))
+         (with-redefs [b/github-token (constantly "test-bot-token")]
+           (let [opts (b/github-command-opts ctx node)]
+             (assert (= #{"GH_TOKEN"} (set (keys (:extra-env opts)))))
+             (assert (= "test-bot-token" (get-in opts [:extra-env "GH_TOKEN"]))))))
        (let [run-dir (str (java.nio.file.Files/createTempDirectory
                            "tesseraft-create-pr-ssh"
                            (make-array java.nio.file.attribute.FileAttribute 0)))
