@@ -274,18 +274,32 @@
      :connections connections
      :source :implicit}))
 
+(defn- canonical-project-root [options root]
+  (let [root* (abs-path (:workspace-root (opts options)) root)]
+    (try
+      (.getCanonicalPath (fs/file root*))
+      (catch Throwable _
+        (str root*)))))
+
 (defn- same-project-root? [options a b]
-  (= (str (abs-path (:workspace-root (opts options)) a))
-     (str (abs-path (:workspace-root (opts options)) b))))
+  (= (canonical-project-root options a)
+     (canonical-project-root options b)))
+
+(defn- project-source [m fallback]
+  (let [source (:source m)]
+    (if (keyword? source)
+      source
+      (keyword (or source fallback)))))
 
 (defn- agreeing-manifest-duplicate [options descriptor project-id]
   (when-let [m (read-project-manifest options project-id)]
     (let [manifest-root (or (:workspace_root m) ".")]
       (when (and (= project-id (:project_id descriptor))
                  (same-project-root? options (:workspace_root descriptor) manifest-root))
-        {:source :manifest
+        {:source (project-source m "manifest")
          :project_id project-id
-         :workspace_root (str (abs-path (:workspace-root (opts options)) manifest-root))}))))
+         :canonical_root (canonical-project-root options manifest-root)
+         :workspace_root (canonical-project-root options manifest-root)}))))
 
 (defn- project-root-exists? [options root]
   (fs/exists? (abs-path (:workspace-root (opts options)) root)))
@@ -293,8 +307,22 @@
 (defn- stale-project-root-response [options project-id root]
   (error-response 409 "stale_project_root" "Registered project root is missing"
                   {:project_id project-id
-                   :recorded_root (str (abs-path (:workspace-root (opts options)) root))
+                   :recorded_root (canonical-project-root options root)
                    :searched_for_replacement false}))
+
+(defn- project-identity-conflict-response [options project-id descriptor manifest]
+  (let [descriptor-root (:workspace_root descriptor)
+        manifest-root (or (:workspace_root manifest) ".")]
+    (error-response 409 "project_identity_conflict" "Project id resolves to conflicting canonical roots"
+                    {:project_id project-id
+                     :sources [{:source :descriptor
+                                :project_id project-id
+                                :canonical_root (canonical-project-root options descriptor-root)
+                                :workspace_root (canonical-project-root options descriptor-root)}
+                               {:source (project-source manifest "manifest")
+                                :project_id project-id
+                                :canonical_root (canonical-project-root options manifest-root)
+                                :workspace_root (canonical-project-root options manifest-root)}]})))
 
 (defn resolve-project
   "Single entry point for project resolution. If project_id is nil or the
@@ -307,10 +335,24 @@
      (if-let [descriptor (read-project-descriptor options)]
        (if (:error descriptor)
          descriptor
-         (let [duplicate (agreeing-manifest-duplicate options descriptor pid)]
-           (cond-> (assoc descriptor :source :descriptor)
-             duplicate
-             (assoc-in [:diagnostics :duplicates] [duplicate]))))
+         (let [manifest (read-project-manifest options pid)
+               manifest-root (or (:workspace_root manifest) ".")]
+           (cond
+             (and manifest
+                  (= pid (:project_id descriptor))
+                  (not (project-root-exists? options manifest-root)))
+             (stale-project-root-response options pid manifest-root)
+
+             (and manifest
+                  (= pid (:project_id descriptor))
+                  (not (same-project-root? options (:workspace_root descriptor) manifest-root)))
+             (project-identity-conflict-response options pid descriptor manifest)
+
+             :else
+             (let [duplicate (agreeing-manifest-duplicate options descriptor pid)]
+               (cond-> (assoc descriptor :source :descriptor)
+                 duplicate
+                 (assoc-in [:diagnostics :duplicates] [duplicate]))))))
        (if-not (valid-project-id? pid)
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})

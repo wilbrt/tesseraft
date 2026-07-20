@@ -43,6 +43,8 @@ const SC005_OLD_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005
 const SC005_NEW_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-new-root');
 const SC005_NEW_DESCRIPTOR = path.join(SC005_NEW_ROOT, '.tesseraft', 'project.json');
 const SC005_MANIFEST = path.join(PROJECTS_DIR, 'sc005-project.json');
+const SC006_REGISTERED_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-registered-root');
+const SC006_MANIFEST = path.join(PROJECTS_DIR, 'sc006-project.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -64,9 +66,11 @@ const cleanup = () => {
   fs.rmSync(ROOT_DESCRIPTOR, { force: true });
   fs.rmSync(SC004_MANIFEST, { force: true });
   fs.rmSync(SC005_MANIFEST, { force: true });
+  fs.rmSync(SC006_MANIFEST, { force: true });
   fs.rmSync(SC004_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_NEW_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC006_REGISTERED_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -213,6 +217,53 @@ test('SC-005 reports stale registrations and accepts explicit re-registration at
   assert.equal(detail.project_id, 'sc005-project', 'SC-005 selection should succeed after explicit re-registration');
   assert.equal(path.normalize(detail.workspace_root || detail.canonical_root || ''), newRoot, 'SC-005 selection should use only the new registered root');
   assert.equal(detail.source, 'registration', 'SC-005 selection after re-registration should identify registration as source');
+});
+
+test('SC-006 rejects conflicting canonical roots across project sources', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(ROOT_DESCRIPTOR), { recursive: true });
+  fs.mkdirSync(SC006_REGISTERED_ROOT, { recursive: true });
+  fs.writeFileSync(ROOT_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'sc006-project',
+    name: 'SC006 Descriptor Project',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  fs.writeFileSync(SC006_MANIFEST, JSON.stringify({
+    project_id: 'sc006-project',
+    name: 'SC006 Registered Elsewhere',
+    workspace_root: fs.realpathSync(SC006_REGISTERED_ROOT),
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'registration'
+  }, null, 2));
+  const descriptorRoot = fs.realpathSync(process.cwd());
+  const registeredRoot = fs.realpathSync(SC006_REGISTERED_ROOT);
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const response = await fetch(`${base}/api/projects/sc006-project`);
+  assert.equal(response.status, 409, 'SC-006 conflicting canonical roots should reject selection with a project identity conflict');
+  const body = await response.json();
+  assert.equal(body.error?.code, 'project_identity_conflict', `SC-006 conflict diagnostic should use project_identity_conflict; got ${JSON.stringify(body)}`);
+  assert.equal(body.error?.details?.project_id, 'sc006-project', 'SC-006 conflict diagnostic should name the conflicting project id');
+  assert.ok(Array.isArray(body.error?.details?.sources), `SC-006 conflict diagnostic should list disagreeing sources; got ${JSON.stringify(body)}`);
+  assert.ok(
+    body.error.details.sources.some((source) => source?.source === 'descriptor' && path.normalize(source.canonical_root || source.workspace_root || '') === descriptorRoot),
+    `SC-006 conflict diagnostic should include descriptor canonical root ${descriptorRoot}; got ${JSON.stringify(body.error.details.sources)}`
+  );
+  assert.ok(
+    body.error.details.sources.some((source) => source?.source === 'registration' && path.normalize(source.canonical_root || source.workspace_root || '') === registeredRoot),
+    `SC-006 conflict diagnostic should include registration canonical root ${registeredRoot}; got ${JSON.stringify(body.error.details.sources)}`
+  );
+  assert.equal(body.project_id, undefined, 'SC-006 conflict must not select either project source');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {
