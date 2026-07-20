@@ -364,7 +364,7 @@
      (if-let [descriptor (read-project-descriptor options)]
        (if (:error descriptor)
          descriptor
-         (if (or (nil? project-id) (= pid (:project_id descriptor)))
+         (if (or (nil? project-id) (= "default" pid) (= pid (:project_id descriptor)))
            (let [manifest (read-project-manifest options pid)
                  manifest-root (or (:workspace_root manifest) ".")]
              (cond
