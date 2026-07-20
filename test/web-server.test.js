@@ -1330,6 +1330,38 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     try { cp(['project', 'create', 'acme']); } catch { dupThrew = true; }
     assert.equal(dupThrew, true);
 
+    const descriptorRoot = path.join(root, 'descriptor-project');
+    fs.mkdirSync(path.join(descriptorRoot, '.tesseraft'), { recursive: true });
+    fs.writeFileSync(path.join(descriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
+      version: 1,
+      project_id: 'local-acme',
+      name: 'Local Acme',
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+    }, null, 2));
+    const home = path.join(root, 'home');
+    const cpHome = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args], { encoding: 'utf8' }));
+
+    const registered = cpHome(['project', 'register', descriptorRoot]);
+    assert.equal(registered.project_id, 'local-acme', 'local CLI register derives project id from descriptor');
+    assert.equal(registered.source, 'registration', 'local CLI register stores a user-local registration');
+    const registryPath = path.join(home, 'projects', 'registry.json');
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+    assert.equal(registry.version, 1, 'local CLI register writes the versioned user-local registry');
+    assert.equal(path.normalize(registry.projects?.['local-acme']?.workspace_root || ''), fs.realpathSync(descriptorRoot));
+
+    const registeredDetail = cpHome(['project', 'local-acme']);
+    assert.equal(registeredDetail.project_id, 'local-acme', 'local CLI detail resolves registered descriptor identity');
+    assert.equal(registeredDetail.source, 'registration');
+
+    const unregistered = cpHome(['project', 'unregister', 'local-acme']);
+    assert.equal(unregistered.project_id, 'local-acme');
+    assert.equal(unregistered.deleted, true, 'local CLI unregister removes the user-local registration');
+    const registryAfter = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+    assert.equal(registryAfter.projects?.['local-acme'], undefined, 'local CLI unregister removes only the registry mapping');
+    assert.equal(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'local-acme.json')), false, 'local CLI register/unregister must not use legacy workspace manifest storage');
+    assert.equal(fs.existsSync(path.join(descriptorRoot, '.tesseraft', 'project.json')), true, 'local CLI unregister leaves the descriptor unchanged');
+
     // Get returns the persisted manifest (no raw tokens present).
     const got = cp(['project', 'acme']);
     assert.equal(got.name, 'Acme');

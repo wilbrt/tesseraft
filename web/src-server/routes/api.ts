@@ -304,13 +304,20 @@ const validateProjectOwnedPath = (projectRoot: string, field: string, value: str
 const canonicalAllowedRoots = (roots: string[] = []): string[] => roots.map((root) => fs.realpathSync(root));
 
 const disallowedProjectRoot = (projectRoot: string, allowedRoots: string[]): JsonRecord | null => {
-  if (allowedRoots.length === 0) return null;
+  if (allowedRoots.length === 0) return { project_root: projectRoot, allowed_roots: [] };
   return allowedRoots.some((root) => isPathWithin(root, projectRoot)) ? null : { project_root: projectRoot, allowed_roots: allowedRoots };
 };
 
 const handleCreateProject = async (req: Request, res: Response, browserAllowedProjectRoots: string[] = []): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
-  const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
+  let projectRoot = '';
+  if (typeof body.project_root === 'string' && body.project_root.trim() !== '') {
+    try {
+      projectRoot = fs.realpathSync(body.project_root.trim());
+    } catch (error) {
+      return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root is not readable', { message: error instanceof Error ? error.message : String(error) }));
+    }
+  }
   let descriptor: JsonRecord | null = null;
   if (projectRoot) {
     const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
@@ -359,9 +366,24 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
 
 const handleDeleteProject = async (res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-  const manifest = path.join(WORKSPACE_ROOT, '.tesseraft', 'projects', `${projectId}.json`);
-  fs.rmSync(manifest, { force: true });
-  return jsonResponse(res, 200, { project_id: projectId, deleted: true });
+  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
+  let removed = false;
+  let registry: JsonRecord = { version: 1, projects: {} };
+  try {
+    if (fs.existsSync(registryPath)) {
+      const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) registry = parsed as JsonRecord;
+    }
+    const projects = registry.projects && typeof registry.projects === 'object' && !Array.isArray(registry.projects) ? registry.projects as JsonRecord : {};
+    removed = Object.prototype.hasOwnProperty.call(projects, projectId);
+    delete projects[projectId];
+    registry = { ...registry, version: 1, projects };
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  } catch (error) {
+    return jsonResponse(res, 500, errorBody(500, 'registry_write_failed', 'Could not update project registry', { message: error instanceof Error ? error.message : String(error) }));
+  }
+  return jsonResponse(res, 200, { project_id: projectId, deleted: removed });
 };
 
 const handleUpdateProject = async (req: Request, res: Response, projectId: string): Promise<void> => {
@@ -413,7 +435,7 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   }
 
   const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const registrationPath = path.join(WORKSPACE_ROOT, '.tesseraft', 'projects', `${projectId}.json`);
+  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
   const descriptor: JsonRecord = {
     version: 1,
     project_id: projectId,
@@ -421,11 +443,21 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     runs_root: runsRoot,
     discovery
   };
-  const registration: JsonRecord = { ...descriptor, workspace_root: projectRoot, source: 'registration' };
-  delete registration.version;
+  const registration: JsonRecord = { name: descriptor.name, workspace_root: projectRoot, runs_root: runsRoot, discovery, source: 'registration' };
+
+  const readRegistry = (): JsonRecord => {
+    if (!fs.existsSync(registryPath)) return { version: 1, projects: {} };
+    const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('project registry must be a JSON object');
+    const registry = parsed as JsonRecord;
+    if (registry.version !== 1) throw new Error('unsupported project registry version');
+    if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) return { ...registry, projects: {} };
+    return registry;
+  };
 
   const descriptorPreexisting = fs.existsSync(descriptorPath);
-  const registrationPreexisting = fs.existsSync(registrationPath);
+  let registryBefore: string | null = null;
+  let registrationPreexisting = false;
   try {
     if (descriptorPreexisting) {
       const existingDescriptor = readProjectDescriptor(projectRoot);
@@ -433,11 +465,18 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
         return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
       }
     }
+    if (fs.existsSync(registryPath)) registryBefore = fs.readFileSync(registryPath, 'utf8');
+    const registry = readRegistry();
+    const projects = registry.projects as JsonRecord;
+    const existingRegistration = projects[projectId];
+    registrationPreexisting = existingRegistration !== undefined;
     if (registrationPreexisting) {
-      const existingRegistration = JSON.parse(fs.readFileSync(registrationPath, 'utf8')) as JsonRecord;
-      const existingRoot = typeof existingRegistration.workspace_root === 'string' ? fs.realpathSync(existingRegistration.workspace_root) : '';
-      if (existingRegistration.project_id !== projectId || path.normalize(existingRoot) !== path.normalize(projectRoot)) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registration_path: registrationPath, project_id: projectId }));
+      if (!existingRegistration || typeof existingRegistration !== 'object' || Array.isArray(existingRegistration)) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists with invalid state', { registry_path: registryPath, project_id: projectId }));
+      }
+      const existingRoot = typeof (existingRegistration as JsonRecord).workspace_root === 'string' ? fs.realpathSync((existingRegistration as JsonRecord).workspace_root as string) : '';
+      if (path.normalize(existingRoot) !== path.normalize(projectRoot)) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registry_path: registryPath, project_id: projectId }));
       }
     }
     if (!descriptorPreexisting) {
@@ -445,12 +484,15 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
       fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
     }
     if (!registrationPreexisting) {
-      fs.mkdirSync(path.dirname(registrationPath), { recursive: true });
-      fs.writeFileSync(registrationPath, `${JSON.stringify(registration, null, 2)}\n`);
+      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+      fs.writeFileSync(registryPath, `${JSON.stringify({ ...registry, version: 1, projects: { ...projects, [projectId]: registration } }, null, 2)}\n`);
     }
   } catch (error) {
     if (!registrationPreexisting) {
-      try { fs.rmSync(registrationPath, { force: true }); } catch {}
+      try {
+        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
+        else fs.writeFileSync(registryPath, registryBefore);
+      } catch {}
     }
     if (!descriptorPreexisting) {
       try { fs.rmSync(descriptorPath, { force: true }); } catch {}
@@ -460,7 +502,7 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
 
   const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
   const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
-  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registration_path: registrationPath } } });
+  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registry_path: registryPath } } });
 };
 
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {

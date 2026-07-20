@@ -54,6 +54,8 @@
     (println "  tesseraft control-plane projects")
     (println "  tesseraft control-plane project <project-id>")
     (println "  tesseraft control-plane project create <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
+    (println "  tesseraft control-plane project register <project-root>")
+    (println "  tesseraft control-plane project unregister <project-id>")
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
     (println "  tesseraft control-plane project migrate [<project-id>]")
     (println "  tesseraft control-plane project connections <project-id>")
@@ -191,6 +193,22 @@
                   (if (str/blank? project-id)
                     (control-plane/error-response 400 "bad_request" "project create requires <project-id>")
                     (control-plane/create-project options project-id (:spec (parse-project-create-args more)))))
+      "register" (let [[project-root] rest]
+                    (if (str/blank? project-root)
+                      (control-plane/error-response 400 "bad_request" "project register requires <project-root>")
+                      (let [descriptor (control-plane/read-project-descriptor (assoc options :project-root project-root))]
+                        (if (:error descriptor)
+                          descriptor
+                          (control-plane/create-project options (:project_id descriptor)
+                            (cond-> {:workspace_root (:workspace_root descriptor)
+                                     :runs_root (:runs_root descriptor)
+                                     :discovery (:discovery descriptor)
+                                     :source "registration"}
+                              (:name descriptor) (assoc :name (:name descriptor))))))))
+      "unregister" (let [[project-id] rest]
+                      (if (str/blank? project-id)
+                        (control-plane/error-response 400 "bad_request" "project unregister requires <project-id>")
+                        (control-plane/unregister-project options project-id)))
       "update" (let [[project-id & more] rest]
                  (if (str/blank? project-id)
                    (control-plane/error-response 400 "bad_request" "project update requires <project-id>")

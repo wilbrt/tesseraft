@@ -105,13 +105,33 @@
 (defn project-manifest-path [options project-id]
   (fs/path (projects-dir options) (str project-id ".json")))
 
+(defn project-registry-path [options]
+  (fs/path (tesseraft-home options) "projects" "registry.json"))
+
 (defn credentials-file [options]
   (fs/path (tesseraft-home options) "credentials.json"))
 
-(defn read-project-manifest [options project-id]
+(defn read-project-registry [options]
+  (let [p (project-registry-path options)]
+    (if (fs/exists? p)
+      (try
+        (let [registry (store/read-json p)]
+          (when (= 1 (:version registry)) registry))
+        (catch Throwable _ nil))
+      {:version 1 :projects {}})))
+
+(defn read-project-registration [options project-id]
+  (when-let [entry (get-in (read-project-registry options) [:projects (keyword project-id)])]
+    (assoc entry :project_id project-id :source :registration)))
+
+(defn read-legacy-project-manifest [options project-id]
   (let [p (project-manifest-path options project-id)]
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
+
+(defn read-project-manifest [options project-id]
+  (or (read-project-registration options project-id)
+      (read-legacy-project-manifest options project-id)))
 
 (defn- project-descriptor-path [project-root]
   (fs/path project-root ".tesseraft" "project.json"))
@@ -166,21 +186,30 @@
                                :message (.getMessage t)}))))))))
 
 (defn list-project-manifests [options]
-  (let [dir (projects-dir options)]
-    (if-not (fs/exists? dir)
-      []
-      (->> (for [f (file-seq (fs/file dir))
-                 :when (and (.isFile f)
-                            (str/ends-with? (.getName f) ".json"))]
-             (let [slug (str/replace (.getName f) #"\.json$" "")]
-               (try (let [m (store/read-json (fs/path f))]
-                      (cond-> {:project_id slug
-                               :name (or (:name m) slug)
-                               :source (or (:source m) "manifest")}
-                        (:workspace_root m) (assoc :workspace_root (:workspace_root m))))
-                    (catch Throwable _ nil))))
-           (remove nil?)
-           vec))))
+  (let [registrations (->> (:projects (read-project-registry options))
+                           (map (fn [[id m]]
+                                  (cond-> {:project_id (name id)
+                                           :name (or (:name m) (name id))
+                                           :source "registration"}
+                                    (:workspace_root m) (assoc :workspace_root (:workspace_root m)))))
+                           vec)
+        dir (projects-dir options)
+        legacy (if-not (fs/exists? dir)
+                 []
+                 (->> (for [f (file-seq (fs/file dir))
+                            :when (and (.isFile f)
+                                       (str/ends-with? (.getName f) ".json"))]
+                        (let [slug (str/replace (.getName f) #"\.json$" "")]
+                          (try (let [m (store/read-json (fs/path f))]
+                                 (cond-> {:project_id slug
+                                          :name (or (:name m) slug)
+                                          :source (or (:source m) "manifest")}
+                                   (:workspace_root m) (assoc :workspace_root (:workspace_root m))))
+                               (catch Throwable _ nil))))
+                      (remove nil?)
+                      vec))]
+    (vec (concat registrations
+                 (remove (fn [m] (some #(= (:project_id m) (:project_id %)) registrations)) legacy)))))
 
 (defn read-credentials [options]
   (let [p (credentials-file options)]
@@ -335,24 +364,33 @@
      (if-let [descriptor (read-project-descriptor options)]
        (if (:error descriptor)
          descriptor
-         (let [manifest (read-project-manifest options pid)
-               manifest-root (or (:workspace_root manifest) ".")]
-           (cond
-             (and manifest
-                  (= pid (:project_id descriptor))
-                  (not (project-root-exists? options manifest-root)))
-             (stale-project-root-response options pid manifest-root)
+         (if (or (nil? project-id) (= pid (:project_id descriptor)))
+           (let [manifest (read-project-manifest options pid)
+                 manifest-root (or (:workspace_root manifest) ".")]
+             (cond
+               (and manifest
+                    (not (project-root-exists? options manifest-root)))
+               (stale-project-root-response options pid manifest-root)
 
-             (and manifest
-                  (= pid (:project_id descriptor))
-                  (not (same-project-root? options (:workspace_root descriptor) manifest-root)))
-             (project-identity-conflict-response options pid descriptor manifest)
+               (and manifest
+                    (not (same-project-root? options (:workspace_root descriptor) manifest-root)))
+               (project-identity-conflict-response options pid descriptor manifest)
 
-             :else
-             (let [duplicate (agreeing-manifest-duplicate options descriptor pid manifest)]
-               (cond-> (assoc descriptor :source :descriptor)
-                 duplicate
-                 (assoc-in [:diagnostics :duplicates] [duplicate]))))))
+               :else
+               (let [duplicate (agreeing-manifest-duplicate options descriptor pid manifest)]
+                 (cond-> (assoc descriptor :source :descriptor)
+                   duplicate
+                   (assoc-in [:diagnostics :duplicates] [duplicate])))))
+           (if-not (valid-project-id? pid)
+             (error-response 400 "bad_request" "Invalid project_id"
+                             {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+             (if-let [m (read-project-manifest options pid)]
+               (let [root (or (:workspace_root m) ".")]
+                 (if (project-root-exists? options root)
+                   (assoc m :source (or (:source m) :manifest) :project_id pid)
+                   (stale-project-root-response options pid root)))
+               (error-response 404 "not_found" "Project not found"
+                               {:project_id pid})))))
        (if-not (valid-project-id? pid)
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
@@ -371,13 +409,16 @@
   ([options]
    (let [manifests (list-project-manifests options)
          has-default? (some #(= "default" (:project_id %)) manifests)]
-     (if (or (seq manifests) has-default?)
+     (if has-default?
        {:projects (mapv api-value manifests)}
-       ;; No manifests at all: synthesize the implicit default so the list is
-       ;; never empty (preserves current single-project behavior).
-       {:projects [(-> (synthesize-default-project options)
-                       (api-value)
-                       (select-keys ["project_id" "name" "source"]))]}))))
+       ;; Synthesize the implicit default whenever no explicit default source
+       ;; exists, even when other registrations/legacy manifests are present.
+       ;; This preserves existing unscoped/default behavior while allowing
+       ;; user-local registries to list additional projects.
+       {:projects (mapv api-value
+                        (vec (cons (-> (synthesize-default-project options)
+                                       (select-keys [:project_id :name :source]))
+                                   manifests)))}))))
 
 (defn get-project
   ([] (get-project {} nil))
@@ -478,21 +519,26 @@
        (error-response 400 "bad_request" "Invalid project_id"
                        {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
 
-       (fs/exists? (project-manifest-path options project-id))
+       (or (read-project-registration options project-id)
+           (and (not= "registration" (:source spec))
+                (fs/exists? (project-manifest-path options project-id))))
        (let [existing (read-project-manifest options project-id)
              existing-root (or (:workspace_root existing) ".")
              requested-root (or (:workspace_root spec)
                                 (str (abs-path (:workspace-root (opts options)) ".")))
              re-registration? (and existing
                                    (= "registration" (:source spec))
-                                   (= "registration" (:source existing)))]
+                                   (= :registration (project-source existing nil)))]
          (cond
            (and re-registration? (same-project-root? options existing-root requested-root))
            (get-project options project-id)
 
            (and re-registration? (not (project-root-exists? options existing-root)))
            (do
-             (fs/delete-if-exists (project-manifest-path options project-id))
+             (let [target (project-registry-path options)
+                   registry (read-project-registry options)]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target (update registry :projects dissoc (keyword project-id))))
              (create-project options project-id spec _global?))
 
            :else
@@ -515,10 +561,33 @@
                           (:source spec) (assoc :source (:source spec))
                           (seq (:settings spec)) (assoc :settings (:settings spec))
                           (seq (:connections spec)) (assoc :connections (:connections spec)))
-               target (project-manifest-path options project-id)]
-           (fs/create-dirs (fs/parent target))
-           (store/write-json! target manifest)
+               registration? (= "registration" (:source spec))]
+           (if registration?
+             (let [target (project-registry-path options)
+                   registry (read-project-registry options)
+                   entry (-> manifest
+                             (dissoc :project_id)
+                             (assoc :source "registration"))]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target (assoc-in registry [:projects (keyword project-id)] entry)))
+             (let [target (project-manifest-path options project-id)]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target manifest)))
            (get-project options project-id)))))))
+
+(defn unregister-project
+  ([options project-id]
+   (if-not (valid-project-id? project-id)
+     (error-response 400 "bad_request" "Invalid project_id"
+                     {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+     (let [target (project-registry-path options)
+           registry (or (read-project-registry options) {:version 1 :projects {}})
+           existed? (contains? (:projects registry) (keyword project-id))]
+       (fs/create-dirs (fs/parent target))
+       (store/write-json! target (-> registry
+                                     (assoc :version 1)
+                                     (update :projects #(dissoc (or % {}) (keyword project-id)))))
+       {:project_id project-id :deleted existed?}))))
 
 (defn update-project
   ([options project-id spec] (update-project options project-id spec false))
@@ -827,9 +896,7 @@
   ([options project-id]
    (let [project (resolve-project options project-id)]
      (if (:error project)
-       (if (= "invalid_project_descriptor" (get-in project [:error :code]))
-         project
-         (opts options))
+       project
        (let [control-ws (:workspace-root (opts options))]
          (-> (opts options)
              (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))

@@ -39,11 +39,14 @@ const ROOT_DESCRIPTOR = path.join(process.cwd(), '.tesseraft', 'project.json');
 const SC004_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc004-root');
 const SC004_DESCRIPTOR = path.join(SC004_ROOT, '.tesseraft', 'project.json');
 const SC004_MANIFEST = path.join(PROJECTS_DIR, 'sc004-project.json');
+const SC004_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc004-home');
+const SC004_REGISTRY = path.join(SC004_REGISTRY_HOME, 'projects', 'registry.json');
 const SC004_LEGACY_SENTINEL = path.join(SC004_ROOT, '.tesseraft', 'projects', 'legacy-default.json');
 const SC005_OLD_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-old-root');
 const SC005_NEW_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-new-root');
 const SC005_NEW_DESCRIPTOR = path.join(SC005_NEW_ROOT, '.tesseraft', 'project.json');
 const SC005_MANIFEST = path.join(PROJECTS_DIR, 'sc005-project.json');
+const SC005_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-home');
 const SC006_REGISTERED_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-registered-root');
 const SC006_MANIFEST = path.join(PROJECTS_DIR, 'sc006-project.json');
 const SC007_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc007-unsupported-version-root');
@@ -58,11 +61,15 @@ const SC009_DIRECT_MANIFEST = path.join(PROJECTS_DIR, 'sc009-outside-root.json')
 const SC009_SYMLINK_MANIFEST = path.join(PROJECTS_DIR, 'sc009-symlink-escaped-root.json');
 const SC010_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-migration-root');
 const SC010_DESCRIPTOR = path.join(SC010_ROOT, '.tesseraft', 'project.json');
-const SC010_REGISTRATION = path.join(PROJECTS_DIR, 'sc010-legacy-project.json');
+const SC010_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc010-legacy-project.json');
+const SC010_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-home');
+const SC010_REGISTRY = path.join(SC010_REGISTRY_HOME, 'projects', 'registry.json');
 const SC010_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-legacy-control', 'sc010-legacy-project.json');
 const SC011_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-migration-root');
 const SC011_DESCRIPTOR = path.join(SC011_ROOT, '.tesseraft', 'project.json');
-const SC011_REGISTRATION = path.join(PROJECTS_DIR, 'sc011-legacy-project.json');
+const SC011_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc011-legacy-project.json');
+const SC011_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-home');
+const SC011_REGISTRY = path.join(SC011_REGISTRY_HOME, 'projects', 'registry.json');
 const SC011_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-legacy-control', 'sc011-legacy-project.json');
 
 const manifest = (id, name, ws) => ({
@@ -84,7 +91,9 @@ const cleanup = () => {
   fs.rmSync(BETA_MANIFEST, { force: true });
   fs.rmSync(ROOT_DESCRIPTOR, { force: true });
   fs.rmSync(SC004_MANIFEST, { force: true });
+  fs.rmSync(SC004_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(SC005_MANIFEST, { force: true });
+  fs.rmSync(SC005_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(SC006_MANIFEST, { force: true });
   fs.rmSync(SC007_MANIFEST, { force: true });
   fs.rmSync(SC004_ROOT, { recursive: true, force: true });
@@ -100,10 +109,12 @@ const cleanup = () => {
   fs.rmSync(SC009_ALLOWED_ROOT, { recursive: true, force: true });
   fs.rmSync(SC009_OUTSIDE_ROOT, { recursive: true, force: true });
   fs.rmSync(SC010_ROOT, { recursive: true, force: true });
-  fs.rmSync(SC010_REGISTRATION, { force: true });
+  fs.rmSync(SC010_LEGACY_REGISTRATION, { force: true });
+  fs.rmSync(SC010_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(path.dirname(SC010_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(SC011_ROOT, { recursive: true, force: true });
-  fs.rmSync(SC011_REGISTRATION, { force: true });
+  fs.rmSync(SC011_LEGACY_REGISTRATION, { force: true });
+  fs.rmSync(SC011_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(path.dirname(SC011_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
@@ -141,6 +152,35 @@ test('SC-002 explicit project id reports agreeing descriptor and legacy duplicat
   );
 });
 
+test('SC-002 explicit project id ignores non-matching nearest descriptor and fails closed for operations', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(ROOT_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(ROOT_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'alpha',
+    name: 'Alpha Descriptor',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const detail = await fetch(`${base}/api/projects/beta`);
+  assert.equal(detail.status, 404, 'SC-002 requested id beta should not select a nearest descriptor for alpha');
+  const detailBody = await detail.json();
+  assert.equal(detailBody.error?.code, 'not_found', `SC-002 mismatched descriptor should fall through to not_found; got ${JSON.stringify(detailBody)}`);
+
+  const workflows = await fetch(`${base}/api/projects/beta/workflows`);
+  assert.equal(workflows.status, 404, 'SC-002 project-scoped operations for unknown ids must fail closed instead of using the invocation workspace');
+  const workflowsBody = await workflows.json();
+  assert.equal(workflowsBody.error?.code, 'not_found', `SC-002 unknown-id operation should propagate not_found; got ${JSON.stringify(workflowsBody)}`);
+});
+
 test('SC-004 registers and unregisters a descriptor-derived project identity', async (t) => {
   cleanup();
   t.after(() => cleanup());
@@ -161,8 +201,10 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
   const descriptorBefore = fs.readFileSync(SC004_DESCRIPTOR, 'utf8');
   const legacyBefore = fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8');
   const dataBefore = fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data'));
+  process.env.TESSERAFT_HOME = SC004_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [SC004_ROOT] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -177,6 +219,11 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
   const firstBody = await firstRegister.json();
   assert.equal(firstBody.project_id, 'sc004-project', 'SC-004 registration should derive project_id from .tesseraft/project.json');
   assert.equal(path.normalize(firstBody.workspace_root || firstBody.canonical_root || ''), expectedRoot, 'SC-004 registration should store the canonical descriptor root');
+  assert.equal(fs.existsSync(SC004_MANIFEST), false, 'SC-004 registration must not write legacy workspace manifest storage');
+  assert.equal(fs.existsSync(SC004_REGISTRY), true, 'SC-004 registration should be stored in a versioned user-local registry');
+  const registry = JSON.parse(fs.readFileSync(SC004_REGISTRY, 'utf8'));
+  assert.equal(registry.version, 1, 'SC-004 user-local registry should declare schema version 1');
+  assert.equal(path.normalize(registry.projects?.['sc004-project']?.workspace_root || ''), expectedRoot, 'SC-004 registry mapping should store the canonical root');
 
   const secondRegister = await register();
   assert.ok(secondRegister.status === 200 || secondRegister.status === 201, `SC-004 repeat registration should be idempotent; got ${secondRegister.status}`);
@@ -193,7 +240,9 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
 
   const unregister = await fetch(`${base}/api/projects/sc004-project`, { method: 'DELETE' });
   assert.ok(unregister.status === 200 || unregister.status === 204, `SC-004 unregister should remove the user-local registration; got ${unregister.status}`);
-  assert.equal(fs.existsSync(SC004_MANIFEST), false, 'SC-004 unregister should remove only user-local registration state');
+  const registryAfterUnregister = JSON.parse(fs.readFileSync(SC004_REGISTRY, 'utf8'));
+  assert.equal(registryAfterUnregister.projects?.['sc004-project'], undefined, 'SC-004 unregister should remove only the user-local registry mapping');
+  assert.equal(fs.existsSync(SC004_MANIFEST), false, 'SC-004 unregister should not create or delete legacy workspace manifest storage');
   assert.equal(fs.readFileSync(SC004_DESCRIPTOR, 'utf8'), descriptorBefore, 'SC-004 unregister must leave the descriptor unchanged');
   assert.equal(fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8'), legacyBefore, 'SC-004 unregister must leave legacy project files unchanged');
   assert.equal(fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data')), dataBefore, 'SC-004 unregister must leave project data unchanged');
@@ -202,6 +251,9 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
 test('SC-005 reports stale registrations and accepts explicit re-registration at the new root', async (t) => {
   cleanup();
   t.after(() => cleanup());
+
+  process.env.TESSERAFT_HOME = SC005_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
 
   fs.mkdirSync(PROJECTS_DIR, { recursive: true });
   fs.mkdirSync(SC005_OLD_ROOT, { recursive: true });
@@ -216,7 +268,7 @@ test('SC-005 reports stale registrations and accepts explicit re-registration at
   }, null, 2));
   fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [path.join(process.cwd(), '.agent-runs')] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -313,7 +365,7 @@ test('SC-007 rejects unsupported versioned project descriptors before registrati
     discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
   }, null, 2));
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [SC007_ROOT] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -346,7 +398,7 @@ test('SC-008 rejects project-owned roots that symlink outside the project bounda
     discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
   }, null, 2));
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [SC008_LINK_ROOT] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -361,6 +413,34 @@ test('SC-008 rejects project-owned roots that symlink outside the project bounda
   assert.equal(body.error?.code, 'project_path_escape', `SC-008 project-owned path confinement diagnostic should use project_path_escape; got ${JSON.stringify(body)}`);
   assert.equal(body.project_id, undefined, 'SC-008 symlink escape must not select or register a project');
   assert.equal(fs.existsSync(SC008_MANIFEST), false, 'SC-008 symlink escape must not be persisted as a registration');
+});
+
+test('SC-009 rejects browser project registration when no allowed roots are configured', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.join(SC009_OUTSIDE_ROOT, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(SC009_OUTSIDE_ROOT, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'sc009-outside-root',
+    name: 'SC009 Outside Root',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const response = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC009_OUTSIDE_ROOT })
+  });
+  assert.equal(response.status, 400, 'SC-009 production-default browser registration must fail closed without configured allowed roots');
+  const body = await response.json();
+  assert.equal(body.error?.code, 'project_root_not_allowed', `SC-009 default rejection should use project_root_not_allowed; got ${JSON.stringify(body)}`);
+  assert.equal(fs.existsSync(SC009_DIRECT_MANIFEST), false, 'SC-009 default rejection must not persist registration state');
 });
 
 test('SC-009 confines browser project registration to configured filesystem roots', async (t) => {
@@ -424,8 +504,10 @@ test('SC-010 migrates a valid legacy control manifest to portable project state 
   fs.writeFileSync(SC010_LEGACY_MANIFEST, JSON.stringify(legacyManifest, null, 2));
   const legacyBefore = fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8');
   const expectedRoot = fs.realpathSync(SC010_ROOT);
+  process.env.TESSERAFT_HOME = SC010_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [SC010_ROOT] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -450,13 +532,16 @@ test('SC-010 migrates a valid legacy control manifest to portable project state 
   assert.equal(descriptor.runs_root, 'runs', 'SC-010 descriptor should preserve project-relative runs_root');
   assert.deepEqual(descriptor.discovery?.['workflow-roots'], ['.tesseraft/workflows'], 'SC-010 descriptor should preserve project-relative workflow discovery roots');
 
-  assert.equal(fs.existsSync(SC010_REGISTRATION), true, 'SC-010 migration should create matching user-local registration state');
-  const registration = JSON.parse(fs.readFileSync(SC010_REGISTRATION, 'utf8'));
-  assert.equal(registration.project_id, 'sc010-legacy-project', 'SC-010 registration should preserve legacy project identity');
+  assert.equal(fs.existsSync(SC010_LEGACY_REGISTRATION), false, 'SC-010 migration must not write registration state into legacy workspace manifest storage');
+  assert.equal(fs.existsSync(SC010_REGISTRY), true, 'SC-010 migration should create matching user-local registry state');
+  const registry = JSON.parse(fs.readFileSync(SC010_REGISTRY, 'utf8'));
+  assert.equal(registry.version, 1, 'SC-010 registry should declare schema version 1');
+  const registration = registry.projects?.['sc010-legacy-project'];
+  assert.ok(registration, `SC-010 registry should contain migrated registration; got ${JSON.stringify(registry)}`);
   assert.equal(path.normalize(registration.workspace_root || registration.canonical_root || ''), expectedRoot, 'SC-010 registration should store the canonical migrated root');
 
   const descriptorBeforeRepeat = fs.readFileSync(SC010_DESCRIPTOR, 'utf8');
-  const registrationBeforeRepeat = fs.readFileSync(SC010_REGISTRATION, 'utf8');
+  const registryBeforeRepeat = fs.readFileSync(SC010_REGISTRY, 'utf8');
   const repeatMigration = await fetch(`${base}/api/projects/sc010-legacy-project/migrate`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(migrateBody)
@@ -464,7 +549,7 @@ test('SC-010 migrates a valid legacy control manifest to portable project state 
   assert.ok(repeatMigration.status === 200 || repeatMigration.status === 201, `SC-010 repeated completed migration should be safe and successful; got ${repeatMigration.status}`);
   assert.equal(fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-010 repeated migration must still preserve the legacy source byte-for-byte');
   assert.equal(fs.readFileSync(SC010_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'SC-010 repeated migration must not overwrite the destination descriptor');
-  assert.equal(fs.readFileSync(SC010_REGISTRATION, 'utf8'), registrationBeforeRepeat, 'SC-010 repeated migration must not overwrite registration state');
+  assert.equal(fs.readFileSync(SC010_REGISTRY, 'utf8'), registryBeforeRepeat, 'SC-010 repeated migration must not overwrite registration state');
 });
 
 test('SC-011 rolls back a migration-created descriptor when registration cannot be written', async (t) => {
@@ -489,9 +574,12 @@ test('SC-011 rolls back a migration-created descriptor when registration cannot 
 
   fs.rmSync(PROJECTS_DIR, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(PROJECTS_DIR), { recursive: true });
-  fs.writeFileSync(PROJECTS_DIR, 'not a directory, so registration creation fails');
+  fs.mkdirSync(SC011_REGISTRY_HOME, { recursive: true });
+  fs.writeFileSync(path.join(SC011_REGISTRY_HOME, 'projects'), 'not a directory, so registry creation fails');
+  process.env.TESSERAFT_HOME = SC011_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
 
-  const server = createServer();
+  const server = createServer({ browserAllowedProjectRoots: [SC011_ROOT] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -505,7 +593,8 @@ test('SC-011 rolls back a migration-created descriptor when registration cannot 
   assert.equal(body.error?.code, 'migration_failed', `SC-011 failed migration should use migration_failed; got ${JSON.stringify(body)}`);
 
   assert.equal(fs.readFileSync(SC011_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-011 failed migration must preserve the legacy source byte-for-byte');
-  assert.equal(fs.existsSync(SC011_REGISTRATION), false, 'SC-011 failed migration must not leave user-local registration state');
+  assert.equal(fs.existsSync(SC011_LEGACY_REGISTRATION), false, 'SC-011 failed migration must not write legacy registration state');
+  assert.equal(fs.existsSync(SC011_REGISTRY), false, 'SC-011 failed migration must not leave user-local registry state');
   assert.equal(fs.existsSync(SC011_DESCRIPTOR), false, 'SC-011 failed migration must roll back the migration-created destination descriptor');
 });
 
