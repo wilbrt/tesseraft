@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createServer } from '../web/dist-server/server.js';
 
@@ -48,6 +49,8 @@ const SC006_MANIFEST = path.join(PROJECTS_DIR, 'sc006-project.json');
 const SC007_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc007-unsupported-version-root');
 const SC007_DESCRIPTOR = path.join(SC007_ROOT, '.tesseraft', 'project.json');
 const SC007_MANIFEST = path.join(PROJECTS_DIR, 'sc007-unsupported-version.json');
+const SC008_LINK_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc008-linked-root');
+const SC008_MANIFEST = path.join(PROJECTS_DIR, 'sc008-symlink-escape.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -76,6 +79,8 @@ const cleanup = () => {
   fs.rmSync(SC005_NEW_ROOT, { recursive: true, force: true });
   fs.rmSync(SC006_REGISTERED_ROOT, { recursive: true, force: true });
   fs.rmSync(SC007_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC008_MANIFEST, { force: true });
+  fs.rmSync(SC008_LINK_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -299,6 +304,39 @@ test('SC-007 rejects unsupported versioned project descriptors before registrati
   assert.equal(body.error?.code, 'invalid_project_descriptor', `SC-007 invalid-version diagnostic should use invalid_project_descriptor; got ${JSON.stringify(body)}`);
   assert.equal(body.project_id, undefined, 'SC-007 invalid descriptor must not select or register a project');
   assert.equal(fs.existsSync(SC007_MANIFEST), false, 'SC-007 invalid descriptor must not be persisted as a registration');
+});
+
+test('SC-008 rejects project-owned roots that symlink outside the project boundary', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  const externalRunsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc008-runs-'));
+  t.after(() => fs.rmSync(externalRunsRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(SC008_LINK_ROOT, '.tesseraft'), { recursive: true });
+  fs.symlinkSync(externalRunsRoot, path.join(SC008_LINK_ROOT, 'linked-runs'), 'dir');
+  fs.writeFileSync(path.join(SC008_LINK_ROOT, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'sc008-symlink-escape',
+    name: 'SC008 Symlink Escape',
+    runs_root: 'linked-runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const response = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC008_LINK_ROOT })
+  });
+
+  assert.equal(response.status, 400, 'SC-008 symlink-resolved runs_root outside the project boundary should be rejected');
+  const body = await response.json();
+  assert.equal(body.error?.code, 'project_path_escape', `SC-008 project-owned path confinement diagnostic should use project_path_escape; got ${JSON.stringify(body)}`);
+  assert.equal(body.project_id, undefined, 'SC-008 symlink escape must not select or register a project');
+  assert.equal(fs.existsSync(SC008_MANIFEST), false, 'SC-008 symlink escape must not be persisted as a registration');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

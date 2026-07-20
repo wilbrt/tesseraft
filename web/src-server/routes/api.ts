@@ -278,6 +278,28 @@ const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   return null;
 };
 
+const isPathWithin = (parent: string, child: string): boolean => {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const hasParentTraversal = (p: string): boolean => p.split(/[\\/]+/).some((part) => part === '..');
+
+const validateProjectOwnedPath = (projectRoot: string, field: string, value: string): JsonRecord | null => {
+  if (value.trim() === '') return null;
+  if (path.isAbsolute(value) || hasParentTraversal(value)) {
+    return { field, path: value, project_root: projectRoot };
+  }
+  const resolved = path.resolve(projectRoot, value);
+  let canonical = resolved;
+  try {
+    if (fs.existsSync(resolved)) canonical = fs.realpathSync(resolved);
+  } catch (error) {
+    return { field, path: value, project_root: projectRoot, message: error instanceof Error ? error.message : String(error) };
+  }
+  return isPathWithin(projectRoot, canonical) ? null : { field, path: value, project_root: projectRoot, canonical_path: canonical };
+};
+
 const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
   const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
@@ -299,12 +321,21 @@ const handleCreateProject = async (req: Request, res: Response): Promise<void> =
   const name = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : (typeof descriptor?.name === 'string' ? descriptor.name : '');
   const runsRoot = typeof body.runs_root === 'string' && body.runs_root.trim() !== '' ? body.runs_root.trim() : (typeof descriptor?.runs_root === 'string' ? descriptor.runs_root : '');
   const workspaceRoot = projectRoot || (typeof body.workspace_root === 'string' ? body.workspace_root.trim() : '');
+  const workflowRoots = collectWorkflowRoots(body);
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery['workflow-roots'])) for (const r of descriptorDiscovery['workflow-roots']) if (typeof r === 'string') workflowRoots.push(r);
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery.workflow_roots)) for (const r of descriptorDiscovery.workflow_roots) if (typeof r === 'string') workflowRoots.push(r);
+  if (projectRoot) {
+    const escapedRunsRoot = runsRoot ? validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot) : null;
+    if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
+    for (const r of workflowRoots) {
+      const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
+      if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
+    }
+  }
   if (name) args.push('--name', name);
   if (workspaceRoot) args.push('--workspace-root', workspaceRoot);
   if (runsRoot) args.push('--runs-root', runsRoot);
-  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
-  if (descriptorDiscovery && Array.isArray(descriptorDiscovery['workflow-roots'])) for (const r of descriptorDiscovery['workflow-roots']) if (typeof r === 'string') args.push('--workflow-root', r);
-  if (descriptorDiscovery && Array.isArray(descriptorDiscovery.workflow_roots)) for (const r of descriptorDiscovery.workflow_roots) if (typeof r === 'string') args.push('--workflow-root', r);
+  for (const r of workflowRoots) args.push('--workflow-root', r);
   const conns = body.connections;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
     const c = conns as Record<string, JsonRecord>;
