@@ -1424,15 +1424,36 @@ test('project abstraction: path-confinement rejects runs_root and workspace_root
 });
 
 test('project abstraction: HTTP create rejects path escapes with 400 and honors nested discovery.workflow-roots (review issues 1, 2, 3)', async () => {
-  const server = createServer(createFakePiSessionAdapter());
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-create-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-create-home');
+  const escapeRoot = path.join(allowedRoot, 'escape-project');
+  const nestedRoot = path.join(allowedRoot, 'nested-project');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(path.join(escapeRoot, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(escapeRoot, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'http-escape',
+    runs_root: '../../../tmp/escape',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  fs.mkdirSync(path.join(nestedRoot, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(nestedRoot, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'nested-discovery',
+    name: 'Nested',
+    discovery: { 'workflow-roots': ['examples/smoke'] }
+  }, null, 2));
+
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
   const port = await listen(server);
   const base = `http://127.0.0.1:${port}`;
   try {
-    // POST /api/projects with an escaping runs_root returns 400, never 201.
+    // POST /api/projects with an escaping descriptor runs_root returns 400, never 201.
     const escapeRes = await fetch(`${base}/api/projects`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: 'http-escape', runs_root: '../../../tmp/escape' })
+      body: JSON.stringify({ project_root: escapeRoot })
     });
     assert.equal(escapeRes.status, 400, 'escaped runs_root must be 400, not 201');
     const escapeBody = await escapeRes.json();
@@ -1441,11 +1462,11 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     const gone = await fetch(`${base}/api/projects/http-escape`);
     assert.equal(gone.status, 404, 'escaped project must not have been persisted');
 
-    // POST with the design-doc nested discovery shape is honored.
+    // POST with the descriptor-backed design-doc nested discovery shape is honored.
     const nested = await fetch(`${base}/api/projects`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: 'nested-discovery', name: 'Nested', discovery: { 'workflow-roots': ['examples/smoke'] } })
+      body: JSON.stringify({ project_root: nestedRoot })
     });
     assert.equal(nested.status, 201, 'nested discovery create should succeed');
     const nestedBody = await nested.json();
@@ -1458,6 +1479,10 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
   } finally {
     await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
     // Clean up created manifests so listProjects synthesizes the implicit
     // default for later tests (default is only implicit when no manifests exist).
     const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');

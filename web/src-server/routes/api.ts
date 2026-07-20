@@ -318,6 +318,7 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
       return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root is not readable', { message: error instanceof Error ? error.message : String(error) }));
     }
   }
+  if (!projectRoot) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root is required for browser project registration'));
   let descriptor: JsonRecord | null = null;
   if (projectRoot) {
     const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);

@@ -36,6 +36,7 @@ const BETA_WS = path.join(process.cwd(), '.agent-runs', 'proj-scope-beta-ws');
 const ALPHA_MANIFEST = path.join(PROJECTS_DIR, 'alpha.json');
 const BETA_MANIFEST = path.join(PROJECTS_DIR, 'beta.json');
 const ROOT_DESCRIPTOR = path.join(process.cwd(), '.tesseraft', 'project.json');
+const ROOT_WORKFLOW_FIXTURE = path.join(process.cwd(), '.tesseraft', 'workflows', 'root-workflow');
 const SC004_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc004-root');
 const SC004_DESCRIPTOR = path.join(SC004_ROOT, '.tesseraft', 'project.json');
 const SC004_MANIFEST = path.join(PROJECTS_DIR, 'sc004-project.json');
@@ -59,6 +60,7 @@ const SC009_OUTSIDE_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-s
 const SC009_SYMLINK_ROOT = path.join(SC009_ALLOWED_ROOT, 'linked-outside-root');
 const SC009_DIRECT_MANIFEST = path.join(PROJECTS_DIR, 'sc009-outside-root.json');
 const SC009_SYMLINK_MANIFEST = path.join(PROJECTS_DIR, 'sc009-symlink-escaped-root.json');
+const SC009_LEGACY_BYPASS_MANIFEST = path.join(PROJECTS_DIR, 'sc009-legacy-bypass.json');
 const SC010_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-migration-root');
 const SC010_DESCRIPTOR = path.join(SC010_ROOT, '.tesseraft', 'project.json');
 const SC010_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc010-legacy-project.json');
@@ -90,6 +92,7 @@ const cleanup = () => {
   fs.rmSync(ALPHA_MANIFEST, { force: true });
   fs.rmSync(BETA_MANIFEST, { force: true });
   fs.rmSync(ROOT_DESCRIPTOR, { force: true });
+  fs.rmSync(ROOT_WORKFLOW_FIXTURE, { recursive: true, force: true });
   fs.rmSync(SC004_MANIFEST, { force: true });
   fs.rmSync(SC004_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(SC005_MANIFEST, { force: true });
@@ -105,6 +108,7 @@ const cleanup = () => {
   fs.rmSync(SC008_LINK_ROOT, { recursive: true, force: true });
   fs.rmSync(SC009_DIRECT_MANIFEST, { force: true });
   fs.rmSync(SC009_SYMLINK_MANIFEST, { force: true });
+  fs.rmSync(SC009_LEGACY_BYPASS_MANIFEST, { force: true });
   fs.rmSync(SC009_SYMLINK_ROOT, { force: true });
   fs.rmSync(SC009_ALLOWED_ROOT, { recursive: true, force: true });
   fs.rmSync(SC009_OUTSIDE_ROOT, { recursive: true, force: true });
@@ -179,6 +183,67 @@ test('SC-002 explicit project id ignores non-matching nearest descriptor and fai
   assert.equal(workflows.status, 404, 'SC-002 project-scoped operations for unknown ids must fail closed instead of using the invocation workspace');
   const workflowsBody = await workflows.json();
   assert.equal(workflowsBody.error?.code, 'not_found', `SC-002 unknown-id operation should propagate not_found; got ${JSON.stringify(workflowsBody)}`);
+});
+
+test('project-scoped operations fail closed when project resolution fails', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(ROOT_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(ROOT_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'alpha',
+    name: 'Alpha Descriptor',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  writeWorkflow(process.cwd(), 'root-workflow', 'Root Workflow Must Not Leak');
+
+  const rootSettings = path.join(process.cwd(), '.tesseraft', 'settings.json');
+  const rootGitUser = path.join(process.cwd(), '.tesseraft', 'git-user.json');
+  fs.rmSync(rootSettings, { force: true });
+  fs.rmSync(rootGitUser, { force: true });
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+  const unknown = 'missing-project';
+
+  const reads = [
+    `/api/projects/${unknown}/workflows/root-workflow`,
+    `/api/projects/${unknown}/workflows/root-workflow/graph`,
+    `/api/projects/${unknown}/runs`,
+    `/api/projects/${unknown}/runs/any-run`,
+    `/api/projects/${unknown}/settings`,
+    `/api/projects/${unknown}/git-user`
+  ];
+  for (const route of reads) {
+    const response = await fetch(`${base}${route}`);
+    assert.equal(response.status, 404, `${route} must propagate the project resolution status`);
+    const body = await response.json();
+    assert.equal(body.error?.code, 'not_found', `${route} must propagate the structured project resolution error; got ${JSON.stringify(body)}`);
+    assert.equal(body.workflow, undefined, `${route} must not fall back to root workflow discovery`);
+    assert.equal(body.runs, undefined, `${route} must not fall back to root run listing`);
+    assert.equal(body.settings, undefined, `${route} must not fall back to root settings`);
+    assert.equal(body.git_user, undefined, `${route} must not fall back to root git-user`);
+  }
+
+  const settingsWrite = await fetch(`${base}/api/projects/${unknown}/settings`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ color_scheme: 'matrix' })
+  });
+  assert.equal(settingsWrite.status, 404, 'settings mutation must fail on project resolution before writing');
+  assert.equal((await settingsWrite.json()).error?.code, 'not_found');
+  assert.equal(fs.existsSync(rootSettings), false, 'failed project-scoped settings mutation must not write root settings');
+
+  const gitUserWrite = await fetch(`${base}/api/projects/${unknown}/git-user`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Missing Project', email: 'missing@example.com' })
+  });
+  assert.equal(gitUserWrite.status, 404, 'git-user mutation must fail on project resolution before writing');
+  assert.equal((await gitUserWrite.json()).error?.code, 'not_found');
+  assert.equal(fs.existsSync(rootGitUser), false, 'failed project-scoped git-user mutation must not write root git-user');
 });
 
 test('SC-004 registers and unregisters a descriptor-derived project identity', async (t) => {
@@ -441,6 +506,29 @@ test('SC-009 rejects browser project registration when no allowed roots are conf
   const body = await response.json();
   assert.equal(body.error?.code, 'project_root_not_allowed', `SC-009 default rejection should use project_root_not_allowed; got ${JSON.stringify(body)}`);
   assert.equal(fs.existsSync(SC009_DIRECT_MANIFEST), false, 'SC-009 default rejection must not persist registration state');
+});
+
+test('SC-009 rejects omitted and blank browser project roots before legacy project creation', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(SC009_ALLOWED_ROOT, { recursive: true });
+
+  const server = createServer({ browserAllowedProjectRoots: [SC009_ALLOWED_ROOT] });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  for (const body of [{ project_id: 'sc009-legacy-bypass' }, { project_id: 'sc009-legacy-bypass', project_root: '   ' }]) {
+    const response = await fetch(`${base}/api/projects`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    assert.equal(response.status, 400, `SC-009 browser registration must reject legacy body ${JSON.stringify(body)}`);
+    const responseBody = await response.json();
+    assert.equal(responseBody.error?.code, 'bad_request', `SC-009 missing-root diagnostic should be bad_request; got ${JSON.stringify(responseBody)}`);
+    assert.equal(fs.existsSync(SC009_LEGACY_BYPASS_MANIFEST), false, 'SC-009 rejected legacy browser body must not create workspace-local project state');
+  }
 });
 
 test('SC-009 confines browser project registration to configured filesystem roots', async (t) => {

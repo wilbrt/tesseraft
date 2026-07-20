@@ -950,36 +950,38 @@
   ([] (get-workflow {} nil nil))
   ([options name] (get-workflow options name nil))
   ([options name project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         resolved (resolve-workflow sopts name)]
-     (if (:error resolved)
-       resolved
-       (let [{:keys [workspace-root]} sopts
-             {:keys [file workflow source precedence]} resolved
-             lint-result (lint/lint-file file)
-             ;; Shadowing context for the detail view. `resolve-workflow`
-             ;; already 409s on an equal-precedence conflict, so when we
-             ;; get here the resolution is unique: `conflicts` is therefore
-             ;; empty in practice (kept for symmetry with the list endpoint)
-             ;; and `duplicates` lists the lower-precedence same-name entries
-             ;; this workflow overrides. Precedence/selection semantics are
-             ;; untouched — this only attaches inspection metadata.
-             matches (workflow-candidates sopts name)
-             others (remove #(= (:file %) file) matches)
-             conflicts (mapv #(workflow-meta-item workspace-root %)
-                             (filter #(= (:precedence %) precedence) others))
-             duplicates (mapv #(workflow-meta-item workspace-root %)
-                              (filter #(< (:precedence %) precedence) others))]
-         (api-value
-           (cond-> {:workflow {:name (str (spec/workflow-name workflow))
-                               :path (relative-path workspace-root file)
-                               :source source
-                               :precedence precedence
-                               :api_version (:api-version workflow)
-                               :normalized (dissoc workflow :__file :__dir)
-                               :lint lint-result}}
-             (seq conflicts) (assoc-in [:workflow :conflicts] conflicts)
-             (seq duplicates) (assoc-in [:workflow :duplicates] duplicates))))))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [resolved (resolve-workflow sopts name)]
+         (if (:error resolved)
+           resolved
+           (let [{:keys [workspace-root]} sopts
+                 {:keys [file workflow source precedence]} resolved
+                 lint-result (lint/lint-file file)
+                 ;; Shadowing context for the detail view. `resolve-workflow`
+                 ;; already 409s on an equal-precedence conflict, so when we
+                 ;; get here the resolution is unique: `conflicts` is therefore
+                 ;; empty in practice (kept for symmetry with the list endpoint)
+                 ;; and `duplicates` lists the lower-precedence same-name entries
+                 ;; this workflow overrides. Precedence/selection semantics are
+                 ;; untouched — this only attaches inspection metadata.
+                 matches (workflow-candidates sopts name)
+                 others (remove #(= (:file %) file) matches)
+                 conflicts (mapv #(workflow-meta-item workspace-root %)
+                                 (filter #(= (:precedence %) precedence) others))
+                 duplicates (mapv #(workflow-meta-item workspace-root %)
+                                  (filter #(< (:precedence %) precedence) others))]
+             (api-value
+               (cond-> {:workflow {:name (str (spec/workflow-name workflow))
+                                   :path (relative-path workspace-root file)
+                                   :source source
+                                   :precedence precedence
+                                   :api_version (:api-version workflow)
+                                   :normalized (dissoc workflow :__file :__dir)
+                                   :lint lint-result}}
+                 (seq conflicts) (assoc-in [:workflow :conflicts] conflicts)
+                 (seq duplicates) (assoc-in [:workflow :duplicates] duplicates))))))))))
 
 (defn edge-from-transition [from tr]
   (cond-> {:from (spec/normalize-id from)
@@ -991,39 +993,43 @@
   ([] (get-workflow-graph {} nil nil))
   ([options name] (get-workflow-graph options name nil))
   ([options name project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         resolved (resolve-workflow sopts name)]
-     (if (:error resolved)
-       resolved
-       (let [{:keys [file workflow]} resolved
-             lint-result (lint/lint-file file)]
-         (api-value
-           {:workflow_name (str (spec/workflow-name workflow))
-            :nodes (vec (for [[id node] (:states workflow)]
-                          (cond-> {:id (spec/normalize-id id)
-                                   :type (:type node)}
-                            (:title node) (assoc :title (:title node))
-                            (:outputs node) (assoc :outputs (:outputs node))
-                            (:resources node) (assoc :resources (:resources node)))))
-            :edges (vec (for [[from node] (:states workflow)
-                              tr (spec/transitions node)
-                              :when (:next tr)]
-                          (edge-from-transition from tr)))
-            :diagnostics (:diagnostics lint-result)}))))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [resolved (resolve-workflow sopts name)]
+         (if (:error resolved)
+           resolved
+           (let [{:keys [file workflow]} resolved
+                 lint-result (lint/lint-file file)]
+             (api-value
+               {:workflow_name (str (spec/workflow-name workflow))
+                :nodes (vec (for [[id node] (:states workflow)]
+                              (cond-> {:id (spec/normalize-id id)
+                                       :type (:type node)}
+                                (:title node) (assoc :title (:title node))
+                                (:outputs node) (assoc :outputs (:outputs node))
+                                (:resources node) (assoc :resources (:resources node)))))
+                :edges (vec (for [[from node] (:states workflow)
+                                  tr (spec/transitions node)
+                                  :when (:next tr)]
+                              (edge-from-transition from tr)))
+                :diagnostics (:diagnostics lint-result)}))))))))
 
 (defn run-state-files
   ([options] (run-state-files options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [workspace-root runs-root]} sopts
-         root (abs-path workspace-root runs-root)]
-     (if-not (fs/exists? root)
-       []
-       (->> (for [p (file-seq (fs/file root))
-                  :when (and (.isFile p) (= "state.edn" (.getName p)))]
-              (fs/path p))
-            (sort-by str)
-            vec)))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [workspace-root runs-root]} sopts
+             root (abs-path workspace-root runs-root)]
+         (if-not (fs/exists? root)
+           []
+           (->> (for [p (file-seq (fs/file root))
+                      :when (and (.isFile p) (= "state.edn" (.getName p)))]
+                  (fs/path p))
+                (sort-by str)
+                vec)))))))
 
 (defn run-dir-from-state-file [state-file]
   (fs/parent state-file))
@@ -1149,17 +1155,19 @@
   ([] (list-runs {}))
   ([options] (list-runs options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         entries (mapv (fn [state-file]
-                         (try
-                           {:run (api-value (run-summary sopts state-file))}
-                           (catch Throwable t
-                             {:error {:code "parse_error"
-                                      :message (.getMessage t)
-                                      :details {:path (relative-path (:workspace-root sopts) state-file)}}})))
-                       (run-state-files options project-id))]
-     {:runs (mapv :run (filter :run entries))
-      :errors (mapv :error (filter :error entries))})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [entries (mapv (fn [state-file]
+                             (try
+                               {:run (api-value (run-summary sopts state-file))}
+                               (catch Throwable t
+                                 {:error {:code "parse_error"
+                                          :message (.getMessage t)
+                                          :details {:path (relative-path (:workspace-root sopts) state-file)}}})))
+                           (run-state-files options project-id))]
+         {:runs (mapv :run (filter :run entries))
+          :errors (mapv :error (filter :error entries))})))))
 
 (defn matching-run-files
   ([options run-id] (matching-run-files options run-id nil))
@@ -1192,14 +1200,16 @@
   ([options run-id] (resolve-run options run-id nil))
   ([options run-id project-id]
    (let [pid (or project-id "default")
-         sopts (project-scoped-opts options project-id)
-         matches (matching-run-files options run-id project-id)]
-     (cond
-       (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id :project_id pid})
-       (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
-                                             {:run_id run-id
-                                              :paths (mapv #(relative-path (:workspace-root sopts) (:run-dir %)) matches)})
-       :else (first matches)))))
+         sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [matches (matching-run-files options run-id project-id)]
+         (cond
+           (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id :project_id pid})
+           (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
+                                                 {:run_id run-id
+                                                  :paths (mapv #(relative-path (:workspace-root sopts) (:run-dir %)) matches)})
+           :else (first matches)))))))
 
 (defn events-file [run-dir]
   (fs/path run-dir "events.jsonl"))
@@ -1753,26 +1763,30 @@
   ([] (get-git-user {} nil))
   ([options] (get-git-user options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [project global]} (git-user-paths sopts)
-         project-user (read-git-user-file project)
-         global-user (read-git-user-file global)]
-     (cond
-       project-user {:git_user (assoc project-user :source "project")}
-       global-user {:git_user (assoc global-user :source "global")}
-       :else {:git_user {:name nil :email nil :source "none"}}))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [project global]} (git-user-paths sopts)
+             project-user (read-git-user-file project)
+             global-user (read-git-user-file global)]
+         (cond
+           project-user {:git_user (assoc project-user :source "project")}
+           global-user {:git_user (assoc global-user :source "global")}
+           :else {:git_user {:name nil :email nil :source "none"}}))))))
 
 (defn set-git-user
   ([options name email global?] (set-git-user options name email global? nil))
   ([options name email global? project-id]
    (if-let [err (validate-git-user name email)]
      (error-response 400 "bad_request" err)
-     (let [sopts (project-scoped-opts options project-id)
-           paths (git-user-paths sopts)
-           target (if global? (:global paths) (:project paths))]
-       (fs/create-dirs (fs/parent target))
-       (store/write-json! target {:name name :email email})
-       (get-git-user sopts project-id)))))
+     (let [sopts (project-scoped-opts options project-id)]
+       (if (:error sopts)
+         sopts
+         (let [paths (git-user-paths sopts)
+               target (if global? (:global paths) (:project paths))]
+           (fs/create-dirs (fs/parent target))
+           (store/write-json! target {:name name :email email})
+           (get-git-user sopts nil)))))))
 
 ;; ---- settings read/mutate surface ----
 ;; `settings-fields`, `settings-unchanged`, `settings-paths`,
@@ -1817,16 +1831,18 @@
   ([] (get-settings {} nil))
   ([options] (get-settings options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [project global]} (settings-paths sopts)
-         project-settings (coerce-settings (read-settings-file project))
-         global-settings (coerce-settings (read-settings-file global))
-         [source raw] (cond
-                        (seq project-settings) ["project" project-settings]
-                        (seq global-settings) ["global" global-settings]
-                        :else ["none" {}])
-         masked (-> raw (mask-settings) (assoc :source source))]
-     {:settings masked})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [project global]} (settings-paths sopts)
+             project-settings (coerce-settings (read-settings-file project))
+             global-settings (coerce-settings (read-settings-file global))
+             [source raw] (cond
+                            (seq project-settings) ["project" project-settings]
+                            (seq global-settings) ["global" global-settings]
+                            :else ["none" {}])
+             masked (-> raw (mask-settings) (assoc :source source))]
+         {:settings masked})))))
 
 (defn set-settings
   "Apply a partial update to the project (or global) settings file. `updates`
@@ -1837,43 +1853,45 @@
   ([options updates global?] (set-settings options updates global? nil))
   ([options updates global? project-id]
    (let [sopts (project-scoped-opts options project-id)]
-     (if (empty? updates)
-       (get-settings sopts project-id)
-       (let [unknown (remove (set settings-fields) (keys updates))]
-         (if (seq unknown)
-           (error-response 400 "bad_request"
-                           (str "Unknown settings fields: "
-                                (str/join ", " (map name (sort unknown)))))
-           (let [errs (reduce (fn [acc [k v]]
-                                (if-let [e (validate-settings-field k v)]
-                                  (conj acc e) acc))
-                              [] updates)]
-             (if (seq errs)
-               (error-response 400 "bad_request" (str/join "; " errs))
-               (let [paths (settings-paths sopts)
-                     target (if global? (:global paths) (:project paths))
-                   current (coerce-settings (read-settings-file target))
-                   merged (reduce
-                              (fn [acc [k v]]
-                                (cond
-                                  ;; Token unchanged: keep whatever is (or isn't) there.
-                                  (and (settings-token-fields k)
-                                       (= v settings-unchanged))
-                                  acc
-                                  ;; Clear: drop the key entirely (nil update).
-                                  (nil? v) (dissoc acc k)
-                                  ;; Set/replace.
-                                  :else (assoc acc k v)))
-                              current updates)]
-               ;; Cross-field consistency: a default model without a default
-               ;; provider is an inconsistent state. Reject it here so the
-               ;; store never holds model-without-provider (this also defends
-               ;; the CLI and direct API callers, not just the web UI).
-               (if (and (contains? merged :pi_default_model)
-                        (not (contains? merged :pi_default_provider)))
-                 (error-response 400 "bad_request"
-                                 "pi_default_provider is required when pi_default_model is set")
-                 (do
-                   (fs/create-dirs (fs/parent target))
-                   (store/write-json! target merged)
-                   (get-settings sopts project-id))))))))))))
+     (if (:error sopts)
+       sopts
+       (if (empty? updates)
+         (get-settings sopts nil)
+         (let [unknown (remove (set settings-fields) (keys updates))]
+           (if (seq unknown)
+             (error-response 400 "bad_request"
+                             (str "Unknown settings fields: "
+                                  (str/join ", " (map name (sort unknown)))))
+             (let [errs (reduce (fn [acc [k v]]
+                                  (if-let [e (validate-settings-field k v)]
+                                    (conj acc e) acc))
+                                [] updates)]
+               (if (seq errs)
+                 (error-response 400 "bad_request" (str/join "; " errs))
+                 (let [paths (settings-paths sopts)
+                       target (if global? (:global paths) (:project paths))
+                       current (coerce-settings (read-settings-file target))
+                       merged (reduce
+                                (fn [acc [k v]]
+                                  (cond
+                                    ;; Token unchanged: keep whatever is (or isn't) there.
+                                    (and (settings-token-fields k)
+                                         (= v settings-unchanged))
+                                    acc
+                                    ;; Clear: drop the key entirely (nil update).
+                                    (nil? v) (dissoc acc k)
+                                    ;; Set/replace.
+                                    :else (assoc acc k v)))
+                                current updates)]
+                   ;; Cross-field consistency: a default model without a default
+                   ;; provider is an inconsistent state. Reject it here so the
+                   ;; store never holds model-without-provider (this also defends
+                   ;; the CLI and direct API callers, not just the web UI).
+                   (if (and (contains? merged :pi_default_model)
+                            (not (contains? merged :pi_default_provider)))
+                     (error-response 400 "bad_request"
+                                     "pi_default_provider is required when pi_default_model is set")
+                     (do
+                       (fs/create-dirs (fs/parent target))
+                       (store/write-json! target merged)
+                       (get-settings sopts nil)))))))))))))
