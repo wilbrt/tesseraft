@@ -45,6 +45,9 @@ const SC005_NEW_DESCRIPTOR = path.join(SC005_NEW_ROOT, '.tesseraft', 'project.js
 const SC005_MANIFEST = path.join(PROJECTS_DIR, 'sc005-project.json');
 const SC006_REGISTERED_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-registered-root');
 const SC006_MANIFEST = path.join(PROJECTS_DIR, 'sc006-project.json');
+const SC007_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc007-unsupported-version-root');
+const SC007_DESCRIPTOR = path.join(SC007_ROOT, '.tesseraft', 'project.json');
+const SC007_MANIFEST = path.join(PROJECTS_DIR, 'sc007-unsupported-version.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -67,10 +70,12 @@ const cleanup = () => {
   fs.rmSync(SC004_MANIFEST, { force: true });
   fs.rmSync(SC005_MANIFEST, { force: true });
   fs.rmSync(SC006_MANIFEST, { force: true });
+  fs.rmSync(SC007_MANIFEST, { force: true });
   fs.rmSync(SC004_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_NEW_ROOT, { recursive: true, force: true });
   fs.rmSync(SC006_REGISTERED_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC007_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -264,6 +269,36 @@ test('SC-006 rejects conflicting canonical roots across project sources', async 
     `SC-006 conflict diagnostic should include registration canonical root ${registeredRoot}; got ${JSON.stringify(body.error.details.sources)}`
   );
   assert.equal(body.project_id, undefined, 'SC-006 conflict must not select either project source');
+});
+
+test('SC-007 rejects unsupported versioned project descriptors before registration', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC007_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(SC007_DESCRIPTOR, JSON.stringify({
+    version: 999,
+    project_id: 'sc007-unsupported-version',
+    name: 'SC007 Unsupported Descriptor Version',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const response = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC007_ROOT })
+  });
+
+  assert.equal(response.status, 400, 'SC-007 unsupported descriptor version should be rejected before registration');
+  const body = await response.json();
+  assert.equal(body.error?.code, 'invalid_project_descriptor', `SC-007 invalid-version diagnostic should use invalid_project_descriptor; got ${JSON.stringify(body)}`);
+  assert.equal(body.project_id, undefined, 'SC-007 invalid descriptor must not select or register a project');
+  assert.equal(fs.existsSync(SC007_MANIFEST), false, 'SC-007 invalid descriptor must not be persisted as a registration');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

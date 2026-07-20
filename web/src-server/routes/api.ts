@@ -273,6 +273,11 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
 };
 
+const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
+  if (descriptor.version !== 1) return 'Unsupported project descriptor version';
+  return null;
+};
+
 const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
   const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
@@ -284,6 +289,8 @@ const handleCreateProject = async (req: Request, res: Response): Promise<void> =
       return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root descriptor is not readable', { message: error instanceof Error ? error.message : String(error) }));
     }
     if (!descriptor) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root must contain .tesseraft/project.json'));
+    const descriptorError = validateProjectDescriptor(descriptor);
+    if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { version: descriptor.version }));
   }
   const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : (typeof descriptor?.project_id === 'string' ? descriptor.project_id.trim() : '');
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_id must match /^[a-z0-9][a-z0-9-]{0,62}$/'));
