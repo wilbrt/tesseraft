@@ -297,10 +297,10 @@
      (if-let [descriptor (read-project-descriptor options)]
        (if (:error descriptor)
          descriptor
-         (cond-> (assoc descriptor :source :descriptor)
-           (agreeing-manifest-duplicate options descriptor pid)
-           (assoc-in [:diagnostics :duplicates]
-                     [(agreeing-manifest-duplicate options descriptor pid)])))
+         (let [duplicate (agreeing-manifest-duplicate options descriptor pid)]
+           (cond-> (assoc descriptor :source :descriptor)
+             duplicate
+             (assoc-in [:diagnostics :duplicates] [duplicate]))))
        (if-not (valid-project-id? pid)
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
