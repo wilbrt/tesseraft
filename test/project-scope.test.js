@@ -60,6 +60,10 @@ const SC010_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-mig
 const SC010_DESCRIPTOR = path.join(SC010_ROOT, '.tesseraft', 'project.json');
 const SC010_REGISTRATION = path.join(PROJECTS_DIR, 'sc010-legacy-project.json');
 const SC010_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-legacy-control', 'sc010-legacy-project.json');
+const SC011_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-migration-root');
+const SC011_DESCRIPTOR = path.join(SC011_ROOT, '.tesseraft', 'project.json');
+const SC011_REGISTRATION = path.join(PROJECTS_DIR, 'sc011-legacy-project.json');
+const SC011_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-legacy-control', 'sc011-legacy-project.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -98,6 +102,9 @@ const cleanup = () => {
   fs.rmSync(SC010_ROOT, { recursive: true, force: true });
   fs.rmSync(SC010_REGISTRATION, { force: true });
   fs.rmSync(path.dirname(SC010_LEGACY_MANIFEST), { recursive: true, force: true });
+  fs.rmSync(SC011_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC011_REGISTRATION, { force: true });
+  fs.rmSync(path.dirname(SC011_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -458,6 +465,48 @@ test('SC-010 migrates a valid legacy control manifest to portable project state 
   assert.equal(fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-010 repeated migration must still preserve the legacy source byte-for-byte');
   assert.equal(fs.readFileSync(SC010_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'SC-010 repeated migration must not overwrite the destination descriptor');
   assert.equal(fs.readFileSync(SC010_REGISTRATION, 'utf8'), registrationBeforeRepeat, 'SC-010 repeated migration must not overwrite registration state');
+});
+
+test('SC-011 rolls back a migration-created descriptor when registration cannot be written', async (t) => {
+  cleanup();
+  t.after(() => {
+    fs.rmSync(PROJECTS_DIR, { recursive: true, force: true });
+    cleanup();
+  });
+
+  fs.mkdirSync(path.dirname(SC011_LEGACY_MANIFEST), { recursive: true });
+  fs.mkdirSync(SC011_ROOT, { recursive: true });
+  const legacyManifest = {
+    project_id: 'sc011-legacy-project',
+    name: 'SC011 Legacy Project',
+    workspace_root: SC011_ROOT,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'manifest'
+  };
+  fs.writeFileSync(SC011_LEGACY_MANIFEST, JSON.stringify(legacyManifest, null, 2));
+  const legacyBefore = fs.readFileSync(SC011_LEGACY_MANIFEST, 'utf8');
+
+  fs.rmSync(PROJECTS_DIR, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(PROJECTS_DIR), { recursive: true });
+  fs.writeFileSync(PROJECTS_DIR, 'not a directory, so registration creation fails');
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const migration = await fetch(`${base}/api/projects/sc011-legacy-project/migrate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ legacy_manifest: SC011_LEGACY_MANIFEST, project_root: SC011_ROOT })
+  });
+  assert.equal(migration.status, 400, `SC-011 migration with unwritable registration should report failure; got ${migration.status}`);
+  const body = await migration.json();
+  assert.equal(body.error?.code, 'migration_failed', `SC-011 failed migration should use migration_failed; got ${JSON.stringify(body)}`);
+
+  assert.equal(fs.readFileSync(SC011_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-011 failed migration must preserve the legacy source byte-for-byte');
+  assert.equal(fs.existsSync(SC011_REGISTRATION), false, 'SC-011 failed migration must not leave user-local registration state');
+  assert.equal(fs.existsSync(SC011_DESCRIPTOR), false, 'SC-011 failed migration must roll back the migration-created destination descriptor');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

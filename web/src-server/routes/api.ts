@@ -424,29 +424,37 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   const registration: JsonRecord = { ...descriptor, workspace_root: projectRoot, source: 'registration' };
   delete registration.version;
 
+  const descriptorPreexisting = fs.existsSync(descriptorPath);
+  const registrationPreexisting = fs.existsSync(registrationPath);
   try {
-    if (fs.existsSync(descriptorPath)) {
+    if (descriptorPreexisting) {
       const existingDescriptor = readProjectDescriptor(projectRoot);
       if (!existingDescriptor || existingDescriptor.project_id !== descriptor.project_id || existingDescriptor.runs_root !== descriptor.runs_root) {
         return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
       }
     }
-    if (fs.existsSync(registrationPath)) {
+    if (registrationPreexisting) {
       const existingRegistration = JSON.parse(fs.readFileSync(registrationPath, 'utf8')) as JsonRecord;
       const existingRoot = typeof existingRegistration.workspace_root === 'string' ? fs.realpathSync(existingRegistration.workspace_root) : '';
       if (existingRegistration.project_id !== projectId || path.normalize(existingRoot) !== path.normalize(projectRoot)) {
         return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registration_path: registrationPath, project_id: projectId }));
       }
     }
-    if (!fs.existsSync(descriptorPath)) {
+    if (!descriptorPreexisting) {
       fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
       fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
     }
-    if (!fs.existsSync(registrationPath)) {
+    if (!registrationPreexisting) {
       fs.mkdirSync(path.dirname(registrationPath), { recursive: true });
       fs.writeFileSync(registrationPath, `${JSON.stringify(registration, null, 2)}\n`);
     }
   } catch (error) {
+    if (!registrationPreexisting) {
+      try { fs.rmSync(registrationPath, { force: true }); } catch {}
+    }
+    if (!descriptorPreexisting) {
+      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
+    }
     return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
   }
 
