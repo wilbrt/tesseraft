@@ -421,8 +421,11 @@ test('SC-007 rejects unsupported versioned project descriptors before registrati
   cleanup();
   t.after(() => cleanup());
 
-  fs.mkdirSync(path.dirname(SC007_DESCRIPTOR), { recursive: true });
-  fs.writeFileSync(SC007_DESCRIPTOR, JSON.stringify({
+  const sc007Root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc007-root-'));
+  t.after(() => fs.rmSync(sc007Root, { recursive: true, force: true }));
+  const sc007Descriptor = path.join(sc007Root, '.tesseraft', 'project.json');
+  fs.mkdirSync(path.dirname(sc007Descriptor), { recursive: true });
+  fs.writeFileSync(sc007Descriptor, JSON.stringify({
     version: 999,
     project_id: 'sc007-unsupported-version',
     name: 'SC007 Unsupported Descriptor Version',
@@ -430,14 +433,14 @@ test('SC-007 rejects unsupported versioned project descriptors before registrati
     discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
   }, null, 2));
 
-  const server = createServer({ browserAllowedProjectRoots: [SC007_ROOT] });
+  const server = createServer({ browserAllowedProjectRoots: [sc007Root] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
 
   const response = await fetch(`${base}/api/projects`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ project_root: SC007_ROOT })
+    body: JSON.stringify({ project_root: sc007Root })
   });
 
   assert.equal(response.status, 400, 'SC-007 unsupported descriptor version should be rejected before registration');
@@ -451,11 +454,13 @@ test('SC-008 rejects project-owned roots that symlink outside the project bounda
   cleanup();
   t.after(() => cleanup());
 
+  const sc008Root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc008-root-'));
+  t.after(() => fs.rmSync(sc008Root, { recursive: true, force: true }));
   const externalRunsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc008-runs-'));
   t.after(() => fs.rmSync(externalRunsRoot, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(SC008_LINK_ROOT, '.tesseraft'), { recursive: true });
-  fs.symlinkSync(externalRunsRoot, path.join(SC008_LINK_ROOT, 'linked-runs'), 'dir');
-  fs.writeFileSync(path.join(SC008_LINK_ROOT, '.tesseraft', 'project.json'), JSON.stringify({
+  fs.mkdirSync(path.join(sc008Root, '.tesseraft'), { recursive: true });
+  fs.symlinkSync(externalRunsRoot, path.join(sc008Root, 'linked-runs'), 'dir');
+  fs.writeFileSync(path.join(sc008Root, '.tesseraft', 'project.json'), JSON.stringify({
     version: 1,
     project_id: 'sc008-symlink-escape',
     name: 'SC008 Symlink Escape',
@@ -463,14 +468,14 @@ test('SC-008 rejects project-owned roots that symlink outside the project bounda
     discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
   }, null, 2));
 
-  const server = createServer({ browserAllowedProjectRoots: [SC008_LINK_ROOT] });
+  const server = createServer({ browserAllowedProjectRoots: [sc008Root] });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
 
   const response = await fetch(`${base}/api/projects`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ project_root: SC008_LINK_ROOT })
+    body: JSON.stringify({ project_root: sc008Root })
   });
 
   assert.equal(response.status, 400, 'SC-008 symlink-resolved runs_root outside the project boundary should be rejected');
