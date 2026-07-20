@@ -18,6 +18,51 @@ const writeWorkflow = (root, name, title) => {
   fs.writeFileSync(path.join(dir, 'workflow.edn'), workflowEdn(name, title));
 };
 
+const cpResult = (args) => {
+  try {
+    return {
+      out: JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', ...args], { encoding: 'utf8', stdio: 'pipe' })),
+      threw: false,
+      stderr: ''
+    };
+  } catch (error) {
+    return {
+      out: JSON.parse(String(error.stdout || '{}')),
+      threw: true,
+      stderr: String(error.stderr || '')
+    };
+  }
+};
+
+test('explicit project root without descriptor returns validation diagnostic instead of fallback', () => {
+  const tempParent = path.join(process.cwd(), '.agent-runs');
+  fs.mkdirSync(tempParent, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tempParent, 'explicit-project-root-missing-descriptor-'));
+  const invocation = path.join(root, 'invocation-workspace');
+  const selected = path.join(root, 'selected-without-descriptor');
+
+  try {
+    writeWorkflow(invocation, 'fallback-demo', 'Fallback Demo');
+    fs.mkdirSync(path.join(selected, '.tesseraft'), { recursive: true });
+
+    const result = cpResult([
+      '--workspace-root', invocation,
+      '--project-root', selected,
+      'workflows'
+    ]);
+
+    assert.equal(result.threw, true, 'explicit project root without .tesseraft/project.json must exit nonzero');
+    assert.equal(result.out.status, 400, result.out);
+    assert.equal(result.out.error?.code, 'invalid_project_descriptor', result.out);
+    assert.match(result.out.error?.message || '', /project\.json|descriptor/i);
+    assert.equal(result.out.error?.details?.project_root, path.resolve(selected));
+    assert.equal(result.out.error?.details?.descriptor_path, path.join(path.resolve(selected), '.tesseraft', 'project.json'));
+    assert.ok(!JSON.stringify(result.out).includes('fallback-demo'), 'error response must not include fallback workspace workflows');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('explicit local project root selects descriptor project instead of invocation workspace', () => {
   const tempParent = path.join(process.cwd(), '.agent-runs');
   fs.mkdirSync(tempParent, { recursive: true });

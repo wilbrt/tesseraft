@@ -136,10 +136,19 @@
   (when-let [project-root (:project-root (opts options))]
     (let [root (abs-path (:workspace-root (opts options)) project-root)
           p (project-descriptor-path root)]
-      (when (fs/exists? p)
+      (if-not (fs/exists? p)
+        (error-response 400 "invalid_project_descriptor"
+                        "Explicit project root is missing .tesseraft/project.json descriptor"
+                        {:project_root (str root)
+                         :descriptor_path (str p)})
         (try
           (normalize-project-descriptor root (store/read-json p))
-          (catch Throwable _ nil))))))
+          (catch Throwable t
+            (error-response 400 "invalid_project_descriptor"
+                            "Explicit project root has an unreadable .tesseraft/project.json descriptor"
+                            {:project_root (str root)
+                             :descriptor_path (str p)
+                             :message (.getMessage t)})))))))
 
 (defn list-project-manifests [options]
   (let [dir (projects-dir options)]
@@ -258,7 +267,9 @@
   ([options project-id]
    (let [pid (or project-id "default")]
      (if-let [descriptor (read-project-descriptor options)]
-       (assoc descriptor :source :descriptor)
+       (if (:error descriptor)
+         descriptor
+         (assoc descriptor :source :descriptor))
        (if-not (valid-project-id? pid)
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
@@ -713,7 +724,9 @@
   ([options project-id]
    (let [project (resolve-project options project-id)]
      (if (:error project)
-       (opts options)
+       (if (= "invalid_project_descriptor" (get-in project [:error :code]))
+         project
+         (opts options))
        (let [control-ws (:workspace-root (opts options))]
          (-> (opts options)
              (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
@@ -727,15 +740,18 @@
   ([] (list-workflows {}))
   ([options] (list-workflows options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         entries (workflow-file-entries sopts)
-         visible (select-visible-workflow-entries entries)
-         meta (shadowing-for-visible sopts entries visible)]
-     {:workflows (mapv (fn [v]
-                         (api-value
-                           (merge (read-workflow-entry sopts v)
-                                  (get meta (str (:file v))))))
-                       visible)})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [entries (workflow-file-entries sopts)
+             visible (select-visible-workflow-entries entries)
+             meta (shadowing-for-visible sopts entries visible)]
+         {:workflows
+          (mapv (fn [v]
+                  (api-value
+                    (merge (read-workflow-entry sopts v)
+                           (get meta (str (:file v))))))
+                visible)})))))
 
 (defn workflow-candidates [options name]
   (->> (workflow-file-entries options)
