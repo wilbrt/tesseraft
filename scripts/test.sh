@@ -34,6 +34,9 @@ python3 test/pr-housekeeping-sync.test.py
 printf '\nChecking Canon TDD deterministic validation runner...\n'
 python3 test/canon-validation-runner.test.py
 
+printf '\nChecking portable project descriptor and registry contracts...\n'
+node --test test/project-contract.test.js
+
 printf '\nChecking agent node model/provider plumbing...\n'
 AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"
 AGENT_MODEL_PROMPT_DIR="$TMP_DIR/prompts"

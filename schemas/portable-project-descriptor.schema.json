@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft Portable Project Descriptor",
+  "description": "Repository-owned portable project identity descriptor stored at .tesseraft/project.json. It is safe to commit and intentionally excludes machine-specific workspace roots, credentials, run state, and registry mappings.",
+  "type": "object",
+  "required": ["version", "project_id"],
+  "properties": {
+    "version": { "const": 1, "description": "Portable descriptor schema version." },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "Stable repository project slug."
+    },
+    "name": { "type": "string", "description": "Human-readable project name." },
+    "runs_root": { "type": "string", "description": "Project-relative run root. Defaults to runs when omitted." },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "workflow-roots": { "type": "array", "items": { "type": "string" } },
+        "workflow_roots": { "type": "array", "items": { "type": "string" } },
+        "tesseraft-home": { "type": ["string", "null"] },
+        "tesseraft_home": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "connections": {
+      "type": "object",
+      "properties": {
+        "jira": {
+          "type": "object",
+          "properties": {
+            "base-url": { "type": "string" },
+            "credential-ref": { "$ref": "credential-ref.schema.json" }
+          },
+          "additionalProperties": false
+        },
+        "github": {
+          "type": "object",
+          "properties": {
+            "credential-ref": { "$ref": "credential-ref.schema.json" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

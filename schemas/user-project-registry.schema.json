@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft User-local Project Registry",
+  "description": "Machine-local registry stored under $TESSERAFT_HOME/projects/registry.json. It maps portable descriptor identities to canonical local workspace roots and is not repository-owned state.",
+  "type": "object",
+  "required": ["version", "projects"],
+  "properties": {
+    "version": { "const": 1, "description": "Registry schema version." },
+    "projects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["workspace_root"],
+        "properties": {
+          "name": { "type": "string" },
+          "workspace_root": { "type": "string", "description": "Canonical local root for the registered descriptor identity." },
+          "runs_root": { "type": "string" },
+          "discovery": {
+            "type": "object",
+            "properties": {
+              "workflow-roots": { "type": "array", "items": { "type": "string" } },
+              "tesseraft-home": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          },
+          "source": { "const": "registration" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

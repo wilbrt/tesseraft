@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
 import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter, derivePiChatMessages, PiSettingsResolutionError } from '../web/dist-server/lib/piSessionAdapter.js';
@@ -1313,6 +1314,7 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
 
 test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
+  let outsideDescriptorRoot = '';
   try {
     const cp = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8' }));
 
@@ -1331,6 +1333,7 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     assert.equal(dupThrew, true);
 
     const descriptorRoot = path.join(root, 'descriptor-project');
+    outsideDescriptorRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'outside-local-register-'));
     fs.mkdirSync(path.join(descriptorRoot, '.tesseraft'), { recursive: true });
     fs.writeFileSync(path.join(descriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
       version: 1,
@@ -1339,8 +1342,20 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
       runs_root: 'runs',
       discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
     }, null, 2));
+    fs.mkdirSync(path.join(outsideDescriptorRoot, '.tesseraft'), { recursive: true });
+    fs.writeFileSync(path.join(outsideDescriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
+      version: 1,
+      project_id: 'outside-local-acme',
+      name: 'Outside Local Acme',
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+    }, null, 2));
     const home = path.join(root, 'home');
     const cpHome = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args], { encoding: 'utf8' }));
+
+    const outsideRegistered = cpHome(['project', 'register', outsideDescriptorRoot]);
+    assert.equal(outsideRegistered.project_id, 'outside-local-acme', 'trusted local CLI register accepts descriptor roots outside the invocation workspace');
+    assert.equal(outsideRegistered.source, 'registration');
 
     const registered = cpHome(['project', 'register', descriptorRoot]);
     assert.equal(registered.project_id, 'local-acme', 'local CLI register derives project id from descriptor');
@@ -1378,6 +1393,7 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     assert.match(String(migrated['migrated-from'] || ''), /legacy-settings/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+    if (outsideDescriptorRoot) fs.rmSync(outsideDescriptorRoot, { recursive: true, force: true });
   }
 });
 

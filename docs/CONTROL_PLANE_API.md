@@ -140,9 +140,11 @@ Existing default routes are unscoped and operate on the implicit `default` proje
 runs, settings, and git-identity resolve from the selected project. Run identity
 is `(project_id, run_id)`: identical run ids in two projects do not collide.
 Run state persists `project_id` (absent means `"default"`); a `project.resolved`
-event is emitted at run start. Project manifests live under
-`.tesseraft/projects/<slug>.json` and are safe to commit. Resolved secrets live
-out-of-repo at `~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`).
+event is emitted at run start. Portable repository identity lives in
+`.tesseraft/project.json` and is safe to commit. Machine-local registration lives
+under `$TESSERAFT_HOME/projects/registry.json`; legacy `.tesseraft/projects/<slug>.json`
+files are read-only fallback/migration sources. Resolved secrets live out-of-repo
+at `~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`).
 
 ### Project-scoped operations
 

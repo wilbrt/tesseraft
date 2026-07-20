@@ -1,5 +1,6 @@
 .pi/
-.tesseraft/
+.tesseraft/*
+!.tesseraft/project.json
 .agent-runs/
 node_modules/
 

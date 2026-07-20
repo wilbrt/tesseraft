@@ -454,7 +454,11 @@
   ;; `abs-path` only absolutizes *its input* when it is already absolute, so a
   ;; relative workspace root would otherwise yield empty/relative `abs-path`
   ;; results and let absolute escapes (e.g. `/tmp/escape`) through.
-  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))]
+  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))
+        confinement-root (if (and (= "registration" (:source spec))
+                                  (string? (:workspace_root spec)))
+                           (:workspace_root spec)
+                           wr)]
     (cond
       (not (valid-project-id? project-id))
       (str "Invalid project_id (expected " project-id-re ")")
@@ -466,6 +470,7 @@
       "runs_root must be a string"
 
       (and (contains? spec :workspace_root)
+           (not= "registration" (:source spec))
            (not (path-prefix? (abs-path wr ".")
                              (abs-path wr (:workspace_root spec)))))
       "workspace_root must be under the current workspace"
@@ -476,9 +481,9 @@
       ;; prevents run artifacts from being written to arbitrary filesystem
       ;; locations (design §6 path-confinement risk).
       (and (contains? spec :runs_root)
-           (or (path-escape-component? wr (:runs_root spec))
-               (not (path-prefix? (abs-path wr ".")
-                                 (abs-path wr (:runs_root spec))))))
+           (or (path-escape-component? confinement-root (:runs_root spec))
+               (not (path-prefix? (abs-path confinement-root ".")
+                                 (abs-path confinement-root (:runs_root spec))))))
       "runs_root must be a relative path under the current workspace"
 
       :else

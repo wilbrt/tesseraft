@@ -1,8 +1,10 @@
 # Tesseraft Projects
 
-A **Project** is a first-class, named configuration aggregate that owns a
-workspace root, a run root, a workflow discovery context, non-secret settings,
-and project-specific Jira/GitHub connection configuration.
+A **Project** is a first-class, named configuration aggregate. Repository-owned
+identity lives in the portable descriptor `.tesseraft/project.json`; machine-local
+registration lives in the user registry `$TESSERAFT_HOME/projects/registry.json`.
+Together they identify a workspace root, run root, workflow discovery context,
+non-secret settings, and project-specific Jira/GitHub connection configuration.
 
 A project makes the previously-scattered project-scoped config into a single
 addressable identity so that:
@@ -18,20 +20,25 @@ A project is addressed by a stable `project_id` slug: lowercase, matching
 `^[a-z0-9][a-z0-9-]{0,62}$`. The slug is derived from the project name when
 created via the API/CLI.
 
-```clojure
-{:project_id      "default"
- :name            "Default"
- :workspace_root  "."            ; abs-normalized at load; confined under the workspace
- :runs_root       ".agent-runs"
- :discovery       {:workflow-roots ["examples"]
-                   :tesseraft-home nil}
- :settings        {:pi-default-provider ...
-                   :pi-default-model ...
-                   :default-repo-root ...}   ; NON-SECRET only
- :connections     {:jira   {:base-url "..."
-                            :credential-ref "env:JIRA_TOKEN"}
-                   :github {:credential-ref "env:GITHUB_TOKEN"}}}
+Portable repository descriptor (`.tesseraft/project.json`, versionable):
+
+```json
+{
+  "version": 1,
+  "project_id": "default",
+  "name": "Default",
+  "runs_root": "runs",
+  "discovery": { "workflow-roots": ["examples"] },
+  "connections": {
+    "jira": { "base-url": "https://example.atlassian.net", "credential-ref": "env:JIRA_TOKEN" },
+    "github": { "credential-ref": "env:GITHUB_TOKEN" }
+  }
+}
 ```
+
+The portable descriptor must not contain `workspace_root`, raw credentials, runs,
+or other machine-local state. Local registration maps that descriptor identity to
+a canonical workspace root in `$TESSERAFT_HOME/projects/registry.json`.
 
 ## Credential references (not raw tokens)
 
@@ -48,19 +55,19 @@ references**. A `credential-ref` is a string of the form `<store>:<path>`:
 The adapter resolves the ref at effect time and **never** persists the resolved
 secret to disk. Resolved secrets live in an out-of-repo store at
 `~/.tesseraft/credentials.json` (or `$TESSERAFT_HOME/credentials.json`), which
-is outside the repository and therefore never tracked. Project manifests under
-`.tesseraft/projects/<slug>.json` store **only the reference**, never the token.
+is outside the repository and therefore never tracked. Portable descriptors and user-local registry entries store **only the reference**,
+never the token.
 
 ## Default project and migration
 
-When no project manifests exist, a **default project** is synthesized from the
-current defaults + legacy `.tesseraft/settings.json` / `.tesseraft/git-user.json`
-(returned with `:source :implicit`). Legacy files remain a read fallback
-(migration, not cutover).
+When no portable descriptor or registration exists, a **default project** is
+synthesized from the current defaults + legacy `.tesseraft/settings.json` /
+`.tesseraft/git-user.json` (returned with `:source :implicit`). Legacy workspace
+project manifests under `.tesseraft/projects/<slug>.json` remain read-only
+fallback/migration sources.
 
-A `migrate` command writes the synthesized default project to
-`.tesseraft/projects/default.json`, stamped with `:migrated-from
-:legacy-settings`. Legacy files are **not** deleted in this phase.
+A portable migration writes `.tesseraft/project.json` and matching user-local
+registry state without deleting or rewriting the legacy source bytes.
 
 ## Control-plane commands
 
@@ -99,6 +106,8 @@ start.
 
 ## Schemas
 
-- `schemas/project.schema.json` — committed-safe project manifest shape.
+- `schemas/portable-project-descriptor.schema.json` — repository-owned `.tesseraft/project.json` descriptor shape.
+- `schemas/user-project-registry.schema.json` — user-local `$TESSERAFT_HOME/projects/registry.json` registry shape.
+- `schemas/project.schema.json` — legacy project manifest shape retained for compatibility.
 - `schemas/credential-ref.schema.json` — credential reference shape.
 - `schemas/run-state.schema.json` — optional `project_id`.
