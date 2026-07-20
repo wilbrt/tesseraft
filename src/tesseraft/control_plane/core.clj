@@ -113,6 +113,34 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
+(defn- project-descriptor-path [project-root]
+  (fs/path project-root ".tesseraft" "project.json"))
+
+(defn- normalize-project-descriptor [project-root raw]
+  (let [discovery (:discovery raw {})]
+    (-> raw
+        (assoc :workspace_root (str (fs/normalize (fs/path project-root))))
+        (update :runs_root #(or % "runs"))
+        (assoc :discovery
+               (cond-> {}
+                 (contains? discovery :workflow_roots)
+                 (assoc :workflow-roots (:workflow_roots discovery))
+                 (contains? discovery :workflow-roots)
+                 (assoc :workflow-roots (:workflow-roots discovery))
+                 (contains? discovery :tesseraft_home)
+                 (assoc :tesseraft-home (:tesseraft_home discovery))
+                 (contains? discovery :tesseraft-home)
+                 (assoc :tesseraft-home (:tesseraft-home discovery)))))))
+
+(defn read-project-descriptor [options]
+  (when-let [project-root (:project-root (opts options))]
+    (let [root (abs-path (:workspace-root (opts options)) project-root)
+          p (project-descriptor-path root)]
+      (when (fs/exists? p)
+        (try
+          (normalize-project-descriptor root (store/read-json p))
+          (catch Throwable _ nil))))))
+
 (defn list-project-manifests [options]
   (let [dir (projects-dir options)]
     (if-not (fs/exists? dir)
@@ -229,15 +257,17 @@
   ([options] (resolve-project options nil))
   ([options project-id]
    (let [pid (or project-id "default")]
-     (if-not (valid-project-id? pid)
-       (error-response 400 "bad_request" "Invalid project_id"
-                       {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
-       (if-let [m (read-project-manifest options pid)]
-         (assoc m :source :manifest :project_id pid)
-         (if (= "default" pid)
-           (synthesize-default-project options)
-           (error-response 404 "not_found" "Project not found"
-                           {:project_id pid})))))))
+     (if-let [descriptor (read-project-descriptor options)]
+       (assoc descriptor :source :descriptor)
+       (if-not (valid-project-id? pid)
+         (error-response 400 "bad_request" "Invalid project_id"
+                         {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+         (if-let [m (read-project-manifest options pid)]
+           (assoc m :source :manifest :project_id pid)
+           (if (= "default" pid)
+             (synthesize-default-project options)
+             (error-response 404 "not_found" "Project not found"
+                             {:project_id pid}))))))))
 
 (defn list-projects
   ([] (list-projects {}))

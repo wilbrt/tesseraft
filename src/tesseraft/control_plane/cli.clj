@@ -17,7 +17,7 @@
 ;; greedily stolen as top-level options, relocating manifest writes outside
 ;; the workspace and bypassing path-confinement validation.
 (defn parse-args [args]
-  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil}]
+  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil :project-root nil}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -32,6 +32,7 @@
             "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
             "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
             "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
+            "--project-root" (recur more (assoc acc :project-root (cli-args/require-value a b)))
             (recur rest-xs (assoc acc :command a))))))))
 
 (defn usage! []
@@ -62,7 +63,8 @@
     (println "  --workspace-root <dir>   Workspace root (default: .)")
     (println "  --workflow-root <dir>    Additional workflow root (default: examples)")
     (println "  --tesseraft-home <dir>   Global Tesseraft directory (default: $TESSERAFT_HOME or ~/.tesseraft)")
-    (println "  --runs-root <dir>        Runs root (default: .agent-runs)"))
+    (println "  --runs-root <dir>        Runs root (default: .agent-runs)")
+    (println "  --project-root <dir>     Explicit local project root containing .tesseraft/project.json"))
   (System/exit 2))
 
 (defn require-arg [opts label]
@@ -221,7 +223,7 @@
     (let [opts (parse-args args)
           command (:command opts)
           project-id (:project-id opts)
-          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id])
+          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id :project-root])
           result (case command
                    "workflows" (control-plane/list-workflows options project-id)
                    "workflow" (control-plane/get-workflow options (require-arg opts "workflow name") project-id)
