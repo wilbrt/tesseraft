@@ -35,6 +35,10 @@ const BETA_WS = path.join(process.cwd(), '.agent-runs', 'proj-scope-beta-ws');
 const ALPHA_MANIFEST = path.join(PROJECTS_DIR, 'alpha.json');
 const BETA_MANIFEST = path.join(PROJECTS_DIR, 'beta.json');
 const ROOT_DESCRIPTOR = path.join(process.cwd(), '.tesseraft', 'project.json');
+const SC004_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc004-root');
+const SC004_DESCRIPTOR = path.join(SC004_ROOT, '.tesseraft', 'project.json');
+const SC004_MANIFEST = path.join(PROJECTS_DIR, 'sc004-project.json');
+const SC004_LEGACY_SENTINEL = path.join(SC004_ROOT, '.tesseraft', 'projects', 'legacy-default.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -54,6 +58,8 @@ const cleanup = () => {
   fs.rmSync(ALPHA_MANIFEST, { force: true });
   fs.rmSync(BETA_MANIFEST, { force: true });
   fs.rmSync(ROOT_DESCRIPTOR, { force: true });
+  fs.rmSync(SC004_MANIFEST, { force: true });
+  fs.rmSync(SC004_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -88,6 +94,64 @@ test('SC-002 explicit project id reports agreeing descriptor and legacy duplicat
     body.diagnostics.duplicates.some((duplicate) => duplicate?.source === 'manifest'),
     `SC-002 duplicate diagnostics should include the agreeing legacy manifest; got ${JSON.stringify(body.diagnostics.duplicates)}`
   );
+});
+
+test('SC-004 registers and unregisters a descriptor-derived project identity', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC004_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(SC004_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'sc004-project',
+    name: 'SC004 Descriptor Project',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  fs.mkdirSync(path.dirname(SC004_LEGACY_SENTINEL), { recursive: true });
+  fs.writeFileSync(SC004_LEGACY_SENTINEL, JSON.stringify({ project_id: 'default', workspace_root: '.', marker: 'keep-me' }, null, 2));
+  fs.mkdirSync(path.join(SC004_ROOT, 'runs', 'existing-run-data'), { recursive: true });
+
+  const expectedRoot = fs.realpathSync(SC004_ROOT);
+  const descriptorBefore = fs.readFileSync(SC004_DESCRIPTOR, 'utf8');
+  const legacyBefore = fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8');
+  const dataBefore = fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data'));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const register = async () => fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC004_ROOT })
+  });
+
+  const firstRegister = await register();
+  assert.equal(firstRegister.status, 201, 'SC-004 descriptor-derived registration should not require caller-supplied project_id');
+  const firstBody = await firstRegister.json();
+  assert.equal(firstBody.project_id, 'sc004-project', 'SC-004 registration should derive project_id from .tesseraft/project.json');
+  assert.equal(path.normalize(firstBody.workspace_root || firstBody.canonical_root || ''), expectedRoot, 'SC-004 registration should store the canonical descriptor root');
+
+  const secondRegister = await register();
+  assert.ok(secondRegister.status === 200 || secondRegister.status === 201, `SC-004 repeat registration should be idempotent; got ${secondRegister.status}`);
+
+  const list = await fetch(`${base}/api/projects`).then(json);
+  const registrations = list.projects.filter((project) => project.project_id === 'sc004-project');
+  assert.equal(registrations.length, 1, `SC-004 list should report exactly one registration; got ${JSON.stringify(registrations)}`);
+  assert.equal(path.normalize(registrations[0].workspace_root || registrations[0].canonical_root || ''), expectedRoot, 'SC-004 list should report the registered canonical root');
+
+  const detail = await fetch(`${base}/api/projects/sc004-project`).then(json);
+  assert.equal(detail.project_id, 'sc004-project', 'SC-004 detail should resolve the registered descriptor-derived id');
+  assert.equal(path.normalize(detail.workspace_root || detail.canonical_root || ''), expectedRoot, 'SC-004 detail should report the registered canonical root');
+  assert.equal(detail.source, 'registration', 'SC-004 detail/source inspection should identify user-local registration as the source');
+
+  const unregister = await fetch(`${base}/api/projects/sc004-project`, { method: 'DELETE' });
+  assert.ok(unregister.status === 200 || unregister.status === 204, `SC-004 unregister should remove the user-local registration; got ${unregister.status}`);
+  assert.equal(fs.existsSync(SC004_MANIFEST), false, 'SC-004 unregister should remove only user-local registration state');
+  assert.equal(fs.readFileSync(SC004_DESCRIPTOR, 'utf8'), descriptorBefore, 'SC-004 unregister must leave the descriptor unchanged');
+  assert.equal(fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8'), legacyBefore, 'SC-004 unregister must leave legacy project files unchanged');
+  assert.equal(fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data')), dataBefore, 'SC-004 unregister must leave project data unchanged');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

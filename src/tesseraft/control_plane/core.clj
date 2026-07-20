@@ -174,9 +174,10 @@
                             (str/ends-with? (.getName f) ".json"))]
              (let [slug (str/replace (.getName f) #"\.json$" "")]
                (try (let [m (store/read-json (fs/path f))]
-                      {:project_id slug
-                       :name (or (:name m) slug)
-                       :source "manifest"})
+                      (cond-> {:project_id slug
+                               :name (or (:name m) slug)
+                               :source (or (:source m) "manifest")}
+                        (:workspace_root m) (assoc :workspace_root (:workspace_root m))))
                     (catch Throwable _ nil))))
            (remove nil?)
            vec))))
@@ -305,7 +306,7 @@
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
          (if-let [m (read-project-manifest options pid)]
-           (assoc m :source :manifest :project_id pid)
+           (assoc m :source (or (:source m) :manifest) :project_id pid)
            (if (= "default" pid)
              (synthesize-default-project options)
              (error-response 404 "not_found" "Project not found"
@@ -424,8 +425,14 @@
                        {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
 
        (fs/exists? (project-manifest-path options project-id))
-       (error-response 409 "conflict" "A project with that id already exists"
-                       {:project_id project-id})
+       (let [existing (read-project-manifest options project-id)
+             existing-root (or (:workspace_root existing) ".")
+             requested-root (or (:workspace_root spec)
+                                (str (abs-path (:workspace-root (opts options)) ".")))]
+         (if (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (same-project-root? options existing-root requested-root))
+           (get-project options project-id)
+           (error-response 409 "conflict" "A project with that id already exists"
+                           {:project_id project-id})))
 
        :else
        (if-let [err (validate-project-spec options project-id spec)]
@@ -440,6 +447,7 @@
                            :discovery (or (:discovery spec)
                                           {:workflow-roots (:workflow-roots (opts options))
                                            :tesseraft-home (:tesseraft-home (opts options))})}
+                          (:source spec) (assoc :source (:source spec))
                           (seq (:settings spec)) (assoc :settings (:settings spec))
                           (seq (:connections spec)) (assoc :connections (:connections spec)))
                target (project-manifest-path options project-id)]

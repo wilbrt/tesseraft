@@ -170,6 +170,7 @@
           "--jira-base-url" (recur more (assoc-in acc [:spec :connections :jira :base-url] b))
           "--jira-credential-ref" (recur more (assoc-in acc [:spec :connections :jira :credential-ref] b))
           "--github-credential-ref" (recur more (assoc-in acc [:spec :connections :github :credential-ref] b))
+          "--source" (recur more (assoc-in acc [:spec :source] b))
           (recur (rest xs) acc))))))
 
 (defn parse-project-connections-args [args]

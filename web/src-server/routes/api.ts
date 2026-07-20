@@ -266,23 +266,54 @@ const handleGetProject = async (res: Response, projectId: string): Promise<void>
   return jsonResponse(res, result.status, result.body);
 };
 
+const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  if (!fs.existsSync(descriptorPath)) return null;
+  const parsed = JSON.parse(fs.readFileSync(descriptorPath, 'utf8')) as unknown;
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
+};
+
 const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
-  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : '';
+  const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
+  let descriptor: JsonRecord | null = null;
+  if (projectRoot) {
+    try {
+      descriptor = readProjectDescriptor(projectRoot);
+    } catch (error) {
+      return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root descriptor is not readable', { message: error instanceof Error ? error.message : String(error) }));
+    }
+    if (!descriptor) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root must contain .tesseraft/project.json'));
+  }
+  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : (typeof descriptor?.project_id === 'string' ? descriptor.project_id.trim() : '');
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_id must match /^[a-z0-9][a-z0-9-]{0,62}$/'));
   const args = ['project', 'create', projectId];
-  if (typeof body.name === 'string' && body.name.trim() !== '') args.push('--name', body.name.trim());
-  if (typeof body.workspace_root === 'string' && body.workspace_root.trim() !== '') args.push('--workspace-root', body.workspace_root.trim());
-  if (typeof body.runs_root === 'string' && body.runs_root.trim() !== '') args.push('--runs-root', body.runs_root.trim());
+  const descriptorDiscovery = descriptor?.discovery && typeof descriptor.discovery === 'object' && !Array.isArray(descriptor.discovery) ? descriptor.discovery as JsonRecord : undefined;
+  const name = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : (typeof descriptor?.name === 'string' ? descriptor.name : '');
+  const runsRoot = typeof body.runs_root === 'string' && body.runs_root.trim() !== '' ? body.runs_root.trim() : (typeof descriptor?.runs_root === 'string' ? descriptor.runs_root : '');
+  const workspaceRoot = projectRoot || (typeof body.workspace_root === 'string' ? body.workspace_root.trim() : '');
+  if (name) args.push('--name', name);
+  if (workspaceRoot) args.push('--workspace-root', workspaceRoot);
+  if (runsRoot) args.push('--runs-root', runsRoot);
   for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery['workflow-roots'])) for (const r of descriptorDiscovery['workflow-roots']) if (typeof r === 'string') args.push('--workflow-root', r);
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery.workflow_roots)) for (const r of descriptorDiscovery.workflow_roots) if (typeof r === 'string') args.push('--workflow-root', r);
   const conns = body.connections;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
     const c = conns as Record<string, JsonRecord>;
     if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') args.push('--jira-credential-ref', c.jira.credential_ref); }
     if (c.github && typeof c.github.credential_ref === 'string') args.push('--github-credential-ref', c.github.credential_ref);
   }
+  if (projectRoot) args.push('--source', 'registration');
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status === 200 ? 201 : result.status, result.body);
+};
+
+const handleDeleteProject = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const manifest = path.join(WORKSPACE_ROOT, '.tesseraft', 'projects', `${projectId}.json`);
+  fs.rmSync(manifest, { force: true });
+  return jsonResponse(res, 200, { project_id: projectId, deleted: true });
 };
 
 const handleUpdateProject = async (req: Request, res: Response, projectId: string): Promise<void> => {
@@ -965,6 +996,11 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
     return void handleUpdateProject(req, res, id).catch(next);
+  });
+  router.delete('/projects/:projectId', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleDeleteProject(res, id).catch(next);
   });
   router.post('/projects/:projectId/migrate', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
