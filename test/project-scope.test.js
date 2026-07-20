@@ -34,6 +34,7 @@ const ALPHA_WS = path.join(process.cwd(), '.agent-runs', 'proj-scope-alpha-ws');
 const BETA_WS = path.join(process.cwd(), '.agent-runs', 'proj-scope-beta-ws');
 const ALPHA_MANIFEST = path.join(PROJECTS_DIR, 'alpha.json');
 const BETA_MANIFEST = path.join(PROJECTS_DIR, 'beta.json');
+const ROOT_DESCRIPTOR = path.join(process.cwd(), '.tesseraft', 'project.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -52,9 +53,42 @@ const writeWorkflow = (ws, name, title) => {
 const cleanup = () => {
   fs.rmSync(ALPHA_MANIFEST, { force: true });
   fs.rmSync(BETA_MANIFEST, { force: true });
+  fs.rmSync(ROOT_DESCRIPTOR, { force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
+
+test('SC-002 explicit project id reports agreeing descriptor and legacy duplicates', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(ROOT_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(ROOT_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'alpha',
+    name: 'Alpha Descriptor',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  fs.writeFileSync(ALPHA_MANIFEST, JSON.stringify(manifest('alpha', 'Alpha Legacy', process.cwd()), null, 2));
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const response = await fetch(`${base}/api/projects/alpha`);
+  assert.equal(response.status, 200, 'explicit project id alpha should select agreeing descriptor and legacy sources');
+  const body = await response.json();
+  assert.equal(body.project_id, 'alpha', 'selected project should keep the explicitly requested project id');
+  assert.equal(body.source, 'descriptor', 'nearest matching descriptor should be the chosen source');
+  assert.ok(Array.isArray(body.diagnostics?.duplicates), 'SC-002 duplicate diagnostics should list agreeing duplicate sources');
+  assert.ok(
+    body.diagnostics.duplicates.some((duplicate) => duplicate?.source === 'manifest'),
+    `SC-002 duplicate diagnostics should include the agreeing legacy manifest; got ${JSON.stringify(body.diagnostics.duplicates)}`
+  );
+});
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {
   // Defensive: remove any leftovers from a prior crashed run before/after.

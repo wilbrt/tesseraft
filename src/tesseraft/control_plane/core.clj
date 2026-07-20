@@ -273,6 +273,19 @@
      :connections connections
      :source :implicit}))
 
+(defn- same-project-root? [options a b]
+  (= (str (abs-path (:workspace-root (opts options)) a))
+     (str (abs-path (:workspace-root (opts options)) b))))
+
+(defn- agreeing-manifest-duplicate [options descriptor project-id]
+  (when-let [m (read-project-manifest options project-id)]
+    (let [manifest-root (or (:workspace_root m) ".")]
+      (when (and (= project-id (:project_id descriptor))
+                 (same-project-root? options (:workspace_root descriptor) manifest-root))
+        {:source :manifest
+         :project_id project-id
+         :workspace_root (str (abs-path (:workspace-root (opts options)) manifest-root))}))))
+
 (defn resolve-project
   "Single entry point for project resolution. If project_id is nil or the
   literal `default`, resolve the default project: prefer a persisted
@@ -284,7 +297,10 @@
      (if-let [descriptor (read-project-descriptor options)]
        (if (:error descriptor)
          descriptor
-         (assoc descriptor :source :descriptor))
+         (cond-> (assoc descriptor :source :descriptor)
+           (agreeing-manifest-duplicate options descriptor pid)
+           (assoc-in [:diagnostics :duplicates]
+                     [(agreeing-manifest-duplicate options descriptor pid)])))
        (if-not (valid-project-id? pid)
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
