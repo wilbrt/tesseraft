@@ -106,19 +106,20 @@ Current inclusion lint does not validate required parameters, defaults, unknown 
 
 ### Outputs and outcomes
 
-`:interface :outputs` describes artifacts exposed by fragment exits. `:interface :outcomes` is intended to be a non-empty set of keyword outcomes such as `#{:pass :fail}`. `:fragment :exit` maps each outcome to its exposed outputs.
+`:interface :outputs` describes artifacts exposed by fragment exits. `:interface :outcomes` is required to be a non-empty set of keyword outcomes such as `#{:pass :fail}`. `:fragment :exit` is required to be non-empty and maps each outcome to its exposed outputs.
 
-Implemented checks, when outcomes/exits are present, include:
+Implemented package-lint and JSON Schema checks include:
 
+- interface outcomes must be present and non-empty;
+- fragment exits must be present and non-empty;
 - exit outcomes must be declared by the interface;
 - declared outcomes must have exit entries;
 - every exit must produce each required interface output;
 - inclusion transitions may only reference declared outcomes;
-- uncovered outcomes produce a warning.
+- uncovered outcomes produce a warning;
+- v1 fragment packages may not contain nested `:fragment` states.
 
-Known contract gap: omitting both `:outcomes` and `:exit` currently passes strict package lint. The JSON Schema also does not require either field.
-
-There is also no implemented relation between an internal terminal state and an exit outcome. The fixture uses terminal statuses `:success`/`:failure`, while exits use `:pass`/`:fail`. Runtime work needs an explicit, linted terminal-to-outcome mapping before execution can be reliable.
+Reachable internal terminal states must keep workflow-style terminal `:status` and explicitly select exactly one declared fragment outcome with `:outcome`. Every declared outcome must be produced by at least one reachable terminal state; multiple reachable terminals may select the same declared outcome only when every declared outcome remains producible. For example, a terminal may use `{:type :terminal :status :success :outcome :pass}` so workflow terminal status remains distinct from the fragment outcome contract.
 
 ### Requirements and resources
 

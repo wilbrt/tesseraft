@@ -72,7 +72,7 @@
                             {:when {:status "fail"} :next :failed}]}
 
              :done
-             {:type :terminal :status :success}
+             {:type :terminal :status :success :outcome :pass}
 
              :failed
-             {:type :terminal :status :failure}}}}
+             {:type :terminal :status :failure :outcome :fail}}}}

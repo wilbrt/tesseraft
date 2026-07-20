@@ -1,0 +1,21 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "duplicate-exit-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass :fail}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :lint
+            ;; SC-006: :pass is selected by a reachable terminal and has two
+            ;; exit contracts; every declared outcome is otherwise reachable
+            ;; and has at least one exit.
+            :exit [{:on :pass :produces {:status "status/pass.json"}}
+                   {:on :pass :produces {:status "status/pass-again.json"}}
+                   {:on :fail :produces {:status "status/fail.json"}}]
+            :states {:lint {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "lint/status.json" :required true}}
+                            :transitions [{:when {:status "pass"} :next :done}
+                                          {:when {:status "fail"} :next :failed}]}
+                     :done {:type :terminal :status :success :outcome :pass}
+                     :failed {:type :terminal :status :failure :outcome :fail}}}}

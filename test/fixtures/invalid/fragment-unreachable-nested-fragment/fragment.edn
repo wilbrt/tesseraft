@@ -1,0 +1,17 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "unreachable-nested-fragment-fixture"}
+ :interface {:inputs {:repo-root {:type :string :required true}
+                      :test-cmd {:type :string :required true}}
+             :outputs {:status {:schema "schemas/status.schema.json" :required true}}
+             :outcomes #{:pass}}
+ :assets {:schemas ["schemas/status.schema.json"]}
+ :fragment {:initial :done
+            :exit [{:on :pass :produces {:status "status/status.json"}}]
+            :states {:done {:type :terminal :status :success :outcome :pass}
+                     :unreachable-child
+                     {:type :fragment
+                      :fragment "test-fix-loop"
+                      :inputs {:repo-root "{{inputs.repo-root}}"
+                               :test-cmd "{{inputs.test-cmd}}"}
+                      :transitions [{:when {:fragment/outcome "pass"} :next :done}]}}}}

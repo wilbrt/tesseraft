@@ -982,13 +982,19 @@
             exit (:exit (:fragment pkg) [])
             required-outputs (set (for [[k c] outputs :when (fragment-node-output-required? c)] k))]
         (concat
-          (when (and (contains? iface :outcomes)
-                     (or (not (set? outcomes)) (empty? outcomes)))
+          (when (or (not (contains? iface :outcomes))
+                    (not (set? outcomes))
+                    (empty? outcomes)
+                    (not (every? keyword? outcomes)))
             [(err :fragment-outcome-mismatch [:interface :outcomes]
                   ":outcomes must be a non-empty set of keywords")])
           (when outcomes
-            (let [exit-outcomes (set (keep #(some-> (:on %) keyword) exit))]
+            (let [exit-outcome-counts (frequencies (keep #(some-> (:on %) keyword) exit))
+                  exit-outcomes (set (keys exit-outcome-counts))]
               (concat
+                (for [[o n] exit-outcome-counts :when (> n 1)]
+                  (err :duplicate-exit [:fragment :exit]
+                       (str "Outcome has more than one exit entry: " o)))
                 (for [o exit-outcomes :when (not (contains? outcomes o))]
                   (err :fragment-outcome-mismatch [:fragment :exit]
                        (str "Exit references unknown outcome: " o)))
@@ -1032,6 +1038,58 @@
       (for [path referenced :when (and path (not (contains? declared path)))]
         (warn :referenced-asset-not-declared [:assets]
               (str "Fragment references an asset that is not declared in :assets: " path))))))
+
+(defn fragment-nested-fragment-checks [pkg]
+  (let [fragment (:fragment pkg)
+        states (:states fragment {})]
+    (when (and (map? fragment) (map? states))
+      (for [[id n] states
+            :when (and (map? n)
+                       (= :fragment (:type n)))]
+        (err :nested-fragment [:fragment :states id :type]
+             "Nested fragment states are unsupported by the tesseraft.fragment/v1 contract")))))
+
+(defn fragment-terminal-outcome-checks [pkg]
+  (let [outcomes (get-in pkg [:interface :outcomes])
+        fragment (:fragment pkg)
+        states (:states fragment {})]
+    (when (and (set? outcomes)
+               (seq outcomes)
+               (every? keyword? outcomes)
+               (map? fragment)
+               (map? states))
+      (let [wf-like {:initial (:initial fragment) :states states}
+            reachable (spec/reachable-states wf-like)
+            reachable-terminals (for [[id n] states
+                                      :when (and (contains? reachable id)
+                                                 (map? n)
+                                                 (= :terminal (:type n)))]
+                                  [id n])
+            produced-outcomes (set (for [[_ n] reachable-terminals
+                                    :let [outcome (:outcome n)]
+                                    :when (contains? outcomes outcome)]
+                                outcome))]
+        (concat
+          (apply concat
+                 (for [[id n] reachable-terminals]
+                   (let [outcome (:outcome n)]
+                     (cond
+                       (nil? outcome)
+                       [(err :fragment-terminal-missing-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " must select a declared fragment outcome"))]
+
+                       (and (set? outcome) (> (count outcome) 1))
+                       [(err :fragment-terminal-ambiguous-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " ambiguously selects multiple fragment outcomes " outcome))]
+
+                       (not (contains? outcomes outcome))
+                       [(err :fragment-terminal-unknown-outcome [:fragment :states id :outcome]
+                             (str "Terminal state " id " selects unknown fragment outcome " outcome))]
+
+                       :else []))))
+          (for [o outcomes :when (not (contains? produced-outcomes o))]
+            (err :fragment-unreachable-outcome [:interface :outcomes]
+                 (str "Declared fragment outcome " o " is not produced by any reachable terminal state"))))))))
 
 (defn fragment-internal-inputs [pkg]
   ;; The fragment's internal subgraph references boundary inputs/parameters
@@ -1118,6 +1176,8 @@
                                    (apply concat
                                      [(fragment-package-top-level-checks pkg)
                                       (fragment-interface-checks pkg)
+                                      (fragment-nested-fragment-checks pkg)
+                                      (fragment-terminal-outcome-checks pkg)
                                       (fragment-internal-subgraph-checks pkg opts)
                                       (fragment-resource-checks pkg)
                                       (fragment-asset-checks pkg)])))
