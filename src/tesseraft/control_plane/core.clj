@@ -440,12 +440,15 @@
        (let [existing (read-project-manifest options project-id)
              existing-root (or (:workspace_root existing) ".")
              requested-root (or (:workspace_root spec)
-                                (str (abs-path (:workspace-root (opts options)) ".")))]
+                                (str (abs-path (:workspace-root (opts options)) ".")))
+             re-registration? (and existing
+                                   (= "registration" (:source spec))
+                                   (= "registration" (:source existing)))]
          (cond
-           (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (same-project-root? options existing-root requested-root))
+           (and re-registration? (same-project-root? options existing-root requested-root))
            (get-project options project-id)
 
-           (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (not (project-root-exists? options existing-root)))
+           (and re-registration? (not (project-root-exists? options existing-root)))
            (do
              (fs/delete-if-exists (project-manifest-path options project-id))
              (create-project options project-id spec _global?))
