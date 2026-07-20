@@ -39,6 +39,10 @@ const SC004_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc004-roo
 const SC004_DESCRIPTOR = path.join(SC004_ROOT, '.tesseraft', 'project.json');
 const SC004_MANIFEST = path.join(PROJECTS_DIR, 'sc004-project.json');
 const SC004_LEGACY_SENTINEL = path.join(SC004_ROOT, '.tesseraft', 'projects', 'legacy-default.json');
+const SC005_OLD_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-old-root');
+const SC005_NEW_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-new-root');
+const SC005_NEW_DESCRIPTOR = path.join(SC005_NEW_ROOT, '.tesseraft', 'project.json');
+const SC005_MANIFEST = path.join(PROJECTS_DIR, 'sc005-project.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -59,7 +63,10 @@ const cleanup = () => {
   fs.rmSync(BETA_MANIFEST, { force: true });
   fs.rmSync(ROOT_DESCRIPTOR, { force: true });
   fs.rmSync(SC004_MANIFEST, { force: true });
+  fs.rmSync(SC005_MANIFEST, { force: true });
   fs.rmSync(SC004_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC005_NEW_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -152,6 +159,60 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
   assert.equal(fs.readFileSync(SC004_DESCRIPTOR, 'utf8'), descriptorBefore, 'SC-004 unregister must leave the descriptor unchanged');
   assert.equal(fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8'), legacyBefore, 'SC-004 unregister must leave legacy project files unchanged');
   assert.equal(fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data')), dataBefore, 'SC-004 unregister must leave project data unchanged');
+});
+
+test('SC-005 reports stale registrations and accepts explicit re-registration at the new root', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+  fs.mkdirSync(SC005_OLD_ROOT, { recursive: true });
+  const staleRoot = fs.realpathSync(SC005_OLD_ROOT);
+  fs.writeFileSync(SC005_MANIFEST, JSON.stringify({
+    project_id: 'sc005-project',
+    name: 'SC005 Stale Registration',
+    workspace_root: staleRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'registration'
+  }, null, 2));
+  fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const staleSelection = await fetch(`${base}/api/projects/sc005-project`);
+  assert.equal(staleSelection.status, 409, 'SC-005 stale registration selection should fail with a focused missing-root diagnostic');
+  const staleBody = await staleSelection.json();
+  assert.equal(staleBody.error?.code, 'stale_project_root', `SC-005 stale diagnostic should use stale_project_root; got ${JSON.stringify(staleBody)}`);
+  assert.equal(path.normalize(staleBody.error?.details?.recorded_root || ''), staleRoot, 'SC-005 stale diagnostic should report the recorded missing root');
+  assert.equal(staleBody.error?.details?.searched_for_replacement, false, 'SC-005 must not search for a replacement root');
+
+  fs.mkdirSync(path.dirname(SC005_NEW_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(SC005_NEW_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'sc005-project',
+    name: 'SC005 Moved Project',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  const newRoot = fs.realpathSync(SC005_NEW_ROOT);
+
+  const registerNewRoot = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC005_NEW_ROOT })
+  });
+  assert.ok(registerNewRoot.status === 200 || registerNewRoot.status === 201, `SC-005 explicit re-registration at the new root should replace the stale mapping; got ${registerNewRoot.status}`);
+  const registered = await registerNewRoot.json();
+  assert.equal(registered.project_id, 'sc005-project', 'SC-005 re-registration should keep the descriptor project id');
+  assert.equal(path.normalize(registered.workspace_root || registered.canonical_root || ''), newRoot, 'SC-005 re-registration should store the new canonical root');
+
+  const detail = await fetch(`${base}/api/projects/sc005-project`).then(json);
+  assert.equal(detail.project_id, 'sc005-project', 'SC-005 selection should succeed after explicit re-registration');
+  assert.equal(path.normalize(detail.workspace_root || detail.canonical_root || ''), newRoot, 'SC-005 selection should use only the new registered root');
+  assert.equal(detail.source, 'registration', 'SC-005 selection after re-registration should identify registration as source');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

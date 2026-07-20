@@ -287,6 +287,15 @@
          :project_id project-id
          :workspace_root (str (abs-path (:workspace-root (opts options)) manifest-root))}))))
 
+(defn- project-root-exists? [options root]
+  (fs/exists? (abs-path (:workspace-root (opts options)) root)))
+
+(defn- stale-project-root-response [options project-id root]
+  (error-response 409 "stale_project_root" "Registered project root is missing"
+                  {:project_id project-id
+                   :recorded_root (str (abs-path (:workspace-root (opts options)) root))
+                   :searched_for_replacement false}))
+
 (defn resolve-project
   "Single entry point for project resolution. If project_id is nil or the
   literal `default`, resolve the default project: prefer a persisted
@@ -306,7 +315,10 @@
          (error-response 400 "bad_request" "Invalid project_id"
                          {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
          (if-let [m (read-project-manifest options pid)]
-           (assoc m :source (or (:source m) :manifest) :project_id pid)
+           (let [root (or (:workspace_root m) ".")]
+             (if (project-root-exists? options root)
+               (assoc m :source (or (:source m) :manifest) :project_id pid)
+               (stale-project-root-response options pid root)))
            (if (= "default" pid)
              (synthesize-default-project options)
              (error-response 404 "not_found" "Project not found"
@@ -429,8 +441,16 @@
              existing-root (or (:workspace_root existing) ".")
              requested-root (or (:workspace_root spec)
                                 (str (abs-path (:workspace-root (opts options)) ".")))]
-         (if (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (same-project-root? options existing-root requested-root))
+         (cond
+           (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (same-project-root? options existing-root requested-root))
            (get-project options project-id)
+
+           (and existing (= "registration" (:source spec)) (= "registration" (:source existing)) (not (project-root-exists? options existing-root)))
+           (do
+             (fs/delete-if-exists (project-manifest-path options project-id))
+             (create-project options project-id spec _global?))
+
+           :else
            (error-response 409 "conflict" "A project with that id already exists"
                            {:project_id project-id})))
 
