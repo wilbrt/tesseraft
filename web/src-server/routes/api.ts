@@ -376,10 +376,83 @@ const handleUpdateProject = async (req: Request, res: Response, projectId: strin
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleMigrateProject = async (res: Response, projectId: string): Promise<void> => {
+const handleMigrateProject = async (req: Request, res: Response, projectId: string, browserAllowedProjectRoots: string[] = []): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-  const result = await runControlPlane(['project', 'migrate', projectId]);
-  return jsonResponse(res, result.status, result.body);
+  const body = (req.body || {}) as JsonRecord;
+  const legacyManifestPath = typeof body.legacy_manifest === 'string' && body.legacy_manifest.trim() !== '' ? body.legacy_manifest.trim() : '';
+  const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
+  if (!legacyManifestPath && !projectRoot) {
+    const result = await runControlPlane(['project', 'migrate', projectId]);
+    return jsonResponse(res, result.status, result.body);
+  }
+  if (!legacyManifestPath || !projectRoot) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'legacy_manifest and project_root are required for explicit migration'));
+  const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
+  if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
+
+  let legacy: JsonRecord;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(legacyManifestPath, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('legacy manifest must be a JSON object');
+    legacy = parsed as JsonRecord;
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_manifest', 'legacy_manifest is not readable JSON', { legacy_manifest: legacyManifestPath, message: error instanceof Error ? error.message : String(error) }));
+  }
+  if (legacy.project_id !== projectId) return jsonResponse(res, 400, errorBody(400, 'project_id_mismatch', 'legacy manifest project_id does not match requested project id', { project_id: projectId, legacy_project_id: legacy.project_id }));
+  if (typeof legacy.workspace_root !== 'string' || path.normalize(fs.realpathSync(legacy.workspace_root)) !== path.normalize(projectRoot)) {
+    return jsonResponse(res, 400, errorBody(400, 'project_root_mismatch', 'legacy manifest workspace_root does not match requested project_root', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
+  }
+
+  const runsRoot = typeof legacy.runs_root === 'string' && legacy.runs_root.trim() !== '' ? legacy.runs_root : 'runs';
+  const discovery = legacy.discovery && typeof legacy.discovery === 'object' && !Array.isArray(legacy.discovery) ? legacy.discovery as JsonRecord : {};
+  const workflowRoots = Array.isArray(discovery['workflow-roots']) ? discovery['workflow-roots'].filter((r): r is string => typeof r === 'string') : [];
+  const escapedRunsRoot = validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot);
+  if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
+  for (const r of workflowRoots) {
+    const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
+    if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
+  }
+
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const registrationPath = path.join(WORKSPACE_ROOT, '.tesseraft', 'projects', `${projectId}.json`);
+  const descriptor: JsonRecord = {
+    version: 1,
+    project_id: projectId,
+    name: typeof legacy.name === 'string' && legacy.name.trim() !== '' ? legacy.name : projectId,
+    runs_root: runsRoot,
+    discovery
+  };
+  const registration: JsonRecord = { ...descriptor, workspace_root: projectRoot, source: 'registration' };
+  delete registration.version;
+
+  try {
+    if (fs.existsSync(descriptorPath)) {
+      const existingDescriptor = readProjectDescriptor(projectRoot);
+      if (!existingDescriptor || existingDescriptor.project_id !== descriptor.project_id || existingDescriptor.runs_root !== descriptor.runs_root) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
+      }
+    }
+    if (fs.existsSync(registrationPath)) {
+      const existingRegistration = JSON.parse(fs.readFileSync(registrationPath, 'utf8')) as JsonRecord;
+      const existingRoot = typeof existingRegistration.workspace_root === 'string' ? fs.realpathSync(existingRegistration.workspace_root) : '';
+      if (existingRegistration.project_id !== projectId || path.normalize(existingRoot) !== path.normalize(projectRoot)) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registration_path: registrationPath, project_id: projectId }));
+      }
+    }
+    if (!fs.existsSync(descriptorPath)) {
+      fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+      fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
+    }
+    if (!fs.existsSync(registrationPath)) {
+      fs.mkdirSync(path.dirname(registrationPath), { recursive: true });
+      fs.writeFileSync(registrationPath, `${JSON.stringify(registration, null, 2)}\n`);
+    }
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
+  }
+
+  const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
+  const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
+  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registration_path: registrationPath } } });
 };
 
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
@@ -1055,7 +1128,7 @@ export const createApiRouter = (options: ApiRouterOptions = {}): Router => {
   router.post('/projects/:projectId/migrate', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-    return void handleMigrateProject(res, id).catch(next);
+    return void handleMigrateProject(req, res, id, browserAllowedProjectRoots).catch(next);
   });
   router.get('/projects/:projectId/doctor', (req, res, next) => {
     const id = safeDecode(req.params.projectId);

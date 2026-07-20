@@ -56,6 +56,10 @@ const SC009_OUTSIDE_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-s
 const SC009_SYMLINK_ROOT = path.join(SC009_ALLOWED_ROOT, 'linked-outside-root');
 const SC009_DIRECT_MANIFEST = path.join(PROJECTS_DIR, 'sc009-outside-root.json');
 const SC009_SYMLINK_MANIFEST = path.join(PROJECTS_DIR, 'sc009-symlink-escaped-root.json');
+const SC010_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-migration-root');
+const SC010_DESCRIPTOR = path.join(SC010_ROOT, '.tesseraft', 'project.json');
+const SC010_REGISTRATION = path.join(PROJECTS_DIR, 'sc010-legacy-project.json');
+const SC010_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc010-legacy-control', 'sc010-legacy-project.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -91,6 +95,9 @@ const cleanup = () => {
   fs.rmSync(SC009_SYMLINK_ROOT, { force: true });
   fs.rmSync(SC009_ALLOWED_ROOT, { recursive: true, force: true });
   fs.rmSync(SC009_OUTSIDE_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC010_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC010_REGISTRATION, { force: true });
+  fs.rmSync(path.dirname(SC010_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -390,6 +397,67 @@ test('SC-009 confines browser project registration to configured filesystem root
   assert.equal(symlinkBody.error?.code, 'project_root_not_allowed', `SC-009 symlink diagnostic should use project_root_not_allowed; got ${JSON.stringify(symlinkBody)}`);
   assert.equal(symlinkBody.project_id, undefined, 'SC-009 symlink-escaped root must not select or register a project');
   assert.equal(fs.existsSync(SC009_SYMLINK_MANIFEST), false, 'SC-009 rejected symlink-escaped root must not be persisted as a registration');
+});
+
+test('SC-010 migrates a valid legacy control manifest to portable project state repeatably', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(SC010_LEGACY_MANIFEST), { recursive: true });
+  fs.mkdirSync(SC010_ROOT, { recursive: true });
+  const legacyManifest = {
+    project_id: 'sc010-legacy-project',
+    name: 'SC010 Legacy Project',
+    workspace_root: SC010_ROOT,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'manifest'
+  };
+  fs.writeFileSync(SC010_LEGACY_MANIFEST, JSON.stringify(legacyManifest, null, 2));
+  const legacyBefore = fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8');
+  const expectedRoot = fs.realpathSync(SC010_ROOT);
+
+  const server = createServer();
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const migrateBody = { legacy_manifest: SC010_LEGACY_MANIFEST, project_root: SC010_ROOT };
+  const firstMigration = await fetch(`${base}/api/projects/sc010-legacy-project/migrate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(migrateBody)
+  });
+  assert.ok(firstMigration.status === 200 || firstMigration.status === 201, `SC-010 valid legacy migration should succeed; got ${firstMigration.status}`);
+  const firstBody = await firstMigration.json();
+  assert.equal(firstBody.project_id, 'sc010-legacy-project', 'SC-010 migration should report the migrated legacy project id');
+  assert.equal(firstBody.source, 'descriptor', 'SC-010 migrated project should be selected from the new portable descriptor');
+  assert.ok(firstBody.diagnostics?.migration || firstBody.diagnostics?.migrated_from || firstBody['migrated-from'], `SC-010 migration should report migration/source diagnostics; got ${JSON.stringify(firstBody)}`);
+
+  assert.equal(fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-010 migration must preserve the legacy source byte-for-byte');
+  assert.equal(fs.existsSync(SC010_DESCRIPTOR), true, 'SC-010 migration should create a portable .tesseraft/project.json descriptor');
+  const descriptor = JSON.parse(fs.readFileSync(SC010_DESCRIPTOR, 'utf8'));
+  assert.equal(descriptor.version, 1, 'SC-010 descriptor should declare supported portable version 1');
+  assert.equal(descriptor.project_id, 'sc010-legacy-project', 'SC-010 descriptor should preserve legacy project identity');
+  assert.equal(descriptor.workspace_root, undefined, 'SC-010 portable descriptor must not persist machine-specific workspace_root');
+  assert.equal(descriptor.runs_root, 'runs', 'SC-010 descriptor should preserve project-relative runs_root');
+  assert.deepEqual(descriptor.discovery?.['workflow-roots'], ['.tesseraft/workflows'], 'SC-010 descriptor should preserve project-relative workflow discovery roots');
+
+  assert.equal(fs.existsSync(SC010_REGISTRATION), true, 'SC-010 migration should create matching user-local registration state');
+  const registration = JSON.parse(fs.readFileSync(SC010_REGISTRATION, 'utf8'));
+  assert.equal(registration.project_id, 'sc010-legacy-project', 'SC-010 registration should preserve legacy project identity');
+  assert.equal(path.normalize(registration.workspace_root || registration.canonical_root || ''), expectedRoot, 'SC-010 registration should store the canonical migrated root');
+
+  const descriptorBeforeRepeat = fs.readFileSync(SC010_DESCRIPTOR, 'utf8');
+  const registrationBeforeRepeat = fs.readFileSync(SC010_REGISTRATION, 'utf8');
+  const repeatMigration = await fetch(`${base}/api/projects/sc010-legacy-project/migrate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(migrateBody)
+  });
+  assert.ok(repeatMigration.status === 200 || repeatMigration.status === 201, `SC-010 repeated completed migration should be safe and successful; got ${repeatMigration.status}`);
+  assert.equal(fs.readFileSync(SC010_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'SC-010 repeated migration must still preserve the legacy source byte-for-byte');
+  assert.equal(fs.readFileSync(SC010_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'SC-010 repeated migration must not overwrite the destination descriptor');
+  assert.equal(fs.readFileSync(SC010_REGISTRATION, 'utf8'), registrationBeforeRepeat, 'SC-010 repeated migration must not overwrite registration state');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {
