@@ -291,12 +291,12 @@
       source
       (keyword (or source fallback)))))
 
-(defn- agreeing-manifest-duplicate [options descriptor project-id]
-  (when-let [m (read-project-manifest options project-id)]
-    (let [manifest-root (or (:workspace_root m) ".")]
+(defn- agreeing-manifest-duplicate [options descriptor project-id manifest]
+  (when manifest
+    (let [manifest-root (or (:workspace_root manifest) ".")]
       (when (and (= project-id (:project_id descriptor))
                  (same-project-root? options (:workspace_root descriptor) manifest-root))
-        {:source (project-source m "manifest")
+        {:source (project-source manifest "manifest")
          :project_id project-id
          :canonical_root (canonical-project-root options manifest-root)
          :workspace_root (canonical-project-root options manifest-root)}))))
@@ -349,7 +349,7 @@
              (project-identity-conflict-response options pid descriptor manifest)
 
              :else
-             (let [duplicate (agreeing-manifest-duplicate options descriptor pid)]
+             (let [duplicate (agreeing-manifest-duplicate options descriptor pid manifest)]
                (cond-> (assoc descriptor :source :descriptor)
                  duplicate
                  (assoc-in [:diagnostics :duplicates] [duplicate]))))))
