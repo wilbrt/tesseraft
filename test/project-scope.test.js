@@ -51,6 +51,11 @@ const SC007_DESCRIPTOR = path.join(SC007_ROOT, '.tesseraft', 'project.json');
 const SC007_MANIFEST = path.join(PROJECTS_DIR, 'sc007-unsupported-version.json');
 const SC008_LINK_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc008-linked-root');
 const SC008_MANIFEST = path.join(PROJECTS_DIR, 'sc008-symlink-escape.json');
+const SC009_ALLOWED_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc009-allowed-root');
+const SC009_OUTSIDE_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc009-outside-root');
+const SC009_SYMLINK_ROOT = path.join(SC009_ALLOWED_ROOT, 'linked-outside-root');
+const SC009_DIRECT_MANIFEST = path.join(PROJECTS_DIR, 'sc009-outside-root.json');
+const SC009_SYMLINK_MANIFEST = path.join(PROJECTS_DIR, 'sc009-symlink-escaped-root.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -81,6 +86,11 @@ const cleanup = () => {
   fs.rmSync(SC007_ROOT, { recursive: true, force: true });
   fs.rmSync(SC008_MANIFEST, { force: true });
   fs.rmSync(SC008_LINK_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC009_DIRECT_MANIFEST, { force: true });
+  fs.rmSync(SC009_SYMLINK_MANIFEST, { force: true });
+  fs.rmSync(SC009_SYMLINK_ROOT, { force: true });
+  fs.rmSync(SC009_ALLOWED_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC009_OUTSIDE_ROOT, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -337,6 +347,49 @@ test('SC-008 rejects project-owned roots that symlink outside the project bounda
   assert.equal(body.error?.code, 'project_path_escape', `SC-008 project-owned path confinement diagnostic should use project_path_escape; got ${JSON.stringify(body)}`);
   assert.equal(body.project_id, undefined, 'SC-008 symlink escape must not select or register a project');
   assert.equal(fs.existsSync(SC008_MANIFEST), false, 'SC-008 symlink escape must not be persisted as a registration');
+});
+
+test('SC-009 confines browser project registration to configured filesystem roots', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.join(SC009_ALLOWED_ROOT, 'inside'), { recursive: true });
+  fs.mkdirSync(path.join(SC009_OUTSIDE_ROOT, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(SC009_OUTSIDE_ROOT, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'sc009-outside-root',
+    name: 'SC009 Outside Root',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  fs.symlinkSync(SC009_OUTSIDE_ROOT, SC009_SYMLINK_ROOT, 'dir');
+
+  const server = createServer({ browserAllowedProjectRoots: [SC009_ALLOWED_ROOT] });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const outsideResponse = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC009_OUTSIDE_ROOT })
+  });
+
+  assert.equal(outsideResponse.status, 400, 'SC-009 outside browser project_root should be rejected by configured allowed roots');
+  const outsideBody = await outsideResponse.json();
+  assert.equal(outsideBody.error?.code, 'project_root_not_allowed', `SC-009 outside-root diagnostic should use project_root_not_allowed; got ${JSON.stringify(outsideBody)}`);
+  assert.equal(outsideBody.project_id, undefined, 'SC-009 outside root must not select or register a project');
+  assert.equal(fs.existsSync(SC009_DIRECT_MANIFEST), false, 'SC-009 rejected outside root must not be persisted as a registration');
+
+  const symlinkResponse = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_root: SC009_SYMLINK_ROOT })
+  });
+
+  assert.equal(symlinkResponse.status, 400, 'SC-009 symlink-escaped browser project_root should be rejected by configured allowed roots after realpath resolution');
+  const symlinkBody = await symlinkResponse.json();
+  assert.equal(symlinkBody.error?.code, 'project_root_not_allowed', `SC-009 symlink diagnostic should use project_root_not_allowed; got ${JSON.stringify(symlinkBody)}`);
+  assert.equal(symlinkBody.project_id, undefined, 'SC-009 symlink-escaped root must not select or register a project');
+  assert.equal(fs.existsSync(SC009_SYMLINK_MANIFEST), false, 'SC-009 rejected symlink-escaped root must not be persisted as a registration');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

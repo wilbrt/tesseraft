@@ -11,6 +11,7 @@ import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/
 
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
 type JsonRecord = Record<string, unknown>;
+export type ApiRouterOptions = { piSessionAdapter?: PiSessionAdapter; browserAllowedProjectRoots?: string[] };
 
 /** Optional `?project_id=` query param threaded to project-scoped routes. */
 const projectFromQuery = (searchParams: URLSearchParams): string | undefined => {
@@ -300,11 +301,20 @@ const validateProjectOwnedPath = (projectRoot: string, field: string, value: str
   return isPathWithin(projectRoot, canonical) ? null : { field, path: value, project_root: projectRoot, canonical_path: canonical };
 };
 
-const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
+const canonicalAllowedRoots = (roots: string[] = []): string[] => roots.map((root) => fs.realpathSync(root));
+
+const disallowedProjectRoot = (projectRoot: string, allowedRoots: string[]): JsonRecord | null => {
+  if (allowedRoots.length === 0) return null;
+  return allowedRoots.some((root) => isPathWithin(root, projectRoot)) ? null : { project_root: projectRoot, allowed_roots: allowedRoots };
+};
+
+const handleCreateProject = async (req: Request, res: Response, browserAllowedProjectRoots: string[] = []): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
   const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
   let descriptor: JsonRecord | null = null;
   if (projectRoot) {
+    const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
+    if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
     try {
       descriptor = readProjectDescriptor(projectRoot);
     } catch (error) {
@@ -978,8 +988,10 @@ const handleExistingRunMutation = async (req: Request, res: Response, runId: str
   jsonResponse(res, result.status, result.body);
 };
 
-export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfiguredPiSessionAdapter()): Router => {
+export const createApiRouter = (options: ApiRouterOptions = {}): Router => {
   const router = express.Router();
+  const piSessionAdapter = options.piSessionAdapter || createConfiguredPiSessionAdapter();
+  const browserAllowedProjectRoots = canonicalAllowedRoots(options.browserAllowedProjectRoots);
   router.use(express.json({ limit: '64kb' }));
 
   router.get('/pi-sessions', (req, res, next) => {
@@ -1024,7 +1036,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   // Secrets never leave the process: handlers return masked/absent token state.
   // Raw token payloads are rejected on write; only credential refs are accepted.
   router.get('/projects', (_req, res, next) => { void handleListProjects(res).catch(next); });
-  router.post('/projects', (req, res, next) => { void handleCreateProject(req, res).catch(next); });
+  router.post('/projects', (req, res, next) => { void handleCreateProject(req, res, browserAllowedProjectRoots).catch(next); });
   router.get('/projects/:projectId', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
