@@ -34,6 +34,86 @@ const cpResult = (args) => {
   }
 };
 
+test('implicit project discovery selects nearest ancestor descriptor from nested directory', () => {
+  const tempParent = path.join(process.cwd(), '.agent-runs');
+  fs.mkdirSync(tempParent, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tempParent, 'nearest-project-descriptor-'));
+  const outer = path.join(root, 'outer-project');
+  const nested = path.join(outer, 'packages', 'inner-project');
+  const start = path.join(nested, 'src', 'feature');
+  const sibling = path.join(root, 'sibling-project');
+  const home = path.join(root, 'fake-home');
+
+  try {
+    writeWorkflow(outer, 'outer-demo', 'Outer Demo');
+    writeWorkflow(nested, 'inner-demo', 'Inner Demo');
+    writeWorkflow(sibling, 'sibling-demo', 'Sibling Demo');
+    writeWorkflow(home, 'home-demo', 'Home Demo');
+    fs.mkdirSync(start, { recursive: true });
+
+    fs.writeFileSync(path.join(outer, '.tesseraft', 'project.json'), JSON.stringify({
+      schema_version: 1,
+      project_id: 'outer-project',
+      name: 'Outer Project',
+      runs_root: 'runs',
+      discovery: { workflow_roots: ['.tesseraft/workflows'] }
+    }, null, 2));
+    fs.writeFileSync(path.join(nested, '.tesseraft', 'project.json'), JSON.stringify({
+      schema_version: 1,
+      project_id: 'inner-project',
+      name: 'Inner Project',
+      runs_root: 'runs',
+      discovery: { workflow_roots: ['.tesseraft/workflows'] }
+    }, null, 2));
+    fs.writeFileSync(path.join(sibling, '.tesseraft', 'project.json'), JSON.stringify({
+      schema_version: 1,
+      project_id: 'sibling-project',
+      name: 'Sibling Project',
+      runs_root: 'runs',
+      discovery: { workflow_roots: ['.tesseraft/workflows'] }
+    }, null, 2));
+    fs.writeFileSync(path.join(home, '.tesseraft', 'project.json'), JSON.stringify({
+      schema_version: 1,
+      project_id: 'home-project',
+      name: 'Home Project',
+      runs_root: 'runs',
+      discovery: { workflow_roots: ['.tesseraft/workflows'] }
+    }, null, 2));
+
+    const project = JSON.parse(execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', start,
+      '--tesseraft-home', home,
+      'project', 'default'
+    ], { encoding: 'utf8' }));
+
+    assert.equal(project.project_id, 'inner-project', 'nested start directory should resolve the nearest ancestor project descriptor');
+    assert.equal(project.workspace_root, path.resolve(nested), 'descriptor parent should be reported as the canonical project root');
+    assert.equal(project.source, 'descriptor', 'implicit discovery should report descriptor as the selected project source');
+    assert.equal(project.runs_root, 'runs', 'runs_root should remain project-relative to the descriptor root');
+
+    const workflows = JSON.parse(execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', start,
+      '--tesseraft-home', home,
+      'workflows'
+    ], { encoding: 'utf8' })).workflows;
+    const names = workflows.map((workflow) => workflow.name);
+
+    assert.ok(names.includes('inner-demo'), `nearest descriptor project should discover inner-demo; got ${names.join(',')}`);
+    assert.ok(!names.includes('outer-demo'), 'nearest nested descriptor must win over the outer descriptor');
+    assert.ok(!names.includes('sibling-demo'), 'descriptor discovery must not inspect sibling repositories');
+    assert.ok(!names.includes('home-demo'), 'descriptor discovery must not inspect the user home directory');
+    assert.equal(workflows.find((workflow) => workflow.name === 'inner-demo')?.source, 'project');
+    assert.ok(
+      workflows.find((workflow) => workflow.name === 'inner-demo')?.path.startsWith('.tesseraft/workflows/inner-demo/'),
+      `workflow path should be relative to selected project root; got ${workflows.find((workflow) => workflow.name === 'inner-demo')?.path}`
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('explicit project root without descriptor returns validation diagnostic instead of fallback', () => {
   const tempParent = path.join(process.cwd(), '.agent-runs');
   fs.mkdirSync(tempParent, { recursive: true });

@@ -132,23 +132,38 @@
                  (contains? discovery :tesseraft-home)
                  (assoc :tesseraft-home (:tesseraft-home discovery)))))))
 
+(defn- nearest-project-descriptor-root [start]
+  (loop [dir (fs/normalize (fs/path start))]
+    (let [descriptor (project-descriptor-path dir)
+          parent (fs/parent dir)]
+      (cond
+        (fs/exists? descriptor) dir
+        (or (nil? parent) (= dir parent)) nil
+        :else (recur parent)))))
+
 (defn read-project-descriptor [options]
-  (when-let [project-root (:project-root (opts options))]
-    (let [root (abs-path (:workspace-root (opts options)) project-root)
-          p (project-descriptor-path root)]
-      (if-not (fs/exists? p)
-        (error-response 400 "invalid_project_descriptor"
-                        "Explicit project root is missing .tesseraft/project.json descriptor"
-                        {:project_root (str root)
-                         :descriptor_path (str p)})
-        (try
-          (normalize-project-descriptor root (store/read-json p))
-          (catch Throwable t
-            (error-response 400 "invalid_project_descriptor"
-                            "Explicit project root has an unreadable .tesseraft/project.json descriptor"
-                            {:project_root (str root)
-                             :descriptor_path (str p)
-                             :message (.getMessage t)})))))))
+  (let [options* (opts options)
+        explicit-root (:project-root options*)
+        root (if explicit-root
+               (abs-path (:workspace-root options*) explicit-root)
+               (nearest-project-descriptor-root (abs-path (:workspace-root options*) ".")))]
+    (when root
+      (let [p (project-descriptor-path root)]
+        (if-not (fs/exists? p)
+          (error-response 400 "invalid_project_descriptor"
+                          "Explicit project root is missing .tesseraft/project.json descriptor"
+                          {:project_root (str root)
+                           :descriptor_path (str p)})
+          (try
+            (normalize-project-descriptor root (store/read-json p))
+            (catch Throwable t
+              (error-response 400 "invalid_project_descriptor"
+                              (if explicit-root
+                                "Explicit project root has an unreadable .tesseraft/project.json descriptor"
+                                "Discovered project root has an unreadable .tesseraft/project.json descriptor")
+                              {:project_root (str root)
+                               :descriptor_path (str p)
+                               :message (.getMessage t)}))))))))
 
 (defn list-project-manifests [options]
   (let [dir (projects-dir options)]
@@ -308,7 +323,6 @@
                               (for [[k v] (:connections p {})]
                                 [k (api-value v)]))]
          (api-value (-> p
-                        (dissoc :source)
                         (assoc :connections connections))))))))
 
 (defn- path-escape-component?
