@@ -788,18 +788,24 @@
                        (fs/create-dirs (fs/parent registry-path))
                        (store/write-json! registry-path (assoc-in registry [:projects (keyword pid)] registration))))
                    (let [resolved (resolve-project (assoc options :project-root root) pid)]
-                     (cond-> resolved
-                       (not (:error resolved))
-                       (assoc-in [:diagnostics :migration] {:legacy_manifest (str legacy-path)
-                                                            :descriptor_path (str descriptor-path)
-                                                            :registry_path (str registry-path)})))
+                     (if (:error resolved)
+                       (throw (ex-info "Final project resolution failed" {:resolution-error resolved}))
+                       (assoc-in resolved [:diagnostics :migration] {:legacy_manifest (str legacy-path)
+                                                                     :descriptor_path (str descriptor-path)
+                                                                     :registry_path (str registry-path)})))
                    (catch clojure.lang.ExceptionInfo e
                      (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
                      (if registry-before
                        (spit (str registry-path) registry-before)
                        (fs/delete-if-exists registry-path))
-                     (if (:conflict (ex-data e))
+                     (cond
+                       (:resolution-error (ex-data e))
+                       (:resolution-error (ex-data e))
+
+                       (:conflict (ex-data e))
                        (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
+
+                       :else
                        (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
                    (catch Throwable t
                      (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))

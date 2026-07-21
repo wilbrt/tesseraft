@@ -545,6 +545,18 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   }
 
   const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
+  if (result.status >= 400) {
+    if (!registrationPreexisting) {
+      try {
+        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
+        else fs.writeFileSync(registryPath, registryBefore);
+      } catch {}
+    }
+    if (!descriptorPreexisting) {
+      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
+    }
+    return jsonResponse(res, result.status, result.body);
+  }
   const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
   return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registry_path: registryPath } } });
 };

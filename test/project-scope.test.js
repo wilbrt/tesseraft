@@ -83,6 +83,11 @@ const SC013_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-
 const SC013_REGISTRY = path.join(SC013_REGISTRY_HOME, 'projects', 'registry.json');
 const SC013_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc013-cli-legacy.json');
 const SC013_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc013-legacy-control', 'sc013-cli-legacy.json');
+const SC014_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-cli-migration-root');
+const SC014_DESCRIPTOR = path.join(SC014_ROOT, '.tesseraft', 'project.json');
+const SC014_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-home');
+const SC014_REGISTRY = path.join(SC014_REGISTRY_HOME, 'projects', 'registry.json');
+const SC014_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-legacy-control', 'sc014-cli-conflict.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -136,6 +141,9 @@ const cleanup = () => {
   fs.rmSync(SC013_LEGACY_REGISTRATION, { force: true });
   fs.rmSync(SC013_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(path.dirname(SC013_LEGACY_MANIFEST), { recursive: true, force: true });
+  fs.rmSync(SC014_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC014_REGISTRY_HOME, { recursive: true, force: true });
+  fs.rmSync(path.dirname(SC014_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -799,6 +807,44 @@ test('local CLI migrates legacy manifest to portable descriptor and user registr
   ], { encoding: 'utf8', stdio: 'pipe' });
   assert.equal(fs.readFileSync(SC013_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'repeat CLI migration must not overwrite descriptor');
   assert.equal(fs.readFileSync(SC013_REGISTRY, 'utf8'), registryBeforeRepeat, 'repeat CLI migration must not overwrite registry');
+});
+
+test('local CLI rolls back portable migration when final resolution fails', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC014_LEGACY_MANIFEST), { recursive: true });
+  fs.mkdirSync(SC014_ROOT, { recursive: true });
+  const legacyManifest = {
+    project_id: 'sc014-cli-conflict',
+    name: 'SC014 CLI Conflict',
+    workspace_root: SC014_ROOT,
+    runs_root: 'runs',
+    discovery: { unexpected: true },
+    source: 'manifest'
+  };
+  fs.writeFileSync(SC014_LEGACY_MANIFEST, JSON.stringify(legacyManifest, null, 2));
+  const legacyBefore = fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8');
+
+  let failure;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', SC014_REGISTRY_HOME,
+      'project', 'migrate', 'sc014-cli-conflict',
+      '--legacy-manifest', SC014_LEGACY_MANIFEST,
+      '--project-root', SC014_ROOT
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure, 'CLI migration should fail when final project resolution rejects the migrated descriptor');
+  const body = JSON.parse(failure.stdout);
+  assert.equal(body.error?.code, 'invalid_project_descriptor', `CLI migration should surface final resolution descriptor validation; got ${JSON.stringify(body)}`);
+  assert.equal(fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'failed CLI migration must preserve legacy source bytes');
+  assert.equal(fs.existsSync(SC014_DESCRIPTOR), false, 'failed CLI migration must remove the migration-created descriptor');
+  assert.equal(fs.existsSync(SC014_REGISTRY), false, 'failed CLI migration must remove the migration-created user registry');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

@@ -1577,6 +1577,48 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
   }
 });
 
+test('project abstraction: HTTP portable migration rolls back when final resolution fails', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-resolution-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-resolution-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-resolution-fails',
+    name: 'HTTP Resolution Fails',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { unexpected: true }
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-resolution-fails/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    assert.equal(res.status, 400, 'HTTP migration should fail when final project resolution rejects the migrated descriptor');
+    const body = await res.json();
+    assert.equal(body.error?.code, 'invalid_project_descriptor', `HTTP migration should surface final resolution descriptor validation; got ${JSON.stringify(body)}`);
+    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'HTTP failed migration must preserve legacy source bytes');
+    assert.equal(fs.existsSync(descriptorPath), false, 'HTTP failed migration must remove the migration-created descriptor');
+    assert.equal(fs.existsSync(registryPath), false, 'HTTP failed migration must remove the migration-created user registry');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
 test('project abstraction: HTTP portable migration rejects malformed registry without durable writes', async () => {
   const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-allowed-root');
   const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-home');
