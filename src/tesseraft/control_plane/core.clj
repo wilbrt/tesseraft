@@ -128,7 +128,7 @@
                   (not (map? entry)) (str "invalid project registry entry: " id*)
                   (seq (remove allowed-entry (keys entry))) (str "unknown project registry entry field: " id* "." (name (first (remove allowed-entry (keys entry)))))
                   (and (contains? entry :name) (not (string? (:name entry)))) (str "invalid project registry name: " id*)
-                  (not (string? (:workspace_root entry))) (str "invalid project registry workspace_root: " id*)
+                  (not (and (string? (:workspace_root entry)) (not (str/blank? (:workspace_root entry))))) (str "invalid project registry workspace_root: " id*)
                   (and (contains? entry :runs_root) (not (string? (:runs_root entry)))) (str "invalid project registry runs_root: " id*)
                   (and (contains? entry :source) (not= "registration" (:source entry))) (str "invalid project registry source: " id*)
                   (and (contains? entry :discovery) (not (map? (:discovery entry)))) (str "invalid project registry discovery: " id*)

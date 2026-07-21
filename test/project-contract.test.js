@@ -37,4 +37,25 @@ test('portable descriptor and user-local registry schemas publish separate owner
   assert.equal(descriptorSchema.additionalProperties, false, 'portable descriptor rejects unknown machine-local fields');
   assert.deepEqual(registrySchema.required, ['version', 'projects'], 'user registry requires version and projects map');
   assert.ok(registrySchema.properties.projects?.additionalProperties?.required?.includes('workspace_root'), 'registry entries own machine-local workspace roots');
+  assert.equal(registrySchema.properties.projects.additionalProperties.properties.workspace_root.minLength, 1, 'registry workspace_root must be nonblank');
+
+  const producedRegistry = {
+    version: 1,
+    projects: {
+      'schema-produced': {
+        name: 'Schema Produced',
+        workspace_root: path.join(repoRoot, '.agent-runs', 'schema-produced-root'),
+        runs_root: 'runs',
+        discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+        source: 'registration'
+      }
+    }
+  };
+  const entrySchema = registrySchema.properties.projects.additionalProperties;
+  const entry = producedRegistry.projects['schema-produced'];
+  assert.equal(producedRegistry.version, registrySchema.properties.version.const, 'produced registry declares the published version');
+  assert.deepEqual(Object.keys(producedRegistry).sort(), ['projects', 'version'], 'produced registry has only schema fields');
+  assert.deepEqual(Object.keys(entry).sort(), Object.keys(entrySchema.properties).sort(), 'produced registry entry uses only schema-owned fields');
+  assert.equal(entry.workspace_root.length >= entrySchema.properties.workspace_root.minLength, true, 'produced registry entry has a nonblank root');
+  assert.equal(entry.connections, undefined, 'produced registry entry must not include descriptor-owned connections');
 });

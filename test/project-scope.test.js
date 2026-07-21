@@ -88,6 +88,8 @@ const SC014_DESCRIPTOR = path.join(SC014_ROOT, '.tesseraft', 'project.json');
 const SC014_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-home');
 const SC014_REGISTRY = path.join(SC014_REGISTRY_HOME, 'projects', 'registry.json');
 const SC014_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-legacy-control', 'sc014-cli-conflict.json');
+const BLANK_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-blank-registry-home');
+const BLANK_REGISTRY = path.join(BLANK_REGISTRY_HOME, 'projects', 'registry.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -144,9 +146,45 @@ const cleanup = () => {
   fs.rmSync(SC014_ROOT, { recursive: true, force: true });
   fs.rmSync(SC014_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(path.dirname(SC014_LEGACY_MANIFEST), { recursive: true, force: true });
+  fs.rmSync(BLANK_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
+
+test('core project registry rejects blank workspace_root without rewriting durable bytes', () => {
+  cleanup();
+  fs.mkdirSync(path.dirname(BLANK_REGISTRY), { recursive: true });
+  const invalidRegistryBytes = JSON.stringify({
+    version: 1,
+    projects: {
+      'blank-root': {
+        name: 'Blank Root',
+        workspace_root: '',
+        source: 'registration'
+      }
+    }
+  }, null, 2);
+  fs.writeFileSync(BLANK_REGISTRY, invalidRegistryBytes);
+
+  let failure;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', BLANK_REGISTRY_HOME,
+      'project',
+      'blank-root'
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure, 'blank registry workspace_root must fail closed');
+  assert.equal(failure.status, 2, 'local CLI should report invalid durable registry state as a command failure');
+  assert.match(String(failure.stderr || ''), /invalid project registry workspace_root: blank-root/);
+  assert.equal(fs.readFileSync(BLANK_REGISTRY, 'utf8'), invalidRegistryBytes, 'invalid registry bytes must remain unchanged');
+  cleanup();
+});
 
 test('SC-002 explicit project id reports agreeing descriptor and legacy duplicates', async (t) => {
   cleanup();
