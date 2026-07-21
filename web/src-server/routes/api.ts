@@ -275,11 +275,35 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
 };
 
 const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
+  const allowed = new Set(['version', 'project_id', 'name', 'runs_root', 'discovery', 'connections']);
+  for (const key of Object.keys(descriptor)) if (!allowed.has(key)) return `Unknown project descriptor field: ${key}`;
   if (descriptor.version !== 1) return 'Unsupported project descriptor version';
   if (typeof descriptor.project_id !== 'string' || !PROJECT_NAME_RE.test(descriptor.project_id.trim())) return 'Invalid project descriptor project_id';
   if (Object.prototype.hasOwnProperty.call(descriptor, 'workspace_root')) return 'Portable project descriptor must not contain workspace_root';
+  if (descriptor.name !== undefined && typeof descriptor.name !== 'string') return 'Invalid project descriptor name';
   if (descriptor.runs_root !== undefined && typeof descriptor.runs_root !== 'string') return 'Invalid project descriptor runs_root';
   if (descriptor.discovery !== undefined && (!descriptor.discovery || typeof descriptor.discovery !== 'object' || Array.isArray(descriptor.discovery))) return 'Invalid project descriptor discovery';
+  if (descriptor.discovery && typeof descriptor.discovery === 'object' && !Array.isArray(descriptor.discovery)) {
+    const discoveryAllowed = new Set(['workflow-roots', 'workflow_roots', 'tesseraft-home', 'tesseraft_home']);
+    for (const key of Object.keys(descriptor.discovery as JsonRecord)) if (!discoveryAllowed.has(key)) return `Unknown project descriptor discovery field: ${key}`;
+    for (const key of ['workflow-roots', 'workflow_roots']) {
+      const roots = (descriptor.discovery as JsonRecord)[key];
+      if (roots !== undefined && (!Array.isArray(roots) || roots.some((r) => typeof r !== 'string'))) return `Invalid project descriptor discovery.${key}`;
+    }
+  }
+  if (descriptor.connections !== undefined && (!descriptor.connections || typeof descriptor.connections !== 'object' || Array.isArray(descriptor.connections))) return 'Invalid project descriptor connections';
+  if (descriptor.connections && typeof descriptor.connections === 'object' && !Array.isArray(descriptor.connections)) {
+    const connections = descriptor.connections as JsonRecord;
+    for (const [name, raw] of Object.entries(connections)) {
+      if (name !== 'jira' && name !== 'github') return `Unknown project descriptor connection: ${name}`;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return `Invalid project descriptor connection: ${name}`;
+      const conn = raw as JsonRecord;
+      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : new Set(['credential-ref']);
+      for (const key of Object.keys(conn)) if (!allowedConn.has(key)) return `Unknown project descriptor connection field: ${name}.${key}`;
+      if (conn['base-url'] !== undefined && typeof conn['base-url'] !== 'string') return `Invalid project descriptor connection: ${name}.base-url`;
+      if (conn['credential-ref'] !== undefined && (typeof conn['credential-ref'] !== 'string' || !CREDENTIAL_REF_RE.test(conn['credential-ref']))) return `Invalid project descriptor connection: ${name}.credential-ref`;
+    }
+  }
   return null;
 };
 
@@ -370,11 +394,11 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
   if (workspaceRoot) args.push('--workspace-root', workspaceRoot);
   if (runsRoot) args.push('--runs-root', runsRoot);
   for (const r of workflowRoots) args.push('--workflow-root', r);
-  const conns = body.connections;
+  const conns = descriptor?.connections;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
     const c = conns as Record<string, JsonRecord>;
-    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') args.push('--jira-credential-ref', c.jira.credential_ref); }
-    if (c.github && typeof c.github.credential_ref === 'string') args.push('--github-credential-ref', c.github.credential_ref);
+    if (c.jira) { if (typeof c.jira['base-url'] === 'string') args.push('--jira-base-url', c.jira['base-url']); if (typeof c.jira['credential-ref'] === 'string') args.push('--jira-credential-ref', c.jira['credential-ref']); }
+    if (c.github && typeof c.github['credential-ref'] === 'string') args.push('--github-credential-ref', c.github['credential-ref']);
   }
   if (projectRoot) args.push('--source', 'registration');
   const result = await runControlPlane(args);
@@ -471,7 +495,7 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('project registry must be a JSON object');
     const registry = parsed as JsonRecord;
     if (registry.version !== 1) throw new Error('unsupported project registry version');
-    if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) return { ...registry, projects: {} };
+    if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) throw new Error('project registry projects must be an object');
     return registry;
   };
 

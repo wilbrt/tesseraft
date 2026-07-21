@@ -191,7 +191,7 @@ bb -e '
       ;; wherever the host permits Java process-tree enumeration. Sandboxed
       ;; macOS runners can deny the underlying sysctl even though root-process
       ;; cancellation remains available.
-      (let [descendants-observed?
+      (let [descendant-ready?
             (when process-enumeration-supported?
               (loop [remaining 40]
                 (let [count (descendant-count)]
@@ -200,6 +200,13 @@ bb -e '
                     (pos? remaining) (do (Thread/sleep 25)
                                          (recur (dec remaining)))
                     :else false))))
+            ;; Only assert runtime descendant accounting when a descendant is
+            ;; still visible immediately before cancellation. A stale earlier
+            ;; observation can race with shell process-tree reaping on loaded
+            ;; CI hosts, while root cancellation and marker cleanup remain the
+            ;; mandatory assertions below.
+            descendants-visible-before-cancel?
+            (and descendant-ready? (pos? (descendant-count)))
             cancelled (runtime/cancel! dir)
             events (map #(json/parse-string % true)
                         (remove str/blank? (str/split-lines (slurp (str dir "/events.jsonl")))))
@@ -209,7 +216,7 @@ bb -e '
         (assert event events)
         (assert (= true (:process_found event)) event)
         (assert (= process-enumeration-supported? (:descendants_enumerated event)) event)
-        (when descendants-observed?
+        (when descendants-visible-before-cancel?
           (assert (pos? (:descendants event)) event))
         (assert (= true (:stopped event)) event)
         (assert (not (.exists (.toFile (runtime/runtime-process-path dir))))))

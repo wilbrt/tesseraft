@@ -1359,7 +1359,8 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
       project_id: 'local-acme',
       name: 'Local Acme',
       runs_root: 'runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+      connections: { github: { 'credential-ref': 'env:LOCAL_DESCRIPTOR_GITHUB_TOKEN' } }
     }, null, 2));
     fs.mkdirSync(path.join(outsideDescriptorRoot, '.tesseraft'), { recursive: true });
     fs.writeFileSync(path.join(outsideDescriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
@@ -1379,6 +1380,7 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     const registered = cpHome(['project', 'register', descriptorRoot]);
     assert.equal(registered.project_id, 'local-acme', 'local CLI register derives project id from descriptor');
     assert.equal(registered.source, 'registration', 'local CLI register stores a user-local registration');
+    assert.equal(registered.connections.github['credential-ref'], 'env:LOCAL_DESCRIPTOR_GITHUB_TOKEN', 'local CLI register persists descriptor-owned connections');
     const registryPath = path.join(home, 'projects', 'registry.json');
     const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
     assert.equal(registry.version, 1, 'local CLI register writes the versioned user-local registry');
@@ -1410,6 +1412,32 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     const migrated = cp(['project', 'migrate']);
     assert.equal(migrated.project_id, 'default');
     assert.match(String(migrated['migrated-from'] || ''), /legacy-settings/);
+
+    // Portable migration fails closed on malformed durable registry state.
+    const portableRoot = path.join(root, 'portable-migration-root');
+    fs.mkdirSync(portableRoot, { recursive: true });
+    const legacyManifest = path.join(root, 'legacy-portable.json');
+    const legacyBytes = JSON.stringify({
+      project_id: 'portable-acme',
+      name: 'Portable Acme',
+      workspace_root: portableRoot,
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+    }, null, 2);
+    fs.writeFileSync(legacyManifest, legacyBytes);
+    const malformedRegistryBytes = JSON.stringify({ version: 1, projects: [] }, null, 2);
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    fs.writeFileSync(registryPath, malformedRegistryBytes);
+    let malformed;
+    try {
+      cpHome(['project', 'migrate', 'portable-acme', '--legacy-manifest', legacyManifest, '--project-root', portableRoot]);
+    } catch (error) {
+      malformed = JSON.parse(String(error.stdout || '{}'));
+    }
+    assert.equal(malformed?.status, 400, 'portable migration must reject malformed registry state');
+    assert.equal(malformed?.error?.code, 'migration_failed');
+    assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'malformed registry bytes must be preserved exactly');
+    assert.equal(fs.existsSync(path.join(portableRoot, '.tesseraft', 'project.json')), false, 'failed migration must not leave a descriptor behind');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     if (outsideDescriptorRoot) fs.rmSync(outsideDescriptorRoot, { recursive: true, force: true });
@@ -1463,6 +1491,7 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
   const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-create-home');
   const escapeRoot = path.join(allowedRoot, 'escape-project');
   const nestedRoot = path.join(allowedRoot, 'nested-project');
+  const connectionRoot = path.join(allowedRoot, 'descriptor-connections-project');
   const previousHome = process.env.TESSERAFT_HOME;
   fs.mkdirSync(path.join(escapeRoot, '.tesseraft'), { recursive: true });
   fs.writeFileSync(path.join(escapeRoot, '.tesseraft', 'project.json'), JSON.stringify({
@@ -1477,6 +1506,13 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     project_id: 'nested-discovery',
     name: 'Nested',
     discovery: { 'workflow-roots': ['examples/smoke'] }
+  }, null, 2));
+  fs.mkdirSync(path.join(connectionRoot, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(connectionRoot, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 1,
+    project_id: 'descriptor-connections',
+    name: 'Descriptor Connections',
+    connections: { github: { 'credential-ref': 'env:DESCRIPTOR_GITHUB_TOKEN' } }
   }, null, 2));
 
   process.env.TESSERAFT_HOME = registryHome;
@@ -1512,6 +1548,20 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     assert.equal(refetch.status, 200);
     const refetched = await refetch.json();
     assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
+
+    // Browser registration derives connections from the descriptor, not caller-supplied body fields.
+    const connCreated = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        project_root: connectionRoot,
+        connections: { github: { credential_ref: 'env:CALLER_GITHUB_TOKEN' } }
+      })
+    });
+    assert.equal(connCreated.status, 201, 'descriptor connection registration should succeed');
+    const connBody = await connCreated.json();
+    assert.equal(connBody.connections.github['credential-ref'], 'env:DESCRIPTOR_GITHUB_TOKEN', 'browser registration must derive connections from descriptor');
+    assert.doesNotMatch(JSON.stringify(connBody), /CALLER_GITHUB_TOKEN/, 'caller-supplied connections must not override descriptor state');
   } finally {
     await close(server);
     if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
@@ -1521,8 +1571,50 @@ test('project abstraction: HTTP create rejects path escapes with 400 and honors 
     // Clean up created manifests so listProjects synthesizes the implicit
     // default for later tests (default is only implicit when no manifests exist).
     const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-    for (const id of ['nested-discovery', 'http-escape']) {
+    for (const id of ['nested-discovery', 'http-escape', 'descriptor-connections']) {
       fs.rmSync(path.join(projectsDir, `${id}.json`), { force: true });
     }
+  }
+});
+
+test('project abstraction: HTTP portable migration rejects malformed registry without durable writes', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-portable',
+    name: 'HTTP Portable',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  const malformedRegistryBytes = JSON.stringify({ version: 1, projects: [] }, null, 2);
+  fs.writeFileSync(registryPath, malformedRegistryBytes);
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-portable/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    assert.equal(res.status, 400, 'HTTP migration must reject malformed registry projects state');
+    const body = await res.json();
+    assert.match(body.error?.code || '', /invalid_project_registry|migration_failed/);
+    assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'HTTP migration must preserve malformed registry bytes exactly');
+    assert.equal(fs.existsSync(path.join(projectRoot, '.tesseraft', 'project.json')), false, 'HTTP failed migration must not leave a descriptor behind');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
   }
 });

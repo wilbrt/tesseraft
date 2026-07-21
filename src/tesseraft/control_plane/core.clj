@@ -151,6 +151,45 @@
 (defn- project-descriptor-path [project-root]
   (fs/path project-root ".tesseraft" "project.json"))
 
+(defn- validate-project-descriptor [raw]
+  (cond
+    (not (map? raw)) "project descriptor must be a JSON object"
+    (not= 1 (:version raw)) "unsupported project descriptor version"
+    (not (valid-project-id? (:project_id raw))) "invalid project descriptor project_id"
+    (contains? raw :workspace_root) "portable project descriptor must not contain workspace_root"
+    (some #(not (contains? #{:version :project_id :name :runs_root :discovery :connections} %)) (keys raw)) "project descriptor contains unknown fields"
+    (and (contains? raw :name) (not (string? (:name raw)))) "project descriptor name must be a string"
+    (and (contains? raw :runs_root) (not (string? (:runs_root raw)))) "project descriptor runs_root must be a string"
+    :else
+    (let [discovery (:discovery raw)
+          conn (:connections raw)]
+      (cond
+        (and (some? discovery) (not (map? discovery))) "project descriptor discovery must be an object"
+        (and (map? discovery)
+             (some #(not (contains? #{:workflow-roots :workflow_roots :tesseraft-home :tesseraft_home} %)) (keys discovery))) "project descriptor discovery contains unknown fields"
+        (and (some? (:workflow-roots discovery))
+             (or (not (sequential? (:workflow-roots discovery)))
+                 (not-every? string? (:workflow-roots discovery)))) "project descriptor discovery.workflow-roots must be an array of strings"
+        (and (some? (:workflow_roots discovery))
+             (or (not (sequential? (:workflow_roots discovery)))
+                 (not-every? string? (:workflow_roots discovery)))) "project descriptor discovery.workflow_roots must be an array of strings"
+        (and (some? (:tesseraft-home discovery))
+             (not (or (string? (:tesseraft-home discovery)) (nil? (:tesseraft-home discovery))))) "project descriptor discovery.tesseraft-home must be a string or null"
+        (and (some? (:tesseraft_home discovery))
+             (not (or (string? (:tesseraft_home discovery)) (nil? (:tesseraft_home discovery))))) "project descriptor discovery.tesseraft_home must be a string or null"
+        (and (some? conn) (not (map? conn))) "project descriptor connections must be an object"
+        (and (map? conn) (some #(not (contains? #{:jira :github} %)) (keys conn))) "project descriptor connections contains unknown fields"
+        :else
+        (let [bad-conn (some (fn [[k v]]
+                               (cond
+                                 (not (map? v)) (name k)
+                                 (some #(not (contains? (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}) %)) (keys v)) (name k)
+                                 (and (:base-url v) (not (string? (:base-url v)))) (name k)
+                                 (and (:credential-ref v) (not (credential-ref? (:credential-ref v)))) (name k)
+                                 :else nil))
+                             conn)]
+          (when bad-conn (str "invalid project descriptor connection: " bad-conn)))))))
+
 (defn- normalize-project-descriptor [project-root raw]
   (let [discovery (:discovery raw {})]
     (-> raw
@@ -190,7 +229,12 @@
                           {:project_root (str root)
                            :descriptor_path (str p)})
           (try
-            (normalize-project-descriptor root (store/read-json p))
+            (let [raw (store/read-json p)]
+              (if-let [err (validate-project-descriptor raw)]
+                (error-response 400 "invalid_project_descriptor" err
+                                {:project_root (str root)
+                                 :descriptor_path (str p)})
+                (normalize-project-descriptor root raw)))
             (catch Throwable t
               (error-response 400 "invalid_project_descriptor"
                               (if explicit-root

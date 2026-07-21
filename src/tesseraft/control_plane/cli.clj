@@ -216,7 +216,8 @@
                                      :runs_root (:runs_root descriptor)
                                      :discovery (:discovery descriptor)
                                      :source "registration"}
-                              (:name descriptor) (assoc :name (:name descriptor))))))))
+                              (:name descriptor) (assoc :name (:name descriptor))
+                              (seq (:connections descriptor)) (assoc :connections (:connections descriptor))))))))
       "unregister" (let [[project-id] rest]
                       (if (str/blank? project-id)
                         (control-plane/error-response 400 "bad_request" "project unregister requires <project-id>")
