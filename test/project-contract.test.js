@@ -6,6 +6,28 @@ import path from 'node:path';
 
 const repoRoot = process.cwd();
 
+const validateWithDraft202012 = (schema, instance) => {
+  const payload = JSON.stringify({ schema, instance });
+  const script = `
+import json
+import sys
+from jsonschema import Draft202012Validator
+payload = json.load(sys.stdin)
+errors = sorted(Draft202012Validator(payload["schema"]).iter_errors(payload["instance"]), key=lambda error: list(error.path))
+if errors:
+    for error in errors:
+        path = "/".join(str(part) for part in error.path)
+        print(f"{path}: {error.message}")
+    sys.exit(1)
+`;
+  try {
+    execFileSync('python3', ['-c', script], { input: payload, encoding: 'utf8' });
+    return { valid: true, output: '' };
+  } catch (error) {
+    return { valid: false, output: String(error.stdout || error.stderr || error.message) };
+  }
+};
+
 const isIgnored = (relativePath) => {
   try {
     execFileSync('git', ['check-ignore', relativePath], { cwd: repoRoot, stdio: 'pipe' });
@@ -58,4 +80,16 @@ test('portable descriptor and user-local registry schemas publish separate owner
   assert.deepEqual(Object.keys(entry).sort(), Object.keys(entrySchema.properties).sort(), 'produced registry entry uses only schema-owned fields');
   assert.equal(entry.workspace_root.length >= entrySchema.properties.workspace_root.minLength, true, 'produced registry entry has a nonblank root');
   assert.equal(entry.connections, undefined, 'produced registry entry must not include descriptor-owned connections');
+
+  const producedValidation = validateWithDraft202012(registrySchema, producedRegistry);
+  assert.equal(producedValidation.valid, true, `produced registry instance must validate against Draft 2020-12 schema: ${producedValidation.output}`);
+
+  const whitespaceRootRegistry = {
+    version: 1,
+    projects: {
+      'schema-produced': { workspace_root: '   ', source: 'registration' }
+    }
+  };
+  const whitespaceValidation = validateWithDraft202012(registrySchema, whitespaceRootRegistry);
+  assert.equal(whitespaceValidation.valid, false, 'Draft 2020-12 schema must reject whitespace-only registry workspace_root values');
 });

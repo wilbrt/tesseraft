@@ -13,7 +13,7 @@
         "required": ["workspace_root"],
         "properties": {
           "name": { "type": "string" },
-          "workspace_root": { "type": "string", "minLength": 1, "description": "Canonical local root for the registered descriptor identity." },
+          "workspace_root": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Canonical local root for the registered descriptor identity." },
           "runs_root": { "type": "string" },
           "discovery": {
             "type": "object",
