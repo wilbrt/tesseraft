@@ -48,7 +48,7 @@
                       (str/includes? message "permission denied")
                       (str/includes? message "sysctl failed"))))))
 
-(defn- process-descendants [process-handle]
+(defn- process-descendants-once [process-handle]
   (try
     (with-open [stream (.descendants process-handle)]
       {:handles (vec (iterator-seq (.iterator stream)))
@@ -57,6 +57,15 @@
       (if (process-enumeration-denied? error)
         {:handles [] :enumerated false}
         (throw error)))))
+
+(defn- process-descendants [process-handle]
+  (loop [remaining 5]
+    (let [result (process-descendants-once process-handle)]
+      (cond
+        (or (seq (:handles result)) (false? (:enumerated result))) result
+        (pos? remaining) (do (Thread/sleep 20)
+                             (recur (dec remaining)))
+        :else result))))
 
 (defn- wait-for-process-exit [handles]
   (loop [remaining 40]
