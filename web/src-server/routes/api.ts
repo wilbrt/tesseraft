@@ -520,6 +520,8 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     discovery
   };
   const registration: JsonRecord = { name: descriptor.name, workspace_root: projectRoot, runs_root: runsRoot, discovery, source: 'registration' };
+  const descriptorError = validateProjectDescriptor(descriptor);
+  if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { project_id: projectId }));
 
   const readRegistry = (): JsonRecord => {
     if (!fs.existsSync(registryPath)) return { version: 1, projects: {} };

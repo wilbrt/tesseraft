@@ -50,7 +50,10 @@ const SC005_NEW_DESCRIPTOR = path.join(SC005_NEW_ROOT, '.tesseraft', 'project.js
 const SC005_MANIFEST = path.join(PROJECTS_DIR, 'sc005-project.json');
 const SC005_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc005-home');
 const SC006_REGISTERED_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-registered-root');
+const SC006_LEGACY_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-legacy-root');
 const SC006_MANIFEST = path.join(PROJECTS_DIR, 'sc006-project.json');
+const SC006_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc006-home');
+const SC006_REGISTRY = path.join(SC006_REGISTRY_HOME, 'projects', 'registry.json');
 const SC007_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc007-unsupported-version-root');
 const SC007_DESCRIPTOR = path.join(SC007_ROOT, '.tesseraft', 'project.json');
 const SC007_MANIFEST = path.join(PROJECTS_DIR, 'sc007-unsupported-version.json');
@@ -115,11 +118,13 @@ const cleanup = () => {
   fs.rmSync(SC005_MANIFEST, { force: true });
   fs.rmSync(SC005_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(SC006_MANIFEST, { force: true });
+  fs.rmSync(SC006_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(SC007_MANIFEST, { force: true });
   fs.rmSync(SC004_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_OLD_ROOT, { recursive: true, force: true });
   fs.rmSync(SC005_NEW_ROOT, { recursive: true, force: true });
   fs.rmSync(SC006_REGISTERED_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC006_LEGACY_ROOT, { recursive: true, force: true });
   fs.rmSync(SC007_ROOT, { recursive: true, force: true });
   fs.rmSync(SC008_MANIFEST, { force: true });
   fs.rmSync(SC008_LINK_ROOT, { recursive: true, force: true });
@@ -609,6 +614,62 @@ test('SC-006 rejects conflicting canonical roots across project sources', async 
   assert.equal(body.project_id, undefined, 'SC-006 conflict must not select either project source');
 });
 
+test('project resolution rejects registration versus legacy root conflicts before selection', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(SC006_REGISTERED_ROOT, { recursive: true });
+  fs.mkdirSync(SC006_LEGACY_ROOT, { recursive: true });
+  fs.mkdirSync(path.dirname(SC006_REGISTRY), { recursive: true });
+  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+  fs.writeFileSync(SC006_REGISTRY, JSON.stringify({
+    version: 1,
+    projects: {
+      'sc006-project': {
+        name: 'SC006 Registered',
+        workspace_root: fs.realpathSync(SC006_REGISTERED_ROOT),
+        runs_root: 'runs',
+        discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+        source: 'registration'
+      }
+    }
+  }, null, 2));
+  fs.writeFileSync(SC006_MANIFEST, JSON.stringify({
+    project_id: 'sc006-project',
+    name: 'SC006 Legacy',
+    workspace_root: fs.realpathSync(SC006_LEGACY_ROOT),
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'manifest'
+  }, null, 2));
+
+  let failure;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', SC006_REGISTRY_HOME,
+      'project', 'sc006-project'
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure, 'registration and legacy roots that disagree must fail closed');
+  const body = JSON.parse(failure.stdout);
+  assert.equal(body.error?.code, 'project_identity_conflict', `conflict diagnostic should use project_identity_conflict; got ${JSON.stringify(body)}`);
+  assert.ok(
+    body.error.details.sources.some((source) => source?.source === 'registration' && path.normalize(source.canonical_root || '') === fs.realpathSync(SC006_REGISTERED_ROOT)),
+    `conflict diagnostic should include registration root; got ${JSON.stringify(body.error.details.sources)}`
+  );
+  assert.ok(
+    body.error.details.sources.some((source) => source?.source === 'manifest' && path.normalize(source.canonical_root || '') === fs.realpathSync(SC006_LEGACY_ROOT)),
+    `conflict diagnostic should include legacy manifest root; got ${JSON.stringify(body.error.details.sources)}`
+  );
+  assert.equal(fs.existsSync(path.join(SC006_REGISTERED_ROOT, '.tesseraft', 'settings.json')), false, 'conflict must not touch registered project state');
+  assert.equal(fs.existsSync(path.join(SC006_LEGACY_ROOT, '.tesseraft', 'settings.json')), false, 'conflict must not touch legacy project state');
+});
+
 test('SC-007 rejects unsupported versioned project descriptors before registration', async (t) => {
   cleanup();
   t.after(() => cleanup());
@@ -929,6 +990,86 @@ test('local CLI migrates legacy manifest to portable descriptor and user registr
   ], { encoding: 'utf8', stdio: 'pipe' });
   assert.equal(fs.readFileSync(SC013_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'repeat CLI migration must not overwrite descriptor');
   assert.equal(fs.readFileSync(SC013_REGISTRY, 'utf8'), registryBeforeRepeat, 'repeat CLI migration must not overwrite registry');
+});
+
+test('local CLI returns structured portable migration diagnostics before durable writes', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC014_LEGACY_MANIFEST), { recursive: true });
+  fs.writeFileSync(SC014_LEGACY_MANIFEST, JSON.stringify({
+    project_id: 'sc014-cli-conflict',
+    name: 'SC014 Missing Root',
+    workspace_root: path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-missing-legacy-root'),
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'manifest'
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8');
+  const missingProjectRoot = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc014-missing-project-root');
+
+  let missingProject;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', SC014_REGISTRY_HOME,
+      'project', 'migrate', 'sc014-cli-conflict',
+      '--legacy-manifest', SC014_LEGACY_MANIFEST,
+      '--project-root', missingProjectRoot
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    missingProject = error;
+  }
+  assert.ok(missingProject, 'missing local project_root should fail');
+  const missingProjectBody = JSON.parse(missingProject.stdout);
+  assert.equal(missingProjectBody.error?.code, 'invalid_project_root', `missing project_root should be structured JSON; got stdout=${missingProject.stdout} stderr=${missingProject.stderr}`);
+  assert.equal(fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'missing project_root must preserve legacy bytes');
+  assert.equal(fs.existsSync(SC014_DESCRIPTOR), false, 'missing project_root must not create a descriptor');
+  assert.equal(fs.existsSync(SC014_REGISTRY), false, 'missing project_root must not create a registry');
+
+  fs.mkdirSync(SC014_ROOT, { recursive: true });
+  let missingLegacyRoot;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', SC014_REGISTRY_HOME,
+      'project', 'migrate', 'sc014-cli-conflict',
+      '--legacy-manifest', SC014_LEGACY_MANIFEST,
+      '--project-root', SC014_ROOT
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    missingLegacyRoot = error;
+  }
+  assert.ok(missingLegacyRoot, 'missing legacy workspace_root should fail');
+  const missingLegacyRootBody = JSON.parse(missingLegacyRoot.stdout);
+  assert.equal(missingLegacyRootBody.error?.code, 'invalid_legacy_workspace_root', `missing legacy workspace_root should be structured JSON; got stdout=${missingLegacyRoot.stdout} stderr=${missingLegacyRoot.stderr}`);
+  assert.equal(fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'missing legacy workspace_root must preserve legacy bytes');
+  assert.equal(fs.existsSync(SC014_DESCRIPTOR), false, 'missing legacy workspace_root must not create a descriptor');
+  assert.equal(fs.existsSync(SC014_REGISTRY), false, 'missing legacy workspace_root must not create a registry');
+
+  fs.writeFileSync(SC014_LEGACY_MANIFEST, '{not-json');
+  const malformedBefore = fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8');
+  let malformed;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', SC014_REGISTRY_HOME,
+      'project', 'migrate', 'sc014-cli-conflict',
+      '--legacy-manifest', SC014_LEGACY_MANIFEST,
+      '--project-root', SC014_ROOT
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    malformed = error;
+  }
+  assert.ok(malformed, 'malformed legacy manifest JSON should fail');
+  const malformedBody = JSON.parse(malformed.stdout);
+  assert.equal(malformedBody.error?.code, 'invalid_legacy_manifest', `malformed legacy JSON should be structured JSON; got stdout=${malformed.stdout} stderr=${malformed.stderr}`);
+  assert.equal(fs.readFileSync(SC014_LEGACY_MANIFEST, 'utf8'), malformedBefore, 'malformed legacy JSON must preserve legacy bytes');
+  assert.equal(fs.existsSync(SC014_DESCRIPTOR), false, 'malformed legacy JSON must not create a descriptor');
+  assert.equal(fs.existsSync(SC014_REGISTRY), false, 'malformed legacy JSON must not create a registry');
 });
 
 test('local CLI rolls back portable migration when final resolution fails', async (t) => {
