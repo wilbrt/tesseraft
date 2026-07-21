@@ -308,13 +308,30 @@ const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
 };
 
 const validateRegistry = (registry: JsonRecord): string | null => {
+  const allowedTop = new Set(['version', 'projects']);
+  for (const key of Object.keys(registry)) if (!allowedTop.has(key)) return `Unknown project registry field: ${key}`;
   if (registry.version !== 1) return 'Unsupported project registry version';
   if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) return 'Project registry projects must be an object';
+  const allowedEntry = new Set(['name', 'workspace_root', 'runs_root', 'discovery', 'source']);
   for (const [id, entry] of Object.entries(registry.projects as Record<string, unknown>)) {
     if (!PROJECT_NAME_RE.test(id)) return `Invalid project registry id: ${id}`;
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return `Invalid project registry entry: ${id}`;
     const e = entry as JsonRecord;
+    for (const key of Object.keys(e)) if (!allowedEntry.has(key)) return `Unknown project registry entry field: ${id}.${key}`;
+    if (e.name !== undefined && typeof e.name !== 'string') return `Invalid project registry name: ${id}`;
     if (typeof e.workspace_root !== 'string' || e.workspace_root.trim() === '') return `Invalid project registry workspace_root: ${id}`;
+    if (e.runs_root !== undefined && typeof e.runs_root !== 'string') return `Invalid project registry runs_root: ${id}`;
+    if (e.source !== undefined && e.source !== 'registration') return `Invalid project registry source: ${id}`;
+    if (e.discovery !== undefined) {
+      if (!e.discovery || typeof e.discovery !== 'object' || Array.isArray(e.discovery)) return `Invalid project registry discovery: ${id}`;
+      const discovery = e.discovery as JsonRecord;
+      const allowedDiscovery = new Set(['workflow-roots', 'tesseraft-home']);
+      for (const key of Object.keys(discovery)) if (!allowedDiscovery.has(key)) return `Unknown project registry discovery field: ${id}.${key}`;
+      const roots = discovery['workflow-roots'];
+      if (roots !== undefined && (!Array.isArray(roots) || roots.some((r) => typeof r !== 'string'))) return `Invalid project registry discovery.workflow-roots: ${id}`;
+      const home = discovery['tesseraft-home'];
+      if (home !== undefined && home !== null && typeof home !== 'string') return `Invalid project registry discovery.tesseraft-home: ${id}`;
+    }
   }
   return null;
 };
@@ -494,8 +511,8 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('project registry must be a JSON object');
     const registry = parsed as JsonRecord;
-    if (registry.version !== 1) throw new Error('unsupported project registry version');
-    if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) throw new Error('project registry projects must be an object');
+    const registryError = validateRegistry(registry);
+    if (registryError) throw new Error(registryError);
     return registry;
   };
 

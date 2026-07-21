@@ -112,19 +112,35 @@
   (fs/path (tesseraft-home options) "credentials.json"))
 
 (defn- validate-project-registry [registry]
-  (cond
-    (not (map? registry)) "project registry must be a JSON object"
-    (not= 1 (:version registry)) "unsupported project registry version"
-    (not (map? (:projects registry))) "project registry projects must be an object"
-    :else
-    (some (fn [[id entry]]
-            (let [id* (name id)]
-              (cond
-                (not (valid-project-id? id*)) (str "invalid project registry id: " id*)
-                (not (map? entry)) (str "invalid project registry entry: " id*)
-                (not (string? (:workspace_root entry))) (str "invalid project registry workspace_root: " id*)
-                :else nil)))
-          (:projects registry))))
+  (let [allowed-top #{:version :projects}
+        allowed-entry #{:name :workspace_root :runs_root :discovery :source}
+        allowed-discovery #{:workflow-roots :tesseraft-home}]
+    (cond
+      (not (map? registry)) "project registry must be a JSON object"
+      (seq (remove allowed-top (keys registry))) (str "unknown project registry field: " (name (first (remove allowed-top (keys registry)))))
+      (not= 1 (:version registry)) "unsupported project registry version"
+      (not (map? (:projects registry))) "project registry projects must be an object"
+      :else
+      (some (fn [[id entry]]
+              (let [id* (name id)]
+                (cond
+                  (not (valid-project-id? id*)) (str "invalid project registry id: " id*)
+                  (not (map? entry)) (str "invalid project registry entry: " id*)
+                  (seq (remove allowed-entry (keys entry))) (str "unknown project registry entry field: " id* "." (name (first (remove allowed-entry (keys entry)))))
+                  (and (contains? entry :name) (not (string? (:name entry)))) (str "invalid project registry name: " id*)
+                  (not (string? (:workspace_root entry))) (str "invalid project registry workspace_root: " id*)
+                  (and (contains? entry :runs_root) (not (string? (:runs_root entry)))) (str "invalid project registry runs_root: " id*)
+                  (and (contains? entry :source) (not= "registration" (:source entry))) (str "invalid project registry source: " id*)
+                  (and (contains? entry :discovery) (not (map? (:discovery entry)))) (str "invalid project registry discovery: " id*)
+                  (and (map? (:discovery entry)) (seq (remove allowed-discovery (keys (:discovery entry))))) (str "unknown project registry discovery field: " id* "." (name (first (remove allowed-discovery (keys (:discovery entry))))))
+                  (and (contains? (:discovery entry) :workflow-roots)
+                       (not (and (vector? (get-in entry [:discovery :workflow-roots]))
+                                 (every? string? (get-in entry [:discovery :workflow-roots]))))) (str "invalid project registry discovery.workflow-roots: " id*)
+                  (and (contains? (:discovery entry) :tesseraft-home)
+                       (some? (get-in entry [:discovery :tesseraft-home]))
+                       (not (string? (get-in entry [:discovery :tesseraft-home])))) (str "invalid project registry discovery.tesseraft-home: " id*)
+                  :else nil)))
+            (:projects registry)))))
 
 (defn read-project-registry [options]
   (let [p (project-registry-path options)]
@@ -144,9 +160,23 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
+(declare read-project-descriptor-at-root)
+
+(defn- merge-registration-descriptor [registration]
+  (if (and (#{"registration" :registration} (:source registration))
+           (string? (:workspace_root registration)))
+    (let [descriptor (read-project-descriptor-at-root (:workspace_root registration)
+                                                      "Registered project root has an unreadable .tesseraft/project.json descriptor")]
+      (if (and (not (:error descriptor))
+               (= (:project_id descriptor) (:project_id registration)))
+        (merge descriptor registration (select-keys descriptor [:connections]))
+        registration))
+    registration))
+
 (defn read-project-manifest [options project-id]
-  (or (read-project-registration options project-id)
-      (read-legacy-project-manifest options project-id)))
+  (if-let [registration (read-project-registration options project-id)]
+    (merge-registration-descriptor registration)
+    (read-legacy-project-manifest options project-id)))
 
 (defn- project-descriptor-path [project-root]
   (fs/path project-root ".tesseraft" "project.json"))
@@ -191,7 +221,8 @@
           (when bad-conn (str "invalid project descriptor connection: " bad-conn)))))))
 
 (defn- normalize-project-descriptor [project-root raw]
-  (let [discovery (:discovery raw {})]
+  (let [discovery (:discovery raw {})
+        connections (:connections raw)]
     (-> raw
         (assoc :workspace_root (str (fs/normalize (fs/path project-root))))
         (update :runs_root #(or % "runs"))
@@ -204,7 +235,15 @@
                  (contains? discovery :tesseraft_home)
                  (assoc :tesseraft-home (:tesseraft_home discovery))
                  (contains? discovery :tesseraft-home)
-                 (assoc :tesseraft-home (:tesseraft-home discovery)))))))
+                 (assoc :tesseraft-home (:tesseraft-home discovery))))
+        (assoc :connections
+               (if (map? connections)
+                 (into {} (for [[k v] connections
+                                :let [k* (if (keyword? k) k (keyword k))]
+                                :when (#{:jira :github} k*)
+                                :when (map? v)]
+                            [k* v]))
+                 {})))))
 
 (defn- nearest-project-descriptor-root [start]
   (loop [dir (fs/normalize (fs/path start))]
@@ -215,6 +254,27 @@
         (or (nil? parent) (= dir parent)) nil
         :else (recur parent)))))
 
+(defn- read-project-descriptor-at-root [root unreadable-message]
+  (let [p (project-descriptor-path root)]
+    (if-not (fs/exists? p)
+      (error-response 400 "invalid_project_descriptor"
+                      "Explicit project root is missing .tesseraft/project.json descriptor"
+                      {:project_root (str root)
+                       :descriptor_path (str p)})
+      (try
+        (let [raw (store/read-json p)]
+          (if-let [err (validate-project-descriptor raw)]
+            (error-response 400 "invalid_project_descriptor" err
+                            {:project_root (str root)
+                             :descriptor_path (str p)})
+            (normalize-project-descriptor root raw)))
+        (catch Throwable t
+          (error-response 400 "invalid_project_descriptor"
+                          unreadable-message
+                          {:project_root (str root)
+                           :descriptor_path (str p)
+                           :message (.getMessage t)}))))))
+
 (defn read-project-descriptor [options]
   (let [options* (opts options)
         explicit-root (:project-root options*)
@@ -222,27 +282,10 @@
                (abs-path (:workspace-root options*) explicit-root)
                (nearest-project-descriptor-root (abs-path (:workspace-root options*) ".")))]
     (when root
-      (let [p (project-descriptor-path root)]
-        (if-not (fs/exists? p)
-          (error-response 400 "invalid_project_descriptor"
-                          "Explicit project root is missing .tesseraft/project.json descriptor"
-                          {:project_root (str root)
-                           :descriptor_path (str p)})
-          (try
-            (let [raw (store/read-json p)]
-              (if-let [err (validate-project-descriptor raw)]
-                (error-response 400 "invalid_project_descriptor" err
-                                {:project_root (str root)
-                                 :descriptor_path (str p)})
-                (normalize-project-descriptor root raw)))
-            (catch Throwable t
-              (error-response 400 "invalid_project_descriptor"
-                              (if explicit-root
-                                "Explicit project root has an unreadable .tesseraft/project.json descriptor"
-                                "Discovered project root has an unreadable .tesseraft/project.json descriptor")
-                              {:project_root (str root)
-                               :descriptor_path (str p)
-                               :message (.getMessage t)}))))))))
+      (read-project-descriptor-at-root root
+                                       (if explicit-root
+                                         "Explicit project root has an unreadable .tesseraft/project.json descriptor"
+                                         "Discovered project root has an unreadable .tesseraft/project.json descriptor")))))
 
 (defn list-project-manifests [options]
   (let [registrations (->> (:projects (read-project-registry options))
@@ -630,7 +673,7 @@
              (let [target (project-registry-path options)
                    registry (read-project-registry options)
                    entry (-> manifest
-                             (dissoc :project_id)
+                             (dissoc :project_id :connections)
                              (assoc :source "registration"))]
                (fs/create-dirs (fs/parent target))
                (store/write-json! target (assoc-in registry [:projects (keyword project-id)] entry)))

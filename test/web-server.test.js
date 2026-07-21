@@ -1385,6 +1385,7 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
     const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
     assert.equal(registry.version, 1, 'local CLI register writes the versioned user-local registry');
     assert.equal(path.normalize(registry.projects?.['local-acme']?.workspace_root || ''), fs.realpathSync(descriptorRoot));
+    assert.equal(registry.projects?.['local-acme']?.connections, undefined, 'user-local registry entries must not persist descriptor-owned connections');
 
     const registeredDetail = cpHome(['project', 'local-acme']);
     assert.equal(registeredDetail.project_id, 'local-acme', 'local CLI detail resolves registered descriptor identity');

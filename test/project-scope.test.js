@@ -381,6 +381,55 @@ test('browser registration derives project-owned fields from descriptor and pres
   const unregister = await fetch(`${base}/api/projects/sc012-descriptor-owned`, { method: 'DELETE' });
   assert.equal(unregister.status, 400, `browser unregister must reject invalid durable registry state; got ${unregister.status}`);
   assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistry, 'browser unregister must not normalize or overwrite invalid registry state');
+
+  const unknownFieldRegistry = JSON.stringify({
+    version: 1,
+    projects: {
+      'sc012-descriptor-owned': {
+        workspace_root: SC012_ROOT,
+        source: 'registration',
+        connections: { github: { 'credential-ref': 'env:SHOULD_NOT_BE_IN_REGISTRY' } }
+      }
+    }
+  }, null, 2);
+  fs.writeFileSync(registryPath, unknownFieldRegistry);
+  const unregisterUnknownField = await fetch(`${base}/api/projects/sc012-descriptor-owned`, { method: 'DELETE' });
+  assert.equal(unregisterUnknownField.status, 400, `browser unregister must reject schema-forbidden registry entry fields; got ${unregisterUnknownField.status}`);
+  assert.equal(fs.readFileSync(registryPath, 'utf8'), unknownFieldRegistry, 'browser unregister must preserve registry bytes with schema-forbidden fields');
+});
+
+test('browser registration returns descriptor-owned connections without storing them in registry', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+  fs.mkdirSync(path.join(SC012_ROOT, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(SC012_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'sc012-descriptor-owned',
+    name: 'SC012 Descriptor Owned',
+    connections: { github: { 'credential-ref': 'env:SC012_DESCRIPTOR_GITHUB_TOKEN' } }
+  }, null, 2));
+  process.env.TESSERAFT_HOME = SC012_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
+
+  const server = createServer({ browserAllowedProjectRoots: [SC012_ROOT] });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const created = await fetch(`${base}/api/projects`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      project_root: SC012_ROOT,
+      connections: { github: { credential_ref: 'env:CALLER_GITHUB_TOKEN' } }
+    })
+  });
+  assert.equal(created.status, 201, `descriptor connection registration should succeed; got ${created.status}`);
+  const body = await created.json();
+  assert.equal(body.connections.github['credential-ref'], 'env:SC012_DESCRIPTOR_GITHUB_TOKEN', 'browser registration must return descriptor-owned connections');
+  assert.doesNotMatch(JSON.stringify(body), /CALLER_GITHUB_TOKEN/, 'caller-supplied connections must not override descriptor state');
+  const registry = JSON.parse(fs.readFileSync(path.join(SC012_REGISTRY_HOME, 'projects', 'registry.json'), 'utf8'));
+  assert.equal(registry.projects?.['sc012-descriptor-owned']?.connections, undefined, 'registry must not persist descriptor-owned connections');
 });
 
 test('SC-005 reports stale registrations and accepts explicit re-registration at the new root', async (t) => {
