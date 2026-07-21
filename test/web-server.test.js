@@ -1661,3 +1661,146 @@ test('project abstraction: HTTP portable migration rejects malformed registry wi
     fs.rmSync(registryHome, { recursive: true, force: true });
   }
 });
+
+test('project abstraction: HTTP registry delete rejects whitespace-only registry root without rewriting durable bytes', async () => {
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-registry-whitespace-home');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  const invalidRegistryBytes = JSON.stringify({
+    version: 1,
+    projects: {
+      'http-whitespace': { workspace_root: '   ', source: 'registration' }
+    }
+  }, null, 2);
+  fs.writeFileSync(registryPath, invalidRegistryBytes);
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-whitespace`, { method: 'DELETE' });
+    assert.equal(res.status, 400, 'HTTP registry mutation must reject whitespace-only workspace_root');
+    const body = await res.json();
+    assert.equal(body.error?.code, 'invalid_project_registry', `HTTP mutation should report invalid registry state; got ${JSON.stringify(body)}`);
+    assert.match(body.error?.message || '', /workspace_root/i);
+    assert.equal(fs.readFileSync(registryPath, 'utf8'), invalidRegistryBytes, 'HTTP mutation must preserve invalid registry bytes exactly');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP portable migration rejects whitespace-only registry root without durable writes', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-whitespace-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-whitespace-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-whitespace-migrate',
+    name: 'HTTP Whitespace Migrate',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
+  const invalidRegistryBytes = JSON.stringify({
+    version: 1,
+    projects: {
+      'other-project': { workspace_root: '   ', source: 'registration' }
+    }
+  }, null, 2);
+  fs.writeFileSync(registryPath, invalidRegistryBytes);
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-whitespace-migrate/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    assert.equal(res.status, 400, 'HTTP migration must reject whitespace-only registry workspace_root');
+    const body = await res.json();
+    assert.match(body.error?.code || '', /invalid_project_registry|migration_failed/);
+    assert.equal(fs.readFileSync(registryPath, 'utf8'), invalidRegistryBytes, 'HTTP migration must preserve invalid registry bytes exactly');
+    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'HTTP migration must preserve legacy source bytes');
+    assert.equal(fs.existsSync(descriptorPath), false, 'HTTP migration must not create a descriptor when registry state is invalid');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP portable migration returns structured errors for unreadable roots without writes', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-unreadable-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-unreadable-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const missingProjectRoot = path.join(allowedRoot, 'missing-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-unreadable-roots',
+    name: 'HTTP Unreadable Roots',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const missingProject = await fetch(`${base}/api/projects/http-unreadable-roots/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: missingProjectRoot })
+    });
+    assert.equal(missingProject.status, 400, 'missing request project_root should be a structured 400 validation error');
+    const missingProjectBody = await missingProject.json();
+    assert.equal(missingProjectBody.error?.code, 'invalid_project_root', `missing project_root should not be a generic internal_error; got ${JSON.stringify(missingProjectBody)}`);
+
+    const missingLegacyRoot = path.join(allowedRoot, 'missing-legacy-root');
+    fs.writeFileSync(legacyManifest, JSON.stringify({
+      project_id: 'http-unreadable-roots',
+      name: 'HTTP Unreadable Roots',
+      workspace_root: missingLegacyRoot,
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+    }, null, 2));
+    const missingLegacy = await fetch(`${base}/api/projects/http-unreadable-roots/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    assert.equal(missingLegacy.status, 400, 'missing legacy workspace_root should be a structured 400 validation error');
+    const missingLegacyBody = await missingLegacy.json();
+    assert.equal(missingLegacyBody.error?.code, 'invalid_legacy_workspace_root', `missing legacy workspace_root should not be a generic internal_error; got ${JSON.stringify(missingLegacyBody)}`);
+
+    assert.equal(fs.readFileSync(legacyManifest, 'utf8').includes('missing-legacy-root'), true, 'failed validation must not rewrite legacy source bytes');
+    assert.equal(fs.existsSync(descriptorPath), false, 'failed validation must not create a descriptor');
+    assert.equal(fs.existsSync(registryPath), false, 'failed validation must not create a registry');
+    fs.writeFileSync(legacyManifest, legacyBefore);
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});

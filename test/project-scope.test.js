@@ -186,6 +186,41 @@ test('core project registry rejects blank workspace_root without rewriting durab
   cleanup();
 });
 
+test('core project registry rejects whitespace-only workspace_root without rewriting durable bytes', () => {
+  cleanup();
+  fs.mkdirSync(path.dirname(BLANK_REGISTRY), { recursive: true });
+  const invalidRegistryBytes = JSON.stringify({
+    version: 1,
+    projects: {
+      'whitespace-root': {
+        name: 'Whitespace Root',
+        workspace_root: '   ',
+        source: 'registration'
+      }
+    }
+  }, null, 2);
+  fs.writeFileSync(BLANK_REGISTRY, invalidRegistryBytes);
+
+  let failure;
+  try {
+    execFileSync('./bin/tesseraft', [
+      'control-plane',
+      '--workspace-root', process.cwd(),
+      '--tesseraft-home', BLANK_REGISTRY_HOME,
+      'project',
+      'whitespace-root'
+    ], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure, 'whitespace-only registry workspace_root must fail closed');
+  assert.equal(failure.status, 2, 'local CLI should report invalid durable registry state as a command failure');
+  assert.match(String(failure.stderr || ''), /invalid project registry workspace_root: whitespace-root/);
+  assert.equal(fs.readFileSync(BLANK_REGISTRY, 'utf8'), invalidRegistryBytes, 'invalid registry bytes must remain unchanged');
+  cleanup();
+});
+
 test('SC-002 explicit project id reports agreeing descriptor and legacy duplicates', async (t) => {
   cleanup();
   t.after(() => cleanup());

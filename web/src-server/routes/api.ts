@@ -463,12 +463,18 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const body = (req.body || {}) as JsonRecord;
   const legacyManifestPath = typeof body.legacy_manifest === 'string' && body.legacy_manifest.trim() !== '' ? body.legacy_manifest.trim() : '';
-  const projectRoot = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? fs.realpathSync(body.project_root.trim()) : '';
-  if (!legacyManifestPath && !projectRoot) {
+  const projectRootInput = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? body.project_root.trim() : '';
+  if (!legacyManifestPath && !projectRootInput) {
     const result = await runControlPlane(['project', 'migrate', projectId]);
     return jsonResponse(res, result.status, result.body);
   }
-  if (!legacyManifestPath || !projectRoot) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'legacy_manifest and project_root are required for explicit migration'));
+  if (!legacyManifestPath || !projectRootInput) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'legacy_manifest and project_root are required for explicit migration'));
+  let projectRoot = '';
+  try {
+    projectRoot = fs.realpathSync(projectRootInput);
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_project_root', 'project_root is not readable', { project_root: projectRootInput, message: error instanceof Error ? error.message : String(error) }));
+  }
   const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
   if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
 
@@ -481,7 +487,16 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_manifest', 'legacy_manifest is not readable JSON', { legacy_manifest: legacyManifestPath, message: error instanceof Error ? error.message : String(error) }));
   }
   if (legacy.project_id !== projectId) return jsonResponse(res, 400, errorBody(400, 'project_id_mismatch', 'legacy manifest project_id does not match requested project id', { project_id: projectId, legacy_project_id: legacy.project_id }));
-  if (typeof legacy.workspace_root !== 'string' || path.normalize(fs.realpathSync(legacy.workspace_root)) !== path.normalize(projectRoot)) {
+  if (typeof legacy.workspace_root !== 'string' || legacy.workspace_root.trim() === '') {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
+  }
+  let legacyWorkspaceRoot = '';
+  try {
+    legacyWorkspaceRoot = fs.realpathSync(legacy.workspace_root);
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root, message: error instanceof Error ? error.message : String(error) }));
+  }
+  if (path.normalize(legacyWorkspaceRoot) !== path.normalize(projectRoot)) {
     return jsonResponse(res, 400, errorBody(400, 'project_root_mismatch', 'legacy manifest workspace_root does not match requested project_root', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
   }
 
