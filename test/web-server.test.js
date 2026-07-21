@@ -82,6 +82,25 @@ const seedConnectionsDoctorFixture = () => {
   };
 };
 
+test('SC-013 seeded project fixture restores repository project manifests after cleanup', () => {
+  const root = process.cwd();
+  const projectsDir = path.join(root, '.tesseraft', 'projects');
+  const defaultManifest = path.join(projectsDir, 'default.json');
+  const explicitManifest = path.join(projectsDir, 'doctor-explicit.json');
+  const defaultBefore = fs.existsSync(defaultManifest) ? fs.readFileSync(defaultManifest, 'utf8') : null;
+  const explicitBefore = fs.existsSync(explicitManifest) ? fs.readFileSync(explicitManifest, 'utf8') : null;
+
+  const cleanupFixture = seedConnectionsDoctorFixture();
+  assert.equal(fs.existsSync(defaultManifest), true, 'SC-013 fixture should create the default project manifest during the test');
+  assert.equal(fs.existsSync(explicitManifest), true, 'SC-013 fixture should create the explicit project manifest during the test');
+  cleanupFixture();
+
+  if (defaultBefore === null) assert.equal(fs.existsSync(defaultManifest), false, 'SC-013 cleanup should remove default manifest created only for the fixture');
+  else assert.equal(fs.readFileSync(defaultManifest, 'utf8'), defaultBefore, 'SC-013 cleanup should restore pre-existing default manifest bytes');
+  if (explicitBefore === null) assert.equal(fs.existsSync(explicitManifest), false, 'SC-013 cleanup should remove explicit manifest created only for the fixture');
+  else assert.equal(fs.readFileSync(explicitManifest, 'utf8'), explicitBefore, 'SC-013 cleanup should restore pre-existing explicit manifest bytes');
+});
+
 const waitForRunStatus = async (base, runId, status, attempts = 50) => {
   for (let i = 0; i < attempts; i += 1) {
     const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);

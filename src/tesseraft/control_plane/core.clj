@@ -111,13 +111,28 @@
 (defn credentials-file [options]
   (fs/path (tesseraft-home options) "credentials.json"))
 
+(defn- validate-project-registry [registry]
+  (cond
+    (not (map? registry)) "project registry must be a JSON object"
+    (not= 1 (:version registry)) "unsupported project registry version"
+    (not (map? (:projects registry))) "project registry projects must be an object"
+    :else
+    (some (fn [[id entry]]
+            (let [id* (name id)]
+              (cond
+                (not (valid-project-id? id*)) (str "invalid project registry id: " id*)
+                (not (map? entry)) (str "invalid project registry entry: " id*)
+                (not (string? (:workspace_root entry))) (str "invalid project registry workspace_root: " id*)
+                :else nil)))
+          (:projects registry))))
+
 (defn read-project-registry [options]
   (let [p (project-registry-path options)]
     (if (fs/exists? p)
-      (try
-        (let [registry (store/read-json p)]
-          (when (= 1 (:version registry)) registry))
-        (catch Throwable _ nil))
+      (let [registry (store/read-json p)]
+        (if-let [err (validate-project-registry registry)]
+          (throw (ex-info err {:code :invalid-project-registry :path (str p)}))
+          registry))
       {:version 1 :projects {}})))
 
 (defn read-project-registration [options project-id]
@@ -585,14 +600,19 @@
    (if-not (valid-project-id? project-id)
      (error-response 400 "bad_request" "Invalid project_id"
                      {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
-     (let [target (project-registry-path options)
-           registry (or (read-project-registry options) {:version 1 :projects {}})
-           existed? (contains? (:projects registry) (keyword project-id))]
-       (fs/create-dirs (fs/parent target))
-       (store/write-json! target (-> registry
-                                     (assoc :version 1)
-                                     (update :projects #(dissoc (or % {}) (keyword project-id)))))
-       {:project_id project-id :deleted existed?}))))
+     (try
+       (let [target (project-registry-path options)
+             registry (read-project-registry options)
+             existed? (contains? (:projects registry) (keyword project-id))]
+         (fs/create-dirs (fs/parent target))
+         (store/write-json! target (-> registry
+                                       (assoc :version 1)
+                                       (update :projects #(dissoc (or % {}) (keyword project-id)))))
+         {:project_id project-id :deleted existed?})
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :invalid-project-registry (:code (ex-data e)))
+           (error-response 400 "invalid_project_registry" (.getMessage e) {:registry_path (:path (ex-data e))})
+           (throw e)))))))
 
 (defn update-project
   ([options project-id spec] (update-project options project-id spec false))
@@ -638,6 +658,111 @@
          (fs/create-dirs (fs/parent target))
          (store/write-json! target manifest)
          (get-project options pid))))))
+
+(defn- canonical-file-path [p]
+  (.getCanonicalPath (fs/file p)))
+
+(defn- project-contained-relative-path? [project-root value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (fs/absolute? (fs/path value)))
+       (not (some #(= ".." %) (str/split value #"[/\\]+")))
+       (let [root (canonical-file-path project-root)
+             candidate (fs/path root value)
+             canonical (if (fs/exists? candidate) (canonical-file-path candidate) (str (fs/normalize candidate)))]
+         (path-prefix? root canonical))))
+
+(defn migrate-project-portable
+  ([options project-id legacy-manifest project-root]
+   (let [pid (or project-id "default")]
+     (cond
+       (not (valid-project-id? pid))
+       (error-response 400 "bad_request" "Invalid project_id" {:project_id pid})
+
+       (or (str/blank? legacy-manifest) (str/blank? project-root))
+       (error-response 400 "bad_request" "project migrate requires --legacy-manifest and --project-root for portable migration")
+
+       :else
+       (let [root (canonical-file-path project-root)
+             legacy-path (fs/path legacy-manifest)
+             legacy-bytes (slurp (str legacy-path))
+             legacy (try (json/parse-string legacy-bytes true)
+                         (catch Throwable t
+                           (throw (ex-info "legacy_manifest is not readable JSON" {:cause t}))))]
+         (cond
+           (not (map? legacy))
+           (error-response 400 "invalid_legacy_manifest" "legacy manifest must be a JSON object" {:legacy_manifest (str legacy-path)})
+
+           (not= pid (:project_id legacy))
+           (error-response 400 "project_id_mismatch" "legacy manifest project_id does not match requested project id"
+                           {:project_id pid :legacy_project_id (:project_id legacy)})
+
+           (not= (canonical-file-path (:workspace_root legacy)) root)
+           (error-response 400 "project_root_mismatch" "legacy manifest workspace_root does not match requested project_root"
+                           {:project_root root :legacy_workspace_root (:workspace_root legacy)})
+
+           :else
+           (let [runs-root (or (:runs_root legacy) "runs")
+                 discovery (if (map? (:discovery legacy)) (:discovery legacy) {})
+                 workflow-roots (or (:workflow-roots discovery) (:workflow_roots discovery) [])]
+             (cond
+               (not (project-contained-relative-path? root runs-root))
+               (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "runs_root" :path runs-root})
+
+               (some #(not (project-contained-relative-path? root %)) workflow-roots)
+               (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "workflow_root"})
+
+               :else
+               (let [descriptor-path (project-descriptor-path root)
+                     registry-path (project-registry-path options)
+                     descriptor {:version 1
+                                 :project_id pid
+                                 :name (or (:name legacy) pid)
+                                 :runs_root runs-root
+                                 :discovery discovery}
+                     registration {:name (:name descriptor)
+                                   :workspace_root root
+                                   :runs_root runs-root
+                                   :discovery discovery
+                                   :source "registration"}
+                     descriptor-existed? (fs/exists? descriptor-path)
+                     registry-before (when (fs/exists? registry-path) (slurp (str registry-path)))]
+                 (try
+                   (when descriptor-existed?
+                     (let [existing (store/read-json descriptor-path)]
+                       (when (not= descriptor existing)
+                         (throw (ex-info "Destination descriptor already exists for a different project state" {:conflict true})))))
+                   (let [registry (read-project-registry options)
+                         existing (get-in registry [:projects (keyword pid)])]
+                     (when existing
+                       (when (not= root (canonical-file-path (:workspace_root existing)))
+                         (throw (ex-info "Registration already exists for a different project root" {:conflict true}))))
+                     (when-not descriptor-existed?
+                       (fs/create-dirs (fs/parent descriptor-path))
+                       (spit (str descriptor-path) (str (json/generate-string descriptor {:pretty true}) "\n")))
+                     (when-not existing
+                       (fs/create-dirs (fs/parent registry-path))
+                       (store/write-json! registry-path (assoc-in registry [:projects (keyword pid)] registration))))
+                   (let [resolved (resolve-project (assoc options :project-root root) pid)]
+                     (cond-> resolved
+                       (not (:error resolved))
+                       (assoc-in [:diagnostics :migration] {:legacy_manifest (str legacy-path)
+                                                            :descriptor_path (str descriptor-path)
+                                                            :registry_path (str registry-path)})))
+                   (catch clojure.lang.ExceptionInfo e
+                     (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
+                     (if registry-before
+                       (spit (str registry-path) registry-before)
+                       (fs/delete-if-exists registry-path))
+                     (if (:conflict (ex-data e))
+                       (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
+                       (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
+                   (catch Throwable t
+                     (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
+                     (if registry-before
+                       (spit (str registry-path) registry-before)
+                       (fs/delete-if-exists registry-path))
+                     (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)}))))))))))))
 
 (defn mask-credential
   "Resolve a credential-ref against the out-of-repo store and return a masked

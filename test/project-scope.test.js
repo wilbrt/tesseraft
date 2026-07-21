@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createServer } from '../web/dist-server/server.js';
 
 // ---- Harness (mirrors test/web-server.test.js) ----
@@ -73,6 +74,15 @@ const SC011_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc011-legacy-project.
 const SC011_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-home');
 const SC011_REGISTRY = path.join(SC011_REGISTRY_HOME, 'projects', 'registry.json');
 const SC011_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc011-legacy-control', 'sc011-legacy-project.json');
+const SC012_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc012-browser-contract-root');
+const SC012_DESCRIPTOR = path.join(SC012_ROOT, '.tesseraft', 'project.json');
+const SC012_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc012-home');
+const SC013_ROOT = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc013-cli-migration-root');
+const SC013_DESCRIPTOR = path.join(SC013_ROOT, '.tesseraft', 'project.json');
+const SC013_REGISTRY_HOME = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc013-home');
+const SC013_REGISTRY = path.join(SC013_REGISTRY_HOME, 'projects', 'registry.json');
+const SC013_LEGACY_REGISTRATION = path.join(PROJECTS_DIR, 'sc013-cli-legacy.json');
+const SC013_LEGACY_MANIFEST = path.join(process.cwd(), '.agent-runs', 'proj-scope-sc013-legacy-control', 'sc013-cli-legacy.json');
 
 const manifest = (id, name, ws) => ({
   project_id: id,
@@ -120,6 +130,12 @@ const cleanup = () => {
   fs.rmSync(SC011_LEGACY_REGISTRATION, { force: true });
   fs.rmSync(SC011_REGISTRY_HOME, { recursive: true, force: true });
   fs.rmSync(path.dirname(SC011_LEGACY_MANIFEST), { recursive: true, force: true });
+  fs.rmSync(SC012_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC012_REGISTRY_HOME, { recursive: true, force: true });
+  fs.rmSync(SC013_ROOT, { recursive: true, force: true });
+  fs.rmSync(SC013_LEGACY_REGISTRATION, { force: true });
+  fs.rmSync(SC013_REGISTRY_HOME, { recursive: true, force: true });
+  fs.rmSync(path.dirname(SC013_LEGACY_MANIFEST), { recursive: true, force: true });
   fs.rmSync(ALPHA_WS, { recursive: true, force: true });
   fs.rmSync(BETA_WS, { recursive: true, force: true });
 };
@@ -311,6 +327,52 @@ test('SC-004 registers and unregisters a descriptor-derived project identity', a
   assert.equal(fs.readFileSync(SC004_DESCRIPTOR, 'utf8'), descriptorBefore, 'SC-004 unregister must leave the descriptor unchanged');
   assert.equal(fs.readFileSync(SC004_LEGACY_SENTINEL, 'utf8'), legacyBefore, 'SC-004 unregister must leave legacy project files unchanged');
   assert.equal(fs.existsSync(path.join(SC004_ROOT, 'runs', 'existing-run-data')), dataBefore, 'SC-004 unregister must leave project data unchanged');
+});
+
+test('browser registration derives project-owned fields from descriptor and preserves malformed registry on delete', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC012_DESCRIPTOR), { recursive: true });
+  fs.writeFileSync(SC012_DESCRIPTOR, JSON.stringify({
+    version: 1,
+    project_id: 'sc012-descriptor-owned',
+    name: 'SC012 Descriptor Owned',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
+  }, null, 2));
+  process.env.TESSERAFT_HOME = SC012_REGISTRY_HOME;
+  t.after(() => { delete process.env.TESSERAFT_HOME; });
+
+  const server = createServer({ browserAllowedProjectRoots: [SC012_ROOT] });
+  const port = await listen(server);
+  t.after(() => close(server));
+  const base = `http://127.0.0.1:${port}`;
+
+  const register = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      project_root: SC012_ROOT,
+      project_id: 'caller-override',
+      name: 'Caller Override',
+      runs_root: 'caller-runs',
+      discovery: { 'workflow-roots': ['caller-workflows'] }
+    })
+  });
+  assert.equal(register.status, 201, `browser registration should accept descriptor-backed roots without caller identity override; got ${register.status}`);
+  const body = await register.json();
+  assert.equal(body.project_id, 'sc012-descriptor-owned', 'browser registration must derive project_id only from descriptor');
+  assert.equal(body.name, 'SC012 Descriptor Owned', 'browser registration must derive name only from descriptor');
+  assert.equal(body.runs_root, 'runs', 'browser registration must derive runs_root only from descriptor');
+  assert.deepEqual(body.discovery?.['workflow-roots'], ['.tesseraft/workflows'], 'browser registration must derive workflow roots only from descriptor');
+
+  const registryPath = path.join(SC012_REGISTRY_HOME, 'projects', 'registry.json');
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  const malformedRegistry = '{"version":999,"projects":{"sc012-descriptor-owned":{}}}\n';
+  fs.writeFileSync(registryPath, malformedRegistry);
+  const unregister = await fetch(`${base}/api/projects/sc012-descriptor-owned`, { method: 'DELETE' });
+  assert.equal(unregister.status, 400, `browser unregister must reject invalid durable registry state; got ${unregister.status}`);
+  assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistry, 'browser unregister must not normalize or overwrite invalid registry state');
 });
 
 test('SC-005 reports stale registrations and accepts explicit re-registration at the new root', async (t) => {
@@ -689,6 +751,54 @@ test('SC-011 rolls back a migration-created descriptor when registration cannot 
   assert.equal(fs.existsSync(SC011_LEGACY_REGISTRATION), false, 'SC-011 failed migration must not write legacy registration state');
   assert.equal(fs.existsSync(SC011_REGISTRY), false, 'SC-011 failed migration must not leave user-local registry state');
   assert.equal(fs.existsSync(SC011_DESCRIPTOR), false, 'SC-011 failed migration must roll back the migration-created destination descriptor');
+});
+
+test('local CLI migrates legacy manifest to portable descriptor and user registry repeatably', async (t) => {
+  cleanup();
+  t.after(() => cleanup());
+
+  fs.mkdirSync(path.dirname(SC013_LEGACY_MANIFEST), { recursive: true });
+  fs.mkdirSync(SC013_ROOT, { recursive: true });
+  const legacyManifest = {
+    project_id: 'sc013-cli-legacy',
+    name: 'SC013 CLI Legacy',
+    workspace_root: SC013_ROOT,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    source: 'manifest'
+  };
+  fs.writeFileSync(SC013_LEGACY_MANIFEST, JSON.stringify(legacyManifest, null, 2));
+  const legacyBefore = fs.readFileSync(SC013_LEGACY_MANIFEST, 'utf8');
+
+  const output = JSON.parse(execFileSync('./bin/tesseraft', [
+    'control-plane',
+    '--workspace-root', process.cwd(),
+    '--tesseraft-home', SC013_REGISTRY_HOME,
+    'project', 'migrate', 'sc013-cli-legacy',
+    '--legacy-manifest', SC013_LEGACY_MANIFEST,
+    '--project-root', SC013_ROOT
+  ], { encoding: 'utf8', stdio: 'pipe' }));
+  assert.equal(output.project_id, 'sc013-cli-legacy', 'CLI migration should report migrated project id');
+  assert.equal(output.source, 'descriptor', 'CLI migration should select migrated descriptor state');
+  assert.equal(fs.readFileSync(SC013_LEGACY_MANIFEST, 'utf8'), legacyBefore, 'CLI migration must preserve legacy manifest bytes');
+  assert.equal(fs.existsSync(SC013_LEGACY_REGISTRATION), false, 'CLI migration must not write legacy workspace registration');
+  assert.equal(fs.existsSync(SC013_DESCRIPTOR), true, 'CLI migration must create portable descriptor');
+  const descriptor = JSON.parse(fs.readFileSync(SC013_DESCRIPTOR, 'utf8'));
+  assert.equal(descriptor.workspace_root, undefined, 'CLI migration descriptor must not persist machine-specific workspace_root');
+  assert.equal(descriptor.project_id, 'sc013-cli-legacy');
+  const registryBeforeRepeat = fs.readFileSync(SC013_REGISTRY, 'utf8');
+  const descriptorBeforeRepeat = fs.readFileSync(SC013_DESCRIPTOR, 'utf8');
+
+  execFileSync('./bin/tesseraft', [
+    'control-plane',
+    '--workspace-root', process.cwd(),
+    '--tesseraft-home', SC013_REGISTRY_HOME,
+    'project', 'migrate', 'sc013-cli-legacy',
+    '--legacy-manifest', SC013_LEGACY_MANIFEST,
+    '--project-root', SC013_ROOT
+  ], { encoding: 'utf8', stdio: 'pipe' });
+  assert.equal(fs.readFileSync(SC013_DESCRIPTOR, 'utf8'), descriptorBeforeRepeat, 'repeat CLI migration must not overwrite descriptor');
+  assert.equal(fs.readFileSync(SC013_REGISTRY, 'utf8'), registryBeforeRepeat, 'repeat CLI migration must not overwrite registry');
 });
 
 test('two projects: discovery, settings, run identity, delete isolation, security', async (t) => {

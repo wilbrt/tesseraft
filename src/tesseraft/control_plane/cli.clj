@@ -57,7 +57,7 @@
     (println "  tesseraft control-plane project register <project-root>")
     (println "  tesseraft control-plane project unregister <project-id>")
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
-    (println "  tesseraft control-plane project migrate [<project-id>]")
+    (println "  tesseraft control-plane project migrate [<project-id>] [--legacy-manifest <file> --project-root <dir>]")
     (println "  tesseraft control-plane project connections <project-id>")
     (println "  tesseraft control-plane doctor")
     (println)
@@ -175,6 +175,18 @@
           "--source" (recur more (assoc-in acc [:spec :source] b))
           (recur (rest xs) acc))))))
 
+(defn parse-project-migrate-args [args]
+  (loop [xs args acc {:project-id nil :legacy-manifest nil :project-root nil}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--legacy-manifest" (recur more (assoc acc :legacy-manifest b))
+          "--project-root" (recur more (assoc acc :project-root b))
+          (if (:project-id acc)
+            (recur (rest xs) acc)
+            (recur (rest xs) (assoc acc :project-id a))))))))
+
 (defn parse-project-connections-args [args]
   (loop [xs args acc {}]
     (if (empty? xs)
@@ -213,8 +225,11 @@
                  (if (str/blank? project-id)
                    (control-plane/error-response 400 "bad_request" "project update requires <project-id>")
                    (control-plane/update-project options project-id (:spec (parse-project-create-args more)))))
-      "migrate" (let [pid (first rest)]
-                  (control-plane/migrate-project options (or pid "default")))
+      "migrate" (let [parsed (parse-project-migrate-args rest)
+                      pid (or (:project-id parsed) "default")]
+                  (if (or (:legacy-manifest parsed) (:project-root parsed))
+                    (control-plane/migrate-project-portable options pid (:legacy-manifest parsed) (:project-root parsed))
+                    (control-plane/migrate-project options pid)))
       "connections" (let [[project-id & more] rest]
                       (if (str/blank? project-id)
                         (control-plane/error-response 400 "bad_request" "project connections requires <project-id>")

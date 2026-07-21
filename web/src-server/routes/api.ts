@@ -276,6 +276,22 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
 
 const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   if (descriptor.version !== 1) return 'Unsupported project descriptor version';
+  if (typeof descriptor.project_id !== 'string' || !PROJECT_NAME_RE.test(descriptor.project_id.trim())) return 'Invalid project descriptor project_id';
+  if (Object.prototype.hasOwnProperty.call(descriptor, 'workspace_root')) return 'Portable project descriptor must not contain workspace_root';
+  if (descriptor.runs_root !== undefined && typeof descriptor.runs_root !== 'string') return 'Invalid project descriptor runs_root';
+  if (descriptor.discovery !== undefined && (!descriptor.discovery || typeof descriptor.discovery !== 'object' || Array.isArray(descriptor.discovery))) return 'Invalid project descriptor discovery';
+  return null;
+};
+
+const validateRegistry = (registry: JsonRecord): string | null => {
+  if (registry.version !== 1) return 'Unsupported project registry version';
+  if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) return 'Project registry projects must be an object';
+  for (const [id, entry] of Object.entries(registry.projects as Record<string, unknown>)) {
+    if (!PROJECT_NAME_RE.test(id)) return `Invalid project registry id: ${id}`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return `Invalid project registry entry: ${id}`;
+    const e = entry as JsonRecord;
+    if (typeof e.workspace_root !== 'string' || e.workspace_root.trim() === '') return `Invalid project registry workspace_root: ${id}`;
+  }
   return null;
 };
 
@@ -332,14 +348,14 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
     const descriptorError = validateProjectDescriptor(descriptor);
     if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { version: descriptor.version }));
   }
-  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : (typeof descriptor?.project_id === 'string' ? descriptor.project_id.trim() : '');
+  const projectId = typeof descriptor?.project_id === 'string' ? descriptor.project_id.trim() : '';
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_id must match /^[a-z0-9][a-z0-9-]{0,62}$/'));
   const args = ['project', 'create', projectId];
   const descriptorDiscovery = descriptor?.discovery && typeof descriptor.discovery === 'object' && !Array.isArray(descriptor.discovery) ? descriptor.discovery as JsonRecord : undefined;
-  const name = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : (typeof descriptor?.name === 'string' ? descriptor.name : '');
-  const runsRoot = typeof body.runs_root === 'string' && body.runs_root.trim() !== '' ? body.runs_root.trim() : (typeof descriptor?.runs_root === 'string' ? descriptor.runs_root : '');
-  const workspaceRoot = projectRoot || (typeof body.workspace_root === 'string' ? body.workspace_root.trim() : '');
-  const workflowRoots = collectWorkflowRoots(body);
+  const name = typeof descriptor?.name === 'string' ? descriptor.name : '';
+  const runsRoot = typeof descriptor?.runs_root === 'string' && descriptor.runs_root.trim() !== '' ? descriptor.runs_root.trim() : '';
+  const workspaceRoot = projectRoot;
+  const workflowRoots: string[] = [];
   if (descriptorDiscovery && Array.isArray(descriptorDiscovery['workflow-roots'])) for (const r of descriptorDiscovery['workflow-roots']) if (typeof r === 'string') workflowRoots.push(r);
   if (descriptorDiscovery && Array.isArray(descriptorDiscovery.workflow_roots)) for (const r of descriptorDiscovery.workflow_roots) if (typeof r === 'string') workflowRoots.push(r);
   if (projectRoot) {
@@ -373,9 +389,12 @@ const handleDeleteProject = async (res: Response, projectId: string): Promise<vo
   try {
     if (fs.existsSync(registryPath)) {
       const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) registry = parsed as JsonRecord;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', 'Project registry must be a JSON object'));
+      registry = parsed as JsonRecord;
+      const registryError = validateRegistry(registry);
+      if (registryError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', registryError));
     }
-    const projects = registry.projects && typeof registry.projects === 'object' && !Array.isArray(registry.projects) ? registry.projects as JsonRecord : {};
+    const projects = registry.projects as JsonRecord;
     removed = Object.prototype.hasOwnProperty.call(projects, projectId);
     delete projects[projectId];
     registry = { ...registry, version: 1, projects };
