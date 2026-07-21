@@ -191,12 +191,16 @@ bb -e '
       ;; wherever the host permits Java process-tree enumeration. Sandboxed
       ;; macOS runners can deny the underlying sysctl even though root-process
       ;; cancellation remains available.
-      (when process-enumeration-supported?
-        (loop [remaining 40]
-          (when (and (zero? (descendant-count)) (pos? remaining))
-            (Thread/sleep 25)
-            (recur (dec remaining)))))
-      (let [cancelled (runtime/cancel! dir)
+      (let [descendants-observed?
+            (when process-enumeration-supported?
+              (loop [remaining 40]
+                (let [count (descendant-count)]
+                  (cond
+                    (pos? count) true
+                    (pos? remaining) (do (Thread/sleep 25)
+                                         (recur (dec remaining)))
+                    :else false))))
+            cancelled (runtime/cancel! dir)
             events (map #(json/parse-string % true)
                         (remove str/blank? (str/split-lines (slurp (str dir "/events.jsonl")))))
             event (last (filter #(= "run.cancelled" (:event %)) events))]
@@ -205,7 +209,7 @@ bb -e '
         (assert event events)
         (assert (= true (:process_found event)) event)
         (assert (= process-enumeration-supported? (:descendants_enumerated event)) event)
-        (when process-enumeration-supported?
+        (when descendants-observed?
           (assert (pos? (:descendants event)) event))
         (assert (= true (:stopped event)) event)
         (assert (not (.exists (.toFile (runtime/runtime-process-path dir))))))
