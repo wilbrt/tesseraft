@@ -17,7 +17,7 @@
 ;; greedily stolen as top-level options, relocating manifest writes outside
 ;; the workspace and bypassing path-confinement validation.
 (defn parse-args [args]
-  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil}]
+  (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil :project-root nil}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs
@@ -32,6 +32,7 @@
             "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
             "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
             "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
+            "--project-root" (recur more (assoc acc :project-root (cli-args/require-value a b)))
             (recur rest-xs (assoc acc :command a))))))))
 
 (defn usage! []
@@ -53,8 +54,10 @@
     (println "  tesseraft control-plane projects")
     (println "  tesseraft control-plane project <project-id>")
     (println "  tesseraft control-plane project create <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
+    (println "  tesseraft control-plane project register <project-root>")
+    (println "  tesseraft control-plane project unregister <project-id>")
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
-    (println "  tesseraft control-plane project migrate [<project-id>]")
+    (println "  tesseraft control-plane project migrate [<project-id>] [--legacy-manifest <file> --project-root <dir>]")
     (println "  tesseraft control-plane project connections <project-id>")
     (println "  tesseraft control-plane doctor")
     (println)
@@ -62,7 +65,8 @@
     (println "  --workspace-root <dir>   Workspace root (default: .)")
     (println "  --workflow-root <dir>    Additional workflow root (default: examples)")
     (println "  --tesseraft-home <dir>   Global Tesseraft directory (default: $TESSERAFT_HOME or ~/.tesseraft)")
-    (println "  --runs-root <dir>        Runs root (default: .agent-runs)"))
+    (println "  --runs-root <dir>        Runs root (default: .agent-runs)")
+    (println "  --project-root <dir>     Explicit local project root containing .tesseraft/project.json"))
   (System/exit 2))
 
 (defn require-arg [opts label]
@@ -168,7 +172,20 @@
           "--jira-base-url" (recur more (assoc-in acc [:spec :connections :jira :base-url] b))
           "--jira-credential-ref" (recur more (assoc-in acc [:spec :connections :jira :credential-ref] b))
           "--github-credential-ref" (recur more (assoc-in acc [:spec :connections :github :credential-ref] b))
+          "--source" (recur more (assoc-in acc [:spec :source] b))
           (recur (rest xs) acc))))))
+
+(defn parse-project-migrate-args [args]
+  (loop [xs args acc {:project-id nil :legacy-manifest nil :project-root nil}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--legacy-manifest" (recur more (assoc acc :legacy-manifest b))
+          "--project-root" (recur more (assoc acc :project-root b))
+          (if (:project-id acc)
+            (recur (rest xs) acc)
+            (recur (rest xs) (assoc acc :project-id a))))))))
 
 (defn parse-project-connections-args [args]
   (loop [xs args acc {}]
@@ -188,12 +205,32 @@
                   (if (str/blank? project-id)
                     (control-plane/error-response 400 "bad_request" "project create requires <project-id>")
                     (control-plane/create-project options project-id (:spec (parse-project-create-args more)))))
+      "register" (let [[project-root] rest]
+                    (if (str/blank? project-root)
+                      (control-plane/error-response 400 "bad_request" "project register requires <project-root>")
+                      (let [descriptor (control-plane/read-project-descriptor (assoc options :project-root project-root))]
+                        (if (:error descriptor)
+                          descriptor
+                          (control-plane/create-project options (:project_id descriptor)
+                            (cond-> {:workspace_root (:workspace_root descriptor)
+                                     :runs_root (:runs_root descriptor)
+                                     :discovery (:discovery descriptor)
+                                     :source "registration"}
+                              (:name descriptor) (assoc :name (:name descriptor))
+                              (seq (:connections descriptor)) (assoc :connections (:connections descriptor))))))))
+      "unregister" (let [[project-id] rest]
+                      (if (str/blank? project-id)
+                        (control-plane/error-response 400 "bad_request" "project unregister requires <project-id>")
+                        (control-plane/unregister-project options project-id)))
       "update" (let [[project-id & more] rest]
                  (if (str/blank? project-id)
                    (control-plane/error-response 400 "bad_request" "project update requires <project-id>")
                    (control-plane/update-project options project-id (:spec (parse-project-create-args more)))))
-      "migrate" (let [pid (first rest)]
-                  (control-plane/migrate-project options (or pid "default")))
+      "migrate" (let [parsed (parse-project-migrate-args rest)
+                      pid (or (:project-id parsed) "default")]
+                  (if (or (:legacy-manifest parsed) (:project-root parsed))
+                    (control-plane/migrate-project-portable options pid (:legacy-manifest parsed) (:project-root parsed))
+                    (control-plane/migrate-project options pid)))
       "connections" (let [[project-id & more] rest]
                       (if (str/blank? project-id)
                         (control-plane/error-response 400 "bad_request" "project connections requires <project-id>")
@@ -221,7 +258,7 @@
     (let [opts (parse-args args)
           command (:command opts)
           project-id (:project-id opts)
-          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id])
+          options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id :project-root])
           result (case command
                    "workflows" (control-plane/list-workflows options project-id)
                    "workflow" (control-plane/get-workflow options (require-arg opts "workflow name") project-id)
@@ -259,6 +296,15 @@
       (print-json! result)
       (when (not= 0 (exit-status result))
         (System/exit (exit-status result))))
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :invalid-project-registry (:code (ex-data e)))
+        (do
+          (print-json! (control-plane/invalid-project-registry-response e))
+          (System/exit 1))
+        (do
+          (binding [*out* *err*]
+            (println (.getMessage e)))
+          (System/exit 2))))
     (catch Throwable t
       (binding [*out* *err*]
         (println (.getMessage t)))

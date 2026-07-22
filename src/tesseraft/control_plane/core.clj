@@ -105,29 +105,237 @@
 (defn project-manifest-path [options project-id]
   (fs/path (projects-dir options) (str project-id ".json")))
 
+(defn project-registry-path [options]
+  (fs/path (tesseraft-home options) "projects" "registry.json"))
+
 (defn credentials-file [options]
   (fs/path (tesseraft-home options) "credentials.json"))
 
-(defn read-project-manifest [options project-id]
+(defn- validate-project-registry [registry]
+  (let [allowed-top #{:version :projects}
+        allowed-entry #{:name :workspace_root :runs_root :discovery :source}
+        allowed-discovery #{:workflow-roots :tesseraft-home}]
+    (cond
+      (not (map? registry)) "project registry must be a JSON object"
+      (seq (remove allowed-top (keys registry))) (str "unknown project registry field: " (name (first (remove allowed-top (keys registry)))))
+      (not= 1 (:version registry)) "unsupported project registry version"
+      (not (map? (:projects registry))) "project registry projects must be an object"
+      :else
+      (some (fn [[id entry]]
+              (let [id* (name id)]
+                (cond
+                  (not (valid-project-id? id*)) (str "invalid project registry id: " id*)
+                  (not (map? entry)) (str "invalid project registry entry: " id*)
+                  (seq (remove allowed-entry (keys entry))) (str "unknown project registry entry field: " id* "." (name (first (remove allowed-entry (keys entry)))))
+                  (and (contains? entry :name) (not (string? (:name entry)))) (str "invalid project registry name: " id*)
+                  (not (and (string? (:workspace_root entry)) (not (str/blank? (:workspace_root entry))))) (str "invalid project registry workspace_root: " id*)
+                  (and (contains? entry :runs_root) (not (string? (:runs_root entry)))) (str "invalid project registry runs_root: " id*)
+                  (and (contains? entry :source) (not= "registration" (:source entry))) (str "invalid project registry source: " id*)
+                  (and (contains? entry :discovery) (not (map? (:discovery entry)))) (str "invalid project registry discovery: " id*)
+                  (and (map? (:discovery entry)) (seq (remove allowed-discovery (keys (:discovery entry))))) (str "unknown project registry discovery field: " id* "." (name (first (remove allowed-discovery (keys (:discovery entry))))))
+                  (and (contains? (:discovery entry) :workflow-roots)
+                       (not (and (vector? (get-in entry [:discovery :workflow-roots]))
+                                 (every? string? (get-in entry [:discovery :workflow-roots]))))) (str "invalid project registry discovery.workflow-roots: " id*)
+                  (and (contains? (:discovery entry) :tesseraft-home)
+                       (some? (get-in entry [:discovery :tesseraft-home]))
+                       (not (string? (get-in entry [:discovery :tesseraft-home])))) (str "invalid project registry discovery.tesseraft-home: " id*)
+                  :else nil)))
+            (:projects registry)))))
+
+(defn invalid-project-registry-response [e]
+  (error-response 400 "invalid_project_registry" (.getMessage e)
+                  {:registry_path (:path (ex-data e))}))
+
+(defn read-project-registry [options]
+  (let [p (project-registry-path options)]
+    (if (fs/exists? p)
+      (try
+        (let [registry (store/read-json p)]
+          (if-let [err (validate-project-registry registry)]
+            (throw (ex-info err {:code :invalid-project-registry :path (str p)}))
+            registry))
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :invalid-project-registry (:code (ex-data e)))
+            (throw e)
+            (throw (ex-info "project registry is not readable JSON"
+                            {:code :invalid-project-registry :path (str p)} e))))
+        (catch Throwable t
+          (throw (ex-info "project registry is not readable JSON"
+                          {:code :invalid-project-registry :path (str p)} t))))
+      {:version 1 :projects {}})))
+
+(defn read-project-registration [options project-id]
+  (when-let [entry (get-in (read-project-registry options) [:projects (keyword project-id)])]
+    (assoc entry :project_id project-id :source :registration)))
+
+(defn read-legacy-project-manifest [options project-id]
   (let [p (project-manifest-path options project-id)]
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
+(declare read-project-descriptor-at-root)
+
+(defn- merge-registration-descriptor [registration]
+  (if (and (#{"registration" :registration} (:source registration))
+           (string? (:workspace_root registration)))
+    (let [descriptor (read-project-descriptor-at-root (:workspace_root registration)
+                                                      "Registered project root has an unreadable .tesseraft/project.json descriptor")]
+      (if (and (not (:error descriptor))
+               (= (:project_id descriptor) (:project_id registration)))
+        (merge descriptor registration (select-keys descriptor [:connections]))
+        registration))
+    registration))
+
+(defn read-project-manifest [options project-id]
+  (if-let [registration (read-project-registration options project-id)]
+    (merge-registration-descriptor registration)
+    (read-legacy-project-manifest options project-id)))
+
+(defn- read-project-sources [options project-id descriptor]
+  (let [registration (read-project-registration options project-id)
+        legacy (read-legacy-project-manifest options project-id)
+        legacy-source (:source legacy)
+        legacy-registration? (and legacy (or (= :registration legacy-source) (= "registration" legacy-source)))]
+    (cond-> []
+      (and descriptor (not (:error descriptor)) (= project-id (:project_id descriptor)))
+      (conj (assoc descriptor :source :descriptor))
+      registration (conj (merge-registration-descriptor registration))
+      (and legacy (not (and registration legacy-registration?))) (conj legacy))))
+
+(defn- project-descriptor-path [project-root]
+  (fs/path project-root ".tesseraft" "project.json"))
+
+(defn- validate-project-descriptor [raw]
+  (cond
+    (not (map? raw)) "project descriptor must be a JSON object"
+    (not= 1 (:version raw)) "unsupported project descriptor version"
+    (not (valid-project-id? (:project_id raw))) "invalid project descriptor project_id"
+    (contains? raw :workspace_root) "portable project descriptor must not contain workspace_root"
+    (some #(not (contains? #{:version :project_id :name :runs_root :discovery :connections} %)) (keys raw)) "project descriptor contains unknown fields"
+    (and (contains? raw :name) (not (string? (:name raw)))) "project descriptor name must be a string"
+    (and (contains? raw :runs_root) (not (string? (:runs_root raw)))) "project descriptor runs_root must be a string"
+    :else
+    (let [discovery (:discovery raw)
+          conn (:connections raw)]
+      (cond
+        (and (some? discovery) (not (map? discovery))) "project descriptor discovery must be an object"
+        (and (map? discovery)
+             (some #(not (contains? #{:workflow-roots :workflow_roots :tesseraft-home :tesseraft_home} %)) (keys discovery))) "project descriptor discovery contains unknown fields"
+        (and (some? (:workflow-roots discovery))
+             (or (not (sequential? (:workflow-roots discovery)))
+                 (not-every? string? (:workflow-roots discovery)))) "project descriptor discovery.workflow-roots must be an array of strings"
+        (and (some? (:workflow_roots discovery))
+             (or (not (sequential? (:workflow_roots discovery)))
+                 (not-every? string? (:workflow_roots discovery)))) "project descriptor discovery.workflow_roots must be an array of strings"
+        (and (some? (:tesseraft-home discovery))
+             (not (or (string? (:tesseraft-home discovery)) (nil? (:tesseraft-home discovery))))) "project descriptor discovery.tesseraft-home must be a string or null"
+        (and (some? (:tesseraft_home discovery))
+             (not (or (string? (:tesseraft_home discovery)) (nil? (:tesseraft_home discovery))))) "project descriptor discovery.tesseraft_home must be a string or null"
+        (and (some? conn) (not (map? conn))) "project descriptor connections must be an object"
+        (and (map? conn) (some #(not (contains? #{:jira :github} %)) (keys conn))) "project descriptor connections contains unknown fields"
+        :else
+        (let [bad-conn (some (fn [[k v]]
+                               (cond
+                                 (not (map? v)) (name k)
+                                 (some #(not (contains? (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}) %)) (keys v)) (name k)
+                                 (and (:base-url v) (not (string? (:base-url v)))) (name k)
+                                 (and (:credential-ref v) (not (credential-ref? (:credential-ref v)))) (name k)
+                                 :else nil))
+                             conn)]
+          (when bad-conn (str "invalid project descriptor connection: " bad-conn)))))))
+
+(defn- normalize-project-descriptor [project-root raw]
+  (let [discovery (:discovery raw {})
+        connections (:connections raw)]
+    (-> raw
+        (assoc :workspace_root (str (fs/normalize (fs/path project-root))))
+        (update :runs_root #(or % "runs"))
+        (assoc :discovery
+               (cond-> {}
+                 (contains? discovery :workflow_roots)
+                 (assoc :workflow-roots (:workflow_roots discovery))
+                 (contains? discovery :workflow-roots)
+                 (assoc :workflow-roots (:workflow-roots discovery))
+                 (contains? discovery :tesseraft_home)
+                 (assoc :tesseraft-home (:tesseraft_home discovery))
+                 (contains? discovery :tesseraft-home)
+                 (assoc :tesseraft-home (:tesseraft-home discovery))))
+        (assoc :connections
+               (if (map? connections)
+                 (into {} (for [[k v] connections
+                                :let [k* (if (keyword? k) k (keyword k))]
+                                :when (#{:jira :github} k*)
+                                :when (map? v)]
+                            [k* v]))
+                 {})))))
+
+(defn- nearest-project-descriptor-root [start]
+  (loop [dir (fs/normalize (fs/path start))]
+    (let [descriptor (project-descriptor-path dir)
+          parent (fs/parent dir)]
+      (cond
+        (fs/exists? descriptor) dir
+        (or (nil? parent) (= dir parent)) nil
+        :else (recur parent)))))
+
+(defn- read-project-descriptor-at-root [root unreadable-message]
+  (let [p (project-descriptor-path root)]
+    (if-not (fs/exists? p)
+      (error-response 400 "invalid_project_descriptor"
+                      "Explicit project root is missing .tesseraft/project.json descriptor"
+                      {:project_root (str root)
+                       :descriptor_path (str p)})
+      (try
+        (let [raw (store/read-json p)]
+          (if-let [err (validate-project-descriptor raw)]
+            (error-response 400 "invalid_project_descriptor" err
+                            {:project_root (str root)
+                             :descriptor_path (str p)})
+            (normalize-project-descriptor root raw)))
+        (catch Throwable t
+          (error-response 400 "invalid_project_descriptor"
+                          unreadable-message
+                          {:project_root (str root)
+                           :descriptor_path (str p)
+                           :message (.getMessage t)}))))))
+
+(defn read-project-descriptor [options]
+  (let [options* (opts options)
+        explicit-root (:project-root options*)
+        root (if explicit-root
+               (abs-path (:workspace-root options*) explicit-root)
+               (nearest-project-descriptor-root (abs-path (:workspace-root options*) ".")))]
+    (when root
+      (read-project-descriptor-at-root root
+                                       (if explicit-root
+                                         "Explicit project root has an unreadable .tesseraft/project.json descriptor"
+                                         "Discovered project root has an unreadable .tesseraft/project.json descriptor")))))
+
 (defn list-project-manifests [options]
-  (let [dir (projects-dir options)]
-    (if-not (fs/exists? dir)
-      []
-      (->> (for [f (file-seq (fs/file dir))
-                 :when (and (.isFile f)
-                            (str/ends-with? (.getName f) ".json"))]
-             (let [slug (str/replace (.getName f) #"\.json$" "")]
-               (try (let [m (store/read-json (fs/path f))]
-                      {:project_id slug
-                       :name (or (:name m) slug)
-                       :source "manifest"})
-                    (catch Throwable _ nil))))
-           (remove nil?)
-           vec))))
+  (let [registrations (->> (:projects (read-project-registry options))
+                           (map (fn [[id m]]
+                                  (cond-> {:project_id (name id)
+                                           :name (or (:name m) (name id))
+                                           :source "registration"}
+                                    (:workspace_root m) (assoc :workspace_root (:workspace_root m)))))
+                           vec)
+        dir (projects-dir options)
+        legacy (if-not (fs/exists? dir)
+                 []
+                 (->> (for [f (file-seq (fs/file dir))
+                            :when (and (.isFile f)
+                                       (str/ends-with? (.getName f) ".json"))]
+                        (let [slug (str/replace (.getName f) #"\.json$" "")]
+                          (try (let [m (store/read-json (fs/path f))]
+                                 (cond-> {:project_id slug
+                                          :name (or (:name m) slug)
+                                          :source (or (:source m) "manifest")}
+                                   (:workspace_root m) (assoc :workspace_root (:workspace_root m))))
+                               (catch Throwable _ nil))))
+                      (remove nil?)
+                      vec))]
+    (vec (concat registrations
+                 (remove (fn [m] (some #(= (:project_id m) (:project_id %)) registrations)) legacy)))))
 
 (defn read-credentials [options]
   (let [p (credentials-file options)]
@@ -221,6 +429,64 @@
      :connections connections
      :source :implicit}))
 
+(defn- canonical-project-root [options root]
+  (let [root* (abs-path (:workspace-root (opts options)) root)]
+    (try
+      (.getCanonicalPath (fs/file root*))
+      (catch Throwable _
+        (str root*)))))
+
+(defn- same-project-root? [options a b]
+  (= (canonical-project-root options a)
+     (canonical-project-root options b)))
+
+(defn- project-source [m fallback]
+  (let [source (:source m)]
+    (if (keyword? source)
+      source
+      (keyword (or source fallback)))))
+
+(defn- agreeing-manifest-duplicate [options descriptor project-id manifest]
+  (when manifest
+    (let [manifest-root (or (:workspace_root manifest) ".")]
+      (when (and (= project-id (:project_id descriptor))
+                 (same-project-root? options (:workspace_root descriptor) manifest-root))
+        {:source (project-source manifest "manifest")
+         :project_id project-id
+         :canonical_root (canonical-project-root options manifest-root)
+         :workspace_root (canonical-project-root options manifest-root)}))))
+
+(defn- project-root-exists? [options root]
+  (fs/exists? (abs-path (:workspace-root (opts options)) root)))
+
+(defn- stale-project-root-response [options project-id root]
+  (error-response 409 "stale_project_root" "Registered project root is missing"
+                  {:project_id project-id
+                   :recorded_root (canonical-project-root options root)
+                   :searched_for_replacement false}))
+
+(defn- project-source-detail [options project-id source fallback]
+  (let [root (or (:workspace_root source) ".")]
+    {:source (project-source source fallback)
+     :project_id project-id
+     :canonical_root (canonical-project-root options root)
+     :workspace_root (canonical-project-root options root)}))
+
+(defn- project-identity-conflict-response [options project-id descriptor manifest]
+  (let [descriptor-root (:workspace_root descriptor)
+        manifest-root (or (:workspace_root manifest) ".")]
+    (error-response 409 "project_identity_conflict" "Project id resolves to conflicting canonical roots"
+                    {:project_id project-id
+                     :sources [(project-source-detail options project-id (assoc descriptor :source :descriptor) "descriptor")
+                               (project-source-detail options project-id manifest "manifest")]})))
+
+(defn- source-root-conflict [options project-id sources]
+  (let [rooted (mapv #(project-source-detail options project-id % "manifest") sources)
+        roots (set (map :canonical_root rooted))]
+    (when (> (count roots) 1)
+      (error-response 409 "project_identity_conflict" "Project id resolves to conflicting canonical roots"
+                      {:project_id project-id :sources rooted}))))
+
 (defn resolve-project
   "Single entry point for project resolution. If project_id is nil or the
   literal `default`, resolve the default project: prefer a persisted
@@ -228,29 +494,70 @@
   (`:source :implicit`). Any missing manifest returns 404 for an explicit id."
   ([options] (resolve-project options nil))
   ([options project-id]
-   (let [pid (or project-id "default")]
-     (if-not (valid-project-id? pid)
-       (error-response 400 "bad_request" "Invalid project_id"
-                       {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
-       (if-let [m (read-project-manifest options pid)]
-         (assoc m :source :manifest :project_id pid)
-         (if (= "default" pid)
-           (synthesize-default-project options)
-           (error-response 404 "not_found" "Project not found"
-                           {:project_id pid})))))))
+   (let [pid (or project-id "default")
+         descriptor (read-project-descriptor options)
+         sources (when (valid-project-id? pid) (read-project-sources options pid descriptor))
+         source-conflict (when (seq sources) (source-root-conflict options pid sources))]
+     (if source-conflict
+       source-conflict
+       (if-let [descriptor descriptor]
+       (if (:error descriptor)
+         descriptor
+         (if (or (nil? project-id) (= "default" pid) (= pid (:project_id descriptor)))
+           (let [manifest (read-project-manifest options pid)
+                 manifest-root (or (:workspace_root manifest) ".")]
+             (cond
+               (and manifest
+                    (not (project-root-exists? options manifest-root)))
+               (stale-project-root-response options pid manifest-root)
+
+               (and manifest
+                    (not (same-project-root? options (:workspace_root descriptor) manifest-root)))
+               (project-identity-conflict-response options pid descriptor manifest)
+
+               :else
+               (let [duplicate (agreeing-manifest-duplicate options descriptor pid manifest)]
+                 (cond-> (assoc descriptor :source :descriptor)
+                   duplicate
+                   (assoc-in [:diagnostics :duplicates] [duplicate])))))
+           (if-not (valid-project-id? pid)
+             (error-response 400 "bad_request" "Invalid project_id"
+                             {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+             (if-let [m (read-project-manifest options pid)]
+               (let [root (or (:workspace_root m) ".")]
+                 (if (project-root-exists? options root)
+                   (assoc m :source (or (:source m) :manifest) :project_id pid)
+                   (stale-project-root-response options pid root)))
+               (error-response 404 "not_found" "Project not found"
+                               {:project_id pid})))))
+       (if-not (valid-project-id? pid)
+         (error-response 400 "bad_request" "Invalid project_id"
+                         {:project_id pid :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+         (if-let [m (read-project-manifest options pid)]
+           (let [root (or (:workspace_root m) ".")]
+             (if (project-root-exists? options root)
+               (assoc m :source (or (:source m) :manifest) :project_id pid)
+               (stale-project-root-response options pid root)))
+           (if (= "default" pid)
+             (synthesize-default-project options)
+             (error-response 404 "not_found" "Project not found"
+                             {:project_id pid})))))))))
 
 (defn list-projects
   ([] (list-projects {}))
   ([options]
    (let [manifests (list-project-manifests options)
          has-default? (some #(= "default" (:project_id %)) manifests)]
-     (if (or (seq manifests) has-default?)
+     (if has-default?
        {:projects (mapv api-value manifests)}
-       ;; No manifests at all: synthesize the implicit default so the list is
-       ;; never empty (preserves current single-project behavior).
-       {:projects [(-> (synthesize-default-project options)
-                       (api-value)
-                       (select-keys ["project_id" "name" "source"]))]}))))
+       ;; Synthesize the implicit default whenever no explicit default source
+       ;; exists, even when other registrations/legacy manifests are present.
+       ;; This preserves existing unscoped/default behavior while allowing
+       ;; user-local registries to list additional projects.
+       {:projects (mapv api-value
+                        (vec (cons (-> (synthesize-default-project options)
+                                       (select-keys [:project_id :name :source]))
+                                   manifests)))}))))
 
 (defn get-project
   ([] (get-project {} nil))
@@ -267,7 +574,6 @@
                               (for [[k v] (:connections p {})]
                                 [k (api-value v)]))]
          (api-value (-> p
-                        (dissoc :source)
                         (assoc :connections connections))))))))
 
 (defn- path-escape-component?
@@ -287,7 +593,11 @@
   ;; `abs-path` only absolutizes *its input* when it is already absolute, so a
   ;; relative workspace root would otherwise yield empty/relative `abs-path`
   ;; results and let absolute escapes (e.g. `/tmp/escape`) through.
-  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))]
+  (let [wr (str (fs/absolutize (or (:workspace-root (opts options)) ".")))
+        confinement-root (if (and (= "registration" (:source spec))
+                                  (string? (:workspace_root spec)))
+                           (:workspace_root spec)
+                           wr)]
     (cond
       (not (valid-project-id? project-id))
       (str "Invalid project_id (expected " project-id-re ")")
@@ -299,6 +609,7 @@
       "runs_root must be a string"
 
       (and (contains? spec :workspace_root)
+           (not= "registration" (:source spec))
            (not (path-prefix? (abs-path wr ".")
                              (abs-path wr (:workspace_root spec)))))
       "workspace_root must be under the current workspace"
@@ -309,9 +620,9 @@
       ;; prevents run artifacts from being written to arbitrary filesystem
       ;; locations (design §6 path-confinement risk).
       (and (contains? spec :runs_root)
-           (or (path-escape-component? wr (:runs_root spec))
-               (not (path-prefix? (abs-path wr ".")
-                                 (abs-path wr (:runs_root spec))))))
+           (or (path-escape-component? confinement-root (:runs_root spec))
+               (not (path-prefix? (abs-path confinement-root ".")
+                                 (abs-path confinement-root (:runs_root spec))))))
       "runs_root must be a relative path under the current workspace"
 
       :else
@@ -352,9 +663,38 @@
        (error-response 400 "bad_request" "Invalid project_id"
                        {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
 
-       (fs/exists? (project-manifest-path options project-id))
-       (error-response 409 "conflict" "A project with that id already exists"
-                       {:project_id project-id})
+       (or (read-project-registration options project-id)
+           (and (not= "registration" (:source spec))
+                (fs/exists? (project-manifest-path options project-id))))
+       (let [existing (read-project-manifest options project-id)
+             existing-root (or (:workspace_root existing) ".")
+             requested-root (or (:workspace_root spec)
+                                (str (abs-path (:workspace-root (opts options)) ".")))
+             re-registration? (and existing
+                                   (= "registration" (:source spec))
+                                   (= :registration (project-source existing nil)))]
+         (cond
+           (and re-registration? (same-project-root? options existing-root requested-root))
+           (get-project options project-id)
+
+           (and re-registration? (not (project-root-exists? options existing-root)))
+           (do
+             (let [target (project-registry-path options)
+                   registry (read-project-registry options)]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target (update registry :projects dissoc (keyword project-id))))
+             ;; Older repair-era registrations may still live at the legacy
+             ;; workspace manifest path with source=registration. Remove only
+             ;; that stale registration compatibility record so explicit
+             ;; re-registration can replace a missing root without touching
+             ;; descriptor/project data.
+             (when (= :registration (project-source existing nil))
+               (fs/delete-if-exists (project-manifest-path options project-id)))
+             (create-project options project-id spec _global?))
+
+           :else
+           (error-response 409 "conflict" "A project with that id already exists"
+                           {:project_id project-id})))
 
        :else
        (if-let [err (validate-project-spec options project-id spec)]
@@ -369,16 +709,48 @@
                            :discovery (or (:discovery spec)
                                           {:workflow-roots (:workflow-roots (opts options))
                                            :tesseraft-home (:tesseraft-home (opts options))})}
+                          (:source spec) (assoc :source (:source spec))
                           (seq (:settings spec)) (assoc :settings (:settings spec))
                           (seq (:connections spec)) (assoc :connections (:connections spec)))
-               target (project-manifest-path options project-id)]
-           (fs/create-dirs (fs/parent target))
-           (store/write-json! target manifest)
+               registration? (= "registration" (:source spec))]
+           (if registration?
+             (let [target (project-registry-path options)
+                   registry (read-project-registry options)
+                   entry (-> manifest
+                             (dissoc :project_id :connections)
+                             (assoc :source "registration"))]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target (assoc-in registry [:projects (keyword project-id)] entry)))
+             (let [target (project-manifest-path options project-id)]
+               (fs/create-dirs (fs/parent target))
+               (store/write-json! target manifest)))
            (get-project options project-id)))))))
+
+(defn unregister-project
+  ([options project-id]
+   (if-not (valid-project-id? project-id)
+     (error-response 400 "bad_request" "Invalid project_id"
+                     {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
+     (try
+       (let [target (project-registry-path options)
+             registry (read-project-registry options)
+             existed? (contains? (:projects registry) (keyword project-id))]
+         (fs/create-dirs (fs/parent target))
+         (store/write-json! target (-> registry
+                                       (assoc :version 1)
+                                       (update :projects #(dissoc (or % {}) (keyword project-id)))))
+         {:project_id project-id :deleted existed?})
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :invalid-project-registry (:code (ex-data e)))
+           (error-response 400 "invalid_project_registry" (.getMessage e) {:registry_path (:path (ex-data e))})
+           (throw e)))))))
 
 (defn update-project
   ([options project-id spec] (update-project options project-id spec false))
   ([options project-id spec _global?]
+   ;; Every project mutation validates durable registry state before inspecting
+   ;; or changing any project-owned or compatibility state.
+   (read-project-registry options)
    (let [spec (or spec {})]
      (cond
        (not (valid-project-id? project-id))
@@ -402,6 +774,8 @@
   in this phase (read-only fallback remains)."
   ([options] (migrate-project options "default"))
   ([options project-id]
+   ;; Migration is a registry boundary even for the legacy default form.
+   (read-project-registry options)
    (let [pid (or project-id "default")]
      (cond
        (not (= "default" pid))
@@ -420,6 +794,155 @@
          (fs/create-dirs (fs/parent target))
          (store/write-json! target manifest)
          (get-project options pid))))))
+
+(defn- canonical-file-path [p]
+  (.getCanonicalPath (fs/file p)))
+
+(defn- existing-canonical-file-path [p code field]
+  (cond
+    (str/blank? (str p))
+    (error-response 400 code (str field " is required") {field p})
+
+    (not (fs/exists? (fs/path p)))
+    (error-response 400 code (str field " does not exist") {field (str p)})
+
+    :else
+    (try
+      (canonical-file-path p)
+      (catch Throwable t
+        (error-response 400 code (str field " is not readable") {field (str p) :message (.getMessage t)})))))
+
+(defn- project-contained-relative-path? [project-root value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (fs/absolute? (fs/path value)))
+       (not (some #(= ".." %) (str/split value #"[/\\]+")))
+       (let [root (canonical-file-path project-root)
+             candidate (fs/path root value)
+             canonical (if (fs/exists? candidate) (canonical-file-path candidate) (str (fs/normalize candidate)))]
+         (path-prefix? root canonical))))
+
+(defn migrate-project-portable
+  ([options project-id legacy-manifest project-root]
+   (let [pid (or project-id "default")]
+     (cond
+       (not (valid-project-id? pid))
+       (error-response 400 "bad_request" "Invalid project_id" {:project_id pid})
+
+       (or (str/blank? legacy-manifest) (str/blank? project-root))
+       (error-response 400 "bad_request" "project migrate requires --legacy-manifest and --project-root for portable migration")
+
+       :else
+       (let [root-or-error (existing-canonical-file-path project-root "invalid_project_root" "project_root")
+             legacy-path (fs/path legacy-manifest)]
+         (if (:error root-or-error)
+           root-or-error
+           (let [root root-or-error
+                 legacy-read (try
+                               {:bytes (slurp (str legacy-path))}
+                               (catch Throwable t
+                                 {:error (error-response 400 "invalid_legacy_manifest" "legacy manifest is not readable" {:legacy_manifest (str legacy-path) :message (.getMessage t)})}))]
+             (if (:error legacy-read)
+               (:error legacy-read)
+               (let [legacy-bytes (:bytes legacy-read)
+                     legacy (try
+                              (json/parse-string legacy-bytes true)
+                              (catch Throwable t
+                                (error-response 400 "invalid_legacy_manifest" "legacy_manifest is not readable JSON" {:legacy_manifest (str legacy-path) :message (.getMessage t)})))
+                     legacy-root-or-error (when-not (:error legacy)
+                                            (existing-canonical-file-path (:workspace_root legacy) "invalid_legacy_workspace_root" "legacy_workspace_root"))]
+                 (cond
+                   (:error legacy)
+                   legacy
+
+                   (not (map? legacy))
+                   (error-response 400 "invalid_legacy_manifest" "legacy manifest must be a JSON object" {:legacy_manifest (str legacy-path)})
+
+                   (not= pid (:project_id legacy))
+                   (error-response 400 "project_id_mismatch" "legacy manifest project_id does not match requested project id"
+                                   {:project_id pid :legacy_project_id (:project_id legacy)})
+
+                   (:error legacy-root-or-error)
+                   legacy-root-or-error
+
+                   (not= legacy-root-or-error root)
+                   (error-response 400 "project_root_mismatch" "legacy manifest workspace_root does not match requested project_root"
+                                   {:project_root root :legacy_workspace_root (:workspace_root legacy)})
+
+                   :else
+                   (let [runs-root (or (:runs_root legacy) "runs")
+                         discovery (if (map? (:discovery legacy)) (:discovery legacy) {})
+                         workflow-roots (or (:workflow-roots discovery) (:workflow_roots discovery) [])]
+                     (cond
+                       (not (project-contained-relative-path? root runs-root))
+                       (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "runs_root" :path runs-root})
+
+                       (some #(not (project-contained-relative-path? root %)) workflow-roots)
+                       (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "workflow_root"})
+
+                       :else
+                       (let [descriptor-path (project-descriptor-path root)
+                             registry-path (project-registry-path options)
+                             descriptor {:version 1
+                                         :project_id pid
+                                         :name (or (:name legacy) pid)
+                                         :runs_root runs-root
+                                         :discovery discovery}
+                             registration {:name (:name descriptor)
+                                           :workspace_root root
+                                           :runs_root runs-root
+                                           :discovery discovery
+                                           :source "registration"}
+                             descriptor-error (validate-project-descriptor descriptor)
+                             descriptor-existed? (fs/exists? descriptor-path)
+                             registry-before (when (fs/exists? registry-path) (slurp (str registry-path)))]
+                         (if descriptor-error
+                           (error-response 400 "invalid_project_descriptor" descriptor-error {:project_id pid})
+                           (try
+                           (when descriptor-existed?
+                             (let [existing (store/read-json descriptor-path)]
+                               (when (not= descriptor existing)
+                                 (throw (ex-info "Destination descriptor already exists for a different project state" {:conflict true})))))
+                           (let [registry (read-project-registry options)
+                                 existing (get-in registry [:projects (keyword pid)])]
+                             (when existing
+                               (when (not= root (canonical-file-path (:workspace_root existing)))
+                                 (throw (ex-info "Registration already exists for a different project root" {:conflict true}))))
+                             (when-not descriptor-existed?
+                               (fs/create-dirs (fs/parent descriptor-path))
+                               (spit (str descriptor-path) (str (json/generate-string descriptor {:pretty true}) "\n")))
+                             (when-not existing
+                               (fs/create-dirs (fs/parent registry-path))
+                               (store/write-json! registry-path (assoc-in registry [:projects (keyword pid)] registration))))
+                           (let [resolved (resolve-project (assoc options :project-root root) pid)]
+                             (if (:error resolved)
+                               (throw (ex-info "Final project resolution failed" {:resolution-error resolved}))
+                               (assoc-in resolved [:diagnostics :migration] {:legacy_manifest (str legacy-path)
+                                                                             :descriptor_path (str descriptor-path)
+                                                                             :registry_path (str registry-path)})))
+                           (catch clojure.lang.ExceptionInfo e
+                             (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
+                             (if registry-before
+                               (spit (str registry-path) registry-before)
+                               (fs/delete-if-exists registry-path))
+                             (cond
+                               (:resolution-error (ex-data e))
+                               (:resolution-error (ex-data e))
+
+                               (:conflict (ex-data e))
+                               (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
+
+                               (= :invalid-project-registry (:code (ex-data e)))
+                               (invalid-project-registry-response e)
+
+                               :else
+                               (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
+                           (catch Throwable t
+                             (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
+                             (if registry-before
+                               (spit (str registry-path) registry-before)
+                               (fs/delete-if-exists registry-path))
+                             (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)})))))))))))))))))
 
 (defn mask-credential
   "Resolve a credential-ref against the out-of-repo store and return a masked
@@ -683,7 +1206,7 @@
   ([options project-id]
    (let [project (resolve-project options project-id)]
      (if (:error project)
-       (opts options)
+       project
        (let [control-ws (:workspace-root (opts options))]
          (-> (opts options)
              (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
@@ -697,15 +1220,18 @@
   ([] (list-workflows {}))
   ([options] (list-workflows options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         entries (workflow-file-entries sopts)
-         visible (select-visible-workflow-entries entries)
-         meta (shadowing-for-visible sopts entries visible)]
-     {:workflows (mapv (fn [v]
-                         (api-value
-                           (merge (read-workflow-entry sopts v)
-                                  (get meta (str (:file v))))))
-                       visible)})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [entries (workflow-file-entries sopts)
+             visible (select-visible-workflow-entries entries)
+             meta (shadowing-for-visible sopts entries visible)]
+         {:workflows
+          (mapv (fn [v]
+                  (api-value
+                    (merge (read-workflow-entry sopts v)
+                           (get meta (str (:file v))))))
+                visible)})))))
 
 (defn workflow-candidates [options name]
   (->> (workflow-file-entries options)
@@ -734,36 +1260,38 @@
   ([] (get-workflow {} nil nil))
   ([options name] (get-workflow options name nil))
   ([options name project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         resolved (resolve-workflow sopts name)]
-     (if (:error resolved)
-       resolved
-       (let [{:keys [workspace-root]} sopts
-             {:keys [file workflow source precedence]} resolved
-             lint-result (lint/lint-file file)
-             ;; Shadowing context for the detail view. `resolve-workflow`
-             ;; already 409s on an equal-precedence conflict, so when we
-             ;; get here the resolution is unique: `conflicts` is therefore
-             ;; empty in practice (kept for symmetry with the list endpoint)
-             ;; and `duplicates` lists the lower-precedence same-name entries
-             ;; this workflow overrides. Precedence/selection semantics are
-             ;; untouched — this only attaches inspection metadata.
-             matches (workflow-candidates sopts name)
-             others (remove #(= (:file %) file) matches)
-             conflicts (mapv #(workflow-meta-item workspace-root %)
-                             (filter #(= (:precedence %) precedence) others))
-             duplicates (mapv #(workflow-meta-item workspace-root %)
-                              (filter #(< (:precedence %) precedence) others))]
-         (api-value
-           (cond-> {:workflow {:name (str (spec/workflow-name workflow))
-                               :path (relative-path workspace-root file)
-                               :source source
-                               :precedence precedence
-                               :api_version (:api-version workflow)
-                               :normalized (dissoc workflow :__file :__dir)
-                               :lint lint-result}}
-             (seq conflicts) (assoc-in [:workflow :conflicts] conflicts)
-             (seq duplicates) (assoc-in [:workflow :duplicates] duplicates))))))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [resolved (resolve-workflow sopts name)]
+         (if (:error resolved)
+           resolved
+           (let [{:keys [workspace-root]} sopts
+                 {:keys [file workflow source precedence]} resolved
+                 lint-result (lint/lint-file file)
+                 ;; Shadowing context for the detail view. `resolve-workflow`
+                 ;; already 409s on an equal-precedence conflict, so when we
+                 ;; get here the resolution is unique: `conflicts` is therefore
+                 ;; empty in practice (kept for symmetry with the list endpoint)
+                 ;; and `duplicates` lists the lower-precedence same-name entries
+                 ;; this workflow overrides. Precedence/selection semantics are
+                 ;; untouched — this only attaches inspection metadata.
+                 matches (workflow-candidates sopts name)
+                 others (remove #(= (:file %) file) matches)
+                 conflicts (mapv #(workflow-meta-item workspace-root %)
+                                 (filter #(= (:precedence %) precedence) others))
+                 duplicates (mapv #(workflow-meta-item workspace-root %)
+                                  (filter #(< (:precedence %) precedence) others))]
+             (api-value
+               (cond-> {:workflow {:name (str (spec/workflow-name workflow))
+                                   :path (relative-path workspace-root file)
+                                   :source source
+                                   :precedence precedence
+                                   :api_version (:api-version workflow)
+                                   :normalized (dissoc workflow :__file :__dir)
+                                   :lint lint-result}}
+                 (seq conflicts) (assoc-in [:workflow :conflicts] conflicts)
+                 (seq duplicates) (assoc-in [:workflow :duplicates] duplicates))))))))))
 
 (defn edge-from-transition [from tr]
   (cond-> {:from (spec/normalize-id from)
@@ -775,39 +1303,43 @@
   ([] (get-workflow-graph {} nil nil))
   ([options name] (get-workflow-graph options name nil))
   ([options name project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         resolved (resolve-workflow sopts name)]
-     (if (:error resolved)
-       resolved
-       (let [{:keys [file workflow]} resolved
-             lint-result (lint/lint-file file)]
-         (api-value
-           {:workflow_name (str (spec/workflow-name workflow))
-            :nodes (vec (for [[id node] (:states workflow)]
-                          (cond-> {:id (spec/normalize-id id)
-                                   :type (:type node)}
-                            (:title node) (assoc :title (:title node))
-                            (:outputs node) (assoc :outputs (:outputs node))
-                            (:resources node) (assoc :resources (:resources node)))))
-            :edges (vec (for [[from node] (:states workflow)
-                              tr (spec/transitions node)
-                              :when (:next tr)]
-                          (edge-from-transition from tr)))
-            :diagnostics (:diagnostics lint-result)}))))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [resolved (resolve-workflow sopts name)]
+         (if (:error resolved)
+           resolved
+           (let [{:keys [file workflow]} resolved
+                 lint-result (lint/lint-file file)]
+             (api-value
+               {:workflow_name (str (spec/workflow-name workflow))
+                :nodes (vec (for [[id node] (:states workflow)]
+                              (cond-> {:id (spec/normalize-id id)
+                                       :type (:type node)}
+                                (:title node) (assoc :title (:title node))
+                                (:outputs node) (assoc :outputs (:outputs node))
+                                (:resources node) (assoc :resources (:resources node)))))
+                :edges (vec (for [[from node] (:states workflow)
+                                  tr (spec/transitions node)
+                                  :when (:next tr)]
+                              (edge-from-transition from tr)))
+                :diagnostics (:diagnostics lint-result)}))))))))
 
 (defn run-state-files
   ([options] (run-state-files options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [workspace-root runs-root]} sopts
-         root (abs-path workspace-root runs-root)]
-     (if-not (fs/exists? root)
-       []
-       (->> (for [p (file-seq (fs/file root))
-                  :when (and (.isFile p) (= "state.edn" (.getName p)))]
-              (fs/path p))
-            (sort-by str)
-            vec)))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [workspace-root runs-root]} sopts
+             root (abs-path workspace-root runs-root)]
+         (if-not (fs/exists? root)
+           []
+           (->> (for [p (file-seq (fs/file root))
+                      :when (and (.isFile p) (= "state.edn" (.getName p)))]
+                  (fs/path p))
+                (sort-by str)
+                vec)))))))
 
 (defn run-dir-from-state-file [state-file]
   (fs/parent state-file))
@@ -933,17 +1465,19 @@
   ([] (list-runs {}))
   ([options] (list-runs options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         entries (mapv (fn [state-file]
-                         (try
-                           {:run (api-value (run-summary sopts state-file))}
-                           (catch Throwable t
-                             {:error {:code "parse_error"
-                                      :message (.getMessage t)
-                                      :details {:path (relative-path (:workspace-root sopts) state-file)}}})))
-                       (run-state-files options project-id))]
-     {:runs (mapv :run (filter :run entries))
-      :errors (mapv :error (filter :error entries))})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [entries (mapv (fn [state-file]
+                             (try
+                               {:run (api-value (run-summary sopts state-file))}
+                               (catch Throwable t
+                                 {:error {:code "parse_error"
+                                          :message (.getMessage t)
+                                          :details {:path (relative-path (:workspace-root sopts) state-file)}}})))
+                           (run-state-files options project-id))]
+         {:runs (mapv :run (filter :run entries))
+          :errors (mapv :error (filter :error entries))})))))
 
 (defn matching-run-files
   ([options run-id] (matching-run-files options run-id nil))
@@ -976,14 +1510,16 @@
   ([options run-id] (resolve-run options run-id nil))
   ([options run-id project-id]
    (let [pid (or project-id "default")
-         sopts (project-scoped-opts options project-id)
-         matches (matching-run-files options run-id project-id)]
-     (cond
-       (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id :project_id pid})
-       (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
-                                             {:run_id run-id
-                                              :paths (mapv #(relative-path (:workspace-root sopts) (:run-dir %)) matches)})
-       :else (first matches)))))
+         sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [matches (matching-run-files options run-id project-id)]
+         (cond
+           (empty? matches) (error-response 404 "not_found" "Run not found" {:run_id run-id :project_id pid})
+           (> (count matches) 1) (error-response 409 "conflict" "Multiple runs share this run id"
+                                                 {:run_id run-id
+                                                  :paths (mapv #(relative-path (:workspace-root sopts) (:run-dir %)) matches)})
+           :else (first matches)))))))
 
 (defn events-file [run-dir]
   (fs/path run-dir "events.jsonl"))
@@ -1537,26 +2073,30 @@
   ([] (get-git-user {} nil))
   ([options] (get-git-user options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [project global]} (git-user-paths sopts)
-         project-user (read-git-user-file project)
-         global-user (read-git-user-file global)]
-     (cond
-       project-user {:git_user (assoc project-user :source "project")}
-       global-user {:git_user (assoc global-user :source "global")}
-       :else {:git_user {:name nil :email nil :source "none"}}))))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [project global]} (git-user-paths sopts)
+             project-user (read-git-user-file project)
+             global-user (read-git-user-file global)]
+         (cond
+           project-user {:git_user (assoc project-user :source "project")}
+           global-user {:git_user (assoc global-user :source "global")}
+           :else {:git_user {:name nil :email nil :source "none"}}))))))
 
 (defn set-git-user
   ([options name email global?] (set-git-user options name email global? nil))
   ([options name email global? project-id]
    (if-let [err (validate-git-user name email)]
      (error-response 400 "bad_request" err)
-     (let [sopts (project-scoped-opts options project-id)
-           paths (git-user-paths sopts)
-           target (if global? (:global paths) (:project paths))]
-       (fs/create-dirs (fs/parent target))
-       (store/write-json! target {:name name :email email})
-       (get-git-user sopts project-id)))))
+     (let [sopts (project-scoped-opts options project-id)]
+       (if (:error sopts)
+         sopts
+         (let [paths (git-user-paths sopts)
+               target (if global? (:global paths) (:project paths))]
+           (fs/create-dirs (fs/parent target))
+           (store/write-json! target {:name name :email email})
+           (get-git-user sopts nil)))))))
 
 ;; ---- settings read/mutate surface ----
 ;; `settings-fields`, `settings-unchanged`, `settings-paths`,
@@ -1601,16 +2141,18 @@
   ([] (get-settings {} nil))
   ([options] (get-settings options nil))
   ([options project-id]
-   (let [sopts (project-scoped-opts options project-id)
-         {:keys [project global]} (settings-paths sopts)
-         project-settings (coerce-settings (read-settings-file project))
-         global-settings (coerce-settings (read-settings-file global))
-         [source raw] (cond
-                        (seq project-settings) ["project" project-settings]
-                        (seq global-settings) ["global" global-settings]
-                        :else ["none" {}])
-         masked (-> raw (mask-settings) (assoc :source source))]
-     {:settings masked})))
+   (let [sopts (project-scoped-opts options project-id)]
+     (if (:error sopts)
+       sopts
+       (let [{:keys [project global]} (settings-paths sopts)
+             project-settings (coerce-settings (read-settings-file project))
+             global-settings (coerce-settings (read-settings-file global))
+             [source raw] (cond
+                            (seq project-settings) ["project" project-settings]
+                            (seq global-settings) ["global" global-settings]
+                            :else ["none" {}])
+             masked (-> raw (mask-settings) (assoc :source source))]
+         {:settings masked})))))
 
 (defn set-settings
   "Apply a partial update to the project (or global) settings file. `updates`
@@ -1621,43 +2163,45 @@
   ([options updates global?] (set-settings options updates global? nil))
   ([options updates global? project-id]
    (let [sopts (project-scoped-opts options project-id)]
-     (if (empty? updates)
-       (get-settings sopts project-id)
-       (let [unknown (remove (set settings-fields) (keys updates))]
-         (if (seq unknown)
-           (error-response 400 "bad_request"
-                           (str "Unknown settings fields: "
-                                (str/join ", " (map name (sort unknown)))))
-           (let [errs (reduce (fn [acc [k v]]
-                                (if-let [e (validate-settings-field k v)]
-                                  (conj acc e) acc))
-                              [] updates)]
-             (if (seq errs)
-               (error-response 400 "bad_request" (str/join "; " errs))
-               (let [paths (settings-paths sopts)
-                     target (if global? (:global paths) (:project paths))
-                   current (coerce-settings (read-settings-file target))
-                   merged (reduce
-                              (fn [acc [k v]]
-                                (cond
-                                  ;; Token unchanged: keep whatever is (or isn't) there.
-                                  (and (settings-token-fields k)
-                                       (= v settings-unchanged))
-                                  acc
-                                  ;; Clear: drop the key entirely (nil update).
-                                  (nil? v) (dissoc acc k)
-                                  ;; Set/replace.
-                                  :else (assoc acc k v)))
-                              current updates)]
-               ;; Cross-field consistency: a default model without a default
-               ;; provider is an inconsistent state. Reject it here so the
-               ;; store never holds model-without-provider (this also defends
-               ;; the CLI and direct API callers, not just the web UI).
-               (if (and (contains? merged :pi_default_model)
-                        (not (contains? merged :pi_default_provider)))
-                 (error-response 400 "bad_request"
-                                 "pi_default_provider is required when pi_default_model is set")
-                 (do
-                   (fs/create-dirs (fs/parent target))
-                   (store/write-json! target merged)
-                   (get-settings sopts project-id))))))))))))
+     (if (:error sopts)
+       sopts
+       (if (empty? updates)
+         (get-settings sopts nil)
+         (let [unknown (remove (set settings-fields) (keys updates))]
+           (if (seq unknown)
+             (error-response 400 "bad_request"
+                             (str "Unknown settings fields: "
+                                  (str/join ", " (map name (sort unknown)))))
+             (let [errs (reduce (fn [acc [k v]]
+                                  (if-let [e (validate-settings-field k v)]
+                                    (conj acc e) acc))
+                                [] updates)]
+               (if (seq errs)
+                 (error-response 400 "bad_request" (str/join "; " errs))
+                 (let [paths (settings-paths sopts)
+                       target (if global? (:global paths) (:project paths))
+                       current (coerce-settings (read-settings-file target))
+                       merged (reduce
+                                (fn [acc [k v]]
+                                  (cond
+                                    ;; Token unchanged: keep whatever is (or isn't) there.
+                                    (and (settings-token-fields k)
+                                         (= v settings-unchanged))
+                                    acc
+                                    ;; Clear: drop the key entirely (nil update).
+                                    (nil? v) (dissoc acc k)
+                                    ;; Set/replace.
+                                    :else (assoc acc k v)))
+                                current updates)]
+                   ;; Cross-field consistency: a default model without a default
+                   ;; provider is an inconsistent state. Reject it here so the
+                   ;; store never holds model-without-provider (this also defends
+                   ;; the CLI and direct API callers, not just the web UI).
+                   (if (and (contains? merged :pi_default_model)
+                            (not (contains? merged :pi_default_provider)))
+                     (error-response 400 "bad_request"
+                                     "pi_default_provider is required when pi_default_model is set")
+                     (do
+                       (fs/create-dirs (fs/parent target))
+                       (store/write-json! target merged)
+                       (get-settings sopts nil)))))))))))))

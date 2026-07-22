@@ -11,6 +11,7 @@ import { createConfiguredPiSessionAdapter, type PiSessionAdapter } from '../lib/
 
 type ApiRoute = string[] | { badRequest: string } | { notFound: true } | null;
 type JsonRecord = Record<string, unknown>;
+export type ApiRouterOptions = { piSessionAdapter?: PiSessionAdapter; browserAllowedProjectRoots?: string[] };
 
 /** Optional `?project_id=` query param threaded to project-scoped routes. */
 const projectFromQuery = (searchParams: URLSearchParams): string | undefined => {
@@ -266,23 +267,200 @@ const handleGetProject = async (res: Response, projectId: string): Promise<void>
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleCreateProject = async (req: Request, res: Response): Promise<void> => {
+const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  if (!fs.existsSync(descriptorPath)) return null;
+  const parsed = JSON.parse(fs.readFileSync(descriptorPath, 'utf8')) as unknown;
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
+};
+
+const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
+  const allowed = new Set(['version', 'project_id', 'name', 'runs_root', 'discovery', 'connections']);
+  for (const key of Object.keys(descriptor)) if (!allowed.has(key)) return `Unknown project descriptor field: ${key}`;
+  if (descriptor.version !== 1) return 'Unsupported project descriptor version';
+  if (typeof descriptor.project_id !== 'string' || !PROJECT_NAME_RE.test(descriptor.project_id.trim())) return 'Invalid project descriptor project_id';
+  if (Object.prototype.hasOwnProperty.call(descriptor, 'workspace_root')) return 'Portable project descriptor must not contain workspace_root';
+  if (descriptor.name !== undefined && typeof descriptor.name !== 'string') return 'Invalid project descriptor name';
+  if (descriptor.runs_root !== undefined && typeof descriptor.runs_root !== 'string') return 'Invalid project descriptor runs_root';
+  if (descriptor.discovery !== undefined && (!descriptor.discovery || typeof descriptor.discovery !== 'object' || Array.isArray(descriptor.discovery))) return 'Invalid project descriptor discovery';
+  if (descriptor.discovery && typeof descriptor.discovery === 'object' && !Array.isArray(descriptor.discovery)) {
+    const discoveryAllowed = new Set(['workflow-roots', 'workflow_roots', 'tesseraft-home', 'tesseraft_home']);
+    for (const key of Object.keys(descriptor.discovery as JsonRecord)) if (!discoveryAllowed.has(key)) return `Unknown project descriptor discovery field: ${key}`;
+    for (const key of ['workflow-roots', 'workflow_roots']) {
+      const roots = (descriptor.discovery as JsonRecord)[key];
+      if (roots !== undefined && (!Array.isArray(roots) || roots.some((r) => typeof r !== 'string'))) return `Invalid project descriptor discovery.${key}`;
+    }
+  }
+  if (descriptor.connections !== undefined && (!descriptor.connections || typeof descriptor.connections !== 'object' || Array.isArray(descriptor.connections))) return 'Invalid project descriptor connections';
+  if (descriptor.connections && typeof descriptor.connections === 'object' && !Array.isArray(descriptor.connections)) {
+    const connections = descriptor.connections as JsonRecord;
+    for (const [name, raw] of Object.entries(connections)) {
+      if (name !== 'jira' && name !== 'github') return `Unknown project descriptor connection: ${name}`;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return `Invalid project descriptor connection: ${name}`;
+      const conn = raw as JsonRecord;
+      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : new Set(['credential-ref']);
+      for (const key of Object.keys(conn)) if (!allowedConn.has(key)) return `Unknown project descriptor connection field: ${name}.${key}`;
+      if (conn['base-url'] !== undefined && typeof conn['base-url'] !== 'string') return `Invalid project descriptor connection: ${name}.base-url`;
+      if (conn['credential-ref'] !== undefined && (typeof conn['credential-ref'] !== 'string' || !CREDENTIAL_REF_RE.test(conn['credential-ref']))) return `Invalid project descriptor connection: ${name}.credential-ref`;
+    }
+  }
+  return null;
+};
+
+const validateRegistry = (registry: JsonRecord): string | null => {
+  const allowedTop = new Set(['version', 'projects']);
+  for (const key of Object.keys(registry)) if (!allowedTop.has(key)) return `Unknown project registry field: ${key}`;
+  if (registry.version !== 1) return 'Unsupported project registry version';
+  if (!registry.projects || typeof registry.projects !== 'object' || Array.isArray(registry.projects)) return 'Project registry projects must be an object';
+  const allowedEntry = new Set(['name', 'workspace_root', 'runs_root', 'discovery', 'source']);
+  for (const [id, entry] of Object.entries(registry.projects as Record<string, unknown>)) {
+    if (!PROJECT_NAME_RE.test(id)) return `Invalid project registry id: ${id}`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return `Invalid project registry entry: ${id}`;
+    const e = entry as JsonRecord;
+    for (const key of Object.keys(e)) if (!allowedEntry.has(key)) return `Unknown project registry entry field: ${id}.${key}`;
+    if (e.name !== undefined && typeof e.name !== 'string') return `Invalid project registry name: ${id}`;
+    if (typeof e.workspace_root !== 'string' || e.workspace_root.trim() === '') return `Invalid project registry workspace_root: ${id}`;
+    if (e.runs_root !== undefined && typeof e.runs_root !== 'string') return `Invalid project registry runs_root: ${id}`;
+    if (e.source !== undefined && e.source !== 'registration') return `Invalid project registry source: ${id}`;
+    if (e.discovery !== undefined) {
+      if (!e.discovery || typeof e.discovery !== 'object' || Array.isArray(e.discovery)) return `Invalid project registry discovery: ${id}`;
+      const discovery = e.discovery as JsonRecord;
+      const allowedDiscovery = new Set(['workflow-roots', 'tesseraft-home']);
+      for (const key of Object.keys(discovery)) if (!allowedDiscovery.has(key)) return `Unknown project registry discovery field: ${id}.${key}`;
+      const roots = discovery['workflow-roots'];
+      if (roots !== undefined && (!Array.isArray(roots) || roots.some((r) => typeof r !== 'string'))) return `Invalid project registry discovery.workflow-roots: ${id}`;
+      const home = discovery['tesseraft-home'];
+      if (home !== undefined && home !== null && typeof home !== 'string') return `Invalid project registry discovery.tesseraft-home: ${id}`;
+    }
+  }
+  return null;
+};
+
+class InvalidProjectRegistryError extends Error {}
+
+const readValidatedRegistry = (registryPath: string): JsonRecord => {
+  if (!fs.existsSync(registryPath)) return { version: 1, projects: {} };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
+  } catch {
+    throw new InvalidProjectRegistryError('Project registry is not readable JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InvalidProjectRegistryError('Project registry must be a JSON object');
+  }
+  const registry = parsed as JsonRecord;
+  const registryError = validateRegistry(registry);
+  if (registryError) throw new InvalidProjectRegistryError(registryError);
+  return registry;
+};
+
+const isPathWithin = (parent: string, child: string): boolean => {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const hasParentTraversal = (p: string): boolean => p.split(/[\\/]+/).some((part) => part === '..');
+
+const validateProjectOwnedPath = (projectRoot: string, field: string, value: string): JsonRecord | null => {
+  if (value.trim() === '') return null;
+  if (path.isAbsolute(value) || hasParentTraversal(value)) {
+    return { field, path: value, project_root: projectRoot };
+  }
+  const resolved = path.resolve(projectRoot, value);
+  let canonical = resolved;
+  try {
+    if (fs.existsSync(resolved)) canonical = fs.realpathSync(resolved);
+  } catch (error) {
+    return { field, path: value, project_root: projectRoot, message: error instanceof Error ? error.message : String(error) };
+  }
+  return isPathWithin(projectRoot, canonical) ? null : { field, path: value, project_root: projectRoot, canonical_path: canonical };
+};
+
+const canonicalAllowedRoots = (roots: string[] = []): string[] => roots.map((root) => fs.realpathSync(root));
+
+const disallowedProjectRoot = (projectRoot: string, allowedRoots: string[]): JsonRecord | null => {
+  if (allowedRoots.length === 0) return { project_root: projectRoot, allowed_roots: [] };
+  return allowedRoots.some((root) => isPathWithin(root, projectRoot)) ? null : { project_root: projectRoot, allowed_roots: allowedRoots };
+};
+
+const handleCreateProject = async (req: Request, res: Response, browserAllowedProjectRoots: string[] = []): Promise<void> => {
   const body = (req.body || {}) as JsonRecord;
-  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : '';
+  let projectRoot = '';
+  if (typeof body.project_root === 'string' && body.project_root.trim() !== '') {
+    try {
+      projectRoot = fs.realpathSync(body.project_root.trim());
+    } catch (error) {
+      return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root is not readable', { message: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+  if (!projectRoot) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root is required for browser project registration'));
+  let descriptor: JsonRecord | null = null;
+  if (projectRoot) {
+    const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
+    if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
+    try {
+      descriptor = readProjectDescriptor(projectRoot);
+    } catch (error) {
+      return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root descriptor is not readable', { message: error instanceof Error ? error.message : String(error) }));
+    }
+    if (!descriptor) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_root must contain .tesseraft/project.json'));
+    const descriptorError = validateProjectDescriptor(descriptor);
+    if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { version: descriptor.version }));
+  }
+  const projectId = typeof descriptor?.project_id === 'string' ? descriptor.project_id.trim() : '';
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'project_id must match /^[a-z0-9][a-z0-9-]{0,62}$/'));
   const args = ['project', 'create', projectId];
-  if (typeof body.name === 'string' && body.name.trim() !== '') args.push('--name', body.name.trim());
-  if (typeof body.workspace_root === 'string' && body.workspace_root.trim() !== '') args.push('--workspace-root', body.workspace_root.trim());
-  if (typeof body.runs_root === 'string' && body.runs_root.trim() !== '') args.push('--runs-root', body.runs_root.trim());
-  for (const r of collectWorkflowRoots(body)) args.push('--workflow-root', r);
-  const conns = body.connections;
+  const descriptorDiscovery = descriptor?.discovery && typeof descriptor.discovery === 'object' && !Array.isArray(descriptor.discovery) ? descriptor.discovery as JsonRecord : undefined;
+  const name = typeof descriptor?.name === 'string' ? descriptor.name : '';
+  const runsRoot = typeof descriptor?.runs_root === 'string' && descriptor.runs_root.trim() !== '' ? descriptor.runs_root.trim() : '';
+  const workspaceRoot = projectRoot;
+  const workflowRoots: string[] = [];
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery['workflow-roots'])) for (const r of descriptorDiscovery['workflow-roots']) if (typeof r === 'string') workflowRoots.push(r);
+  if (descriptorDiscovery && Array.isArray(descriptorDiscovery.workflow_roots)) for (const r of descriptorDiscovery.workflow_roots) if (typeof r === 'string') workflowRoots.push(r);
+  if (projectRoot) {
+    const escapedRunsRoot = runsRoot ? validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot) : null;
+    if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
+    for (const r of workflowRoots) {
+      const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
+      if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
+    }
+  }
+  if (name) args.push('--name', name);
+  if (workspaceRoot) args.push('--workspace-root', workspaceRoot);
+  if (runsRoot) args.push('--runs-root', runsRoot);
+  for (const r of workflowRoots) args.push('--workflow-root', r);
+  const conns = descriptor?.connections;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
     const c = conns as Record<string, JsonRecord>;
-    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') args.push('--jira-credential-ref', c.jira.credential_ref); }
-    if (c.github && typeof c.github.credential_ref === 'string') args.push('--github-credential-ref', c.github.credential_ref);
+    if (c.jira) { if (typeof c.jira['base-url'] === 'string') args.push('--jira-base-url', c.jira['base-url']); if (typeof c.jira['credential-ref'] === 'string') args.push('--jira-credential-ref', c.jira['credential-ref']); }
+    if (c.github && typeof c.github['credential-ref'] === 'string') args.push('--github-credential-ref', c.github['credential-ref']);
   }
+  if (projectRoot) args.push('--source', 'registration');
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status === 200 ? 201 : result.status, result.body);
+};
+
+const handleDeleteProject = async (res: Response, projectId: string): Promise<void> => {
+  if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
+  let removed = false;
+  let registry: JsonRecord = { version: 1, projects: {} };
+  try {
+    registry = readValidatedRegistry(registryPath);
+    const projects = { ...(registry.projects as JsonRecord) };
+    removed = Object.prototype.hasOwnProperty.call(projects, projectId);
+    delete projects[projectId];
+    registry = { ...registry, version: 1, projects };
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  } catch (error) {
+    if (error instanceof InvalidProjectRegistryError) {
+      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
+    }
+    return jsonResponse(res, 500, errorBody(500, 'registry_write_failed', 'Could not update project registry', { message: error instanceof Error ? error.message : String(error) }));
+  }
+  return jsonResponse(res, 200, { project_id: projectId, deleted: removed });
 };
 
 const handleUpdateProject = async (req: Request, res: Response, projectId: string): Promise<void> => {
@@ -297,10 +475,133 @@ const handleUpdateProject = async (req: Request, res: Response, projectId: strin
   return jsonResponse(res, result.status, result.body);
 };
 
-const handleMigrateProject = async (res: Response, projectId: string): Promise<void> => {
+const handleMigrateProject = async (req: Request, res: Response, projectId: string, browserAllowedProjectRoots: string[] = []): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-  const result = await runControlPlane(['project', 'migrate', projectId]);
-  return jsonResponse(res, result.status, result.body);
+  const body = (req.body || {}) as JsonRecord;
+  const legacyManifestPath = typeof body.legacy_manifest === 'string' && body.legacy_manifest.trim() !== '' ? body.legacy_manifest.trim() : '';
+  const projectRootInput = typeof body.project_root === 'string' && body.project_root.trim() !== '' ? body.project_root.trim() : '';
+  if (!legacyManifestPath && !projectRootInput) {
+    const result = await runControlPlane(['project', 'migrate', projectId]);
+    return jsonResponse(res, result.status, result.body);
+  }
+  if (!legacyManifestPath || !projectRootInput) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'legacy_manifest and project_root are required for explicit migration'));
+  let projectRoot = '';
+  try {
+    projectRoot = fs.realpathSync(projectRootInput);
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_project_root', 'project_root is not readable', { project_root: projectRootInput, message: error instanceof Error ? error.message : String(error) }));
+  }
+  const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
+  if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
+
+  let legacy: JsonRecord;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(legacyManifestPath, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('legacy manifest must be a JSON object');
+    legacy = parsed as JsonRecord;
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_manifest', 'legacy_manifest is not readable JSON', { legacy_manifest: legacyManifestPath, message: error instanceof Error ? error.message : String(error) }));
+  }
+  if (legacy.project_id !== projectId) return jsonResponse(res, 400, errorBody(400, 'project_id_mismatch', 'legacy manifest project_id does not match requested project id', { project_id: projectId, legacy_project_id: legacy.project_id }));
+  if (typeof legacy.workspace_root !== 'string' || legacy.workspace_root.trim() === '') {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
+  }
+  let legacyWorkspaceRoot = '';
+  try {
+    legacyWorkspaceRoot = fs.realpathSync(legacy.workspace_root);
+  } catch (error) {
+    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root, message: error instanceof Error ? error.message : String(error) }));
+  }
+  if (path.normalize(legacyWorkspaceRoot) !== path.normalize(projectRoot)) {
+    return jsonResponse(res, 400, errorBody(400, 'project_root_mismatch', 'legacy manifest workspace_root does not match requested project_root', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
+  }
+
+  const runsRoot = typeof legacy.runs_root === 'string' && legacy.runs_root.trim() !== '' ? legacy.runs_root : 'runs';
+  const discovery = legacy.discovery && typeof legacy.discovery === 'object' && !Array.isArray(legacy.discovery) ? legacy.discovery as JsonRecord : {};
+  const workflowRoots = Array.isArray(discovery['workflow-roots']) ? discovery['workflow-roots'].filter((r): r is string => typeof r === 'string') : [];
+  const escapedRunsRoot = validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot);
+  if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
+  for (const r of workflowRoots) {
+    const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
+    if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
+  }
+
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
+  const descriptor: JsonRecord = {
+    version: 1,
+    project_id: projectId,
+    name: typeof legacy.name === 'string' && legacy.name.trim() !== '' ? legacy.name : projectId,
+    runs_root: runsRoot,
+    discovery
+  };
+  const registration: JsonRecord = { name: descriptor.name, workspace_root: projectRoot, runs_root: runsRoot, discovery, source: 'registration' };
+  const descriptorError = validateProjectDescriptor(descriptor);
+  if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { project_id: projectId }));
+
+  const descriptorPreexisting = fs.existsSync(descriptorPath);
+  let registryBefore: string | null = null;
+  let registrationPreexisting = false;
+  try {
+    if (descriptorPreexisting) {
+      const existingDescriptor = readProjectDescriptor(projectRoot);
+      if (!existingDescriptor || existingDescriptor.project_id !== descriptor.project_id || existingDescriptor.runs_root !== descriptor.runs_root) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
+      }
+    }
+    if (fs.existsSync(registryPath)) registryBefore = fs.readFileSync(registryPath, 'utf8');
+    const registry = readValidatedRegistry(registryPath);
+    const projects = registry.projects as JsonRecord;
+    const existingRegistration = projects[projectId];
+    registrationPreexisting = existingRegistration !== undefined;
+    if (registrationPreexisting) {
+      if (!existingRegistration || typeof existingRegistration !== 'object' || Array.isArray(existingRegistration)) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists with invalid state', { registry_path: registryPath, project_id: projectId }));
+      }
+      const existingRoot = typeof (existingRegistration as JsonRecord).workspace_root === 'string' ? fs.realpathSync((existingRegistration as JsonRecord).workspace_root as string) : '';
+      if (path.normalize(existingRoot) !== path.normalize(projectRoot)) {
+        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registry_path: registryPath, project_id: projectId }));
+      }
+    }
+    if (!descriptorPreexisting) {
+      fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+      fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
+    }
+    if (!registrationPreexisting) {
+      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+      fs.writeFileSync(registryPath, `${JSON.stringify({ ...registry, version: 1, projects: { ...projects, [projectId]: registration } }, null, 2)}\n`);
+    }
+  } catch (error) {
+    if (!registrationPreexisting) {
+      try {
+        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
+        else fs.writeFileSync(registryPath, registryBefore);
+      } catch {}
+    }
+    if (!descriptorPreexisting) {
+      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
+    }
+    if (error instanceof InvalidProjectRegistryError) {
+      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
+    }
+    return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
+  }
+
+  const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
+  if (result.status >= 400) {
+    if (!registrationPreexisting) {
+      try {
+        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
+        else fs.writeFileSync(registryPath, registryBefore);
+      } catch {}
+    }
+    if (!descriptorPreexisting) {
+      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
+    }
+    return jsonResponse(res, result.status, result.body);
+  }
+  const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
+  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registry_path: registryPath } } });
 };
 
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
@@ -909,8 +1210,10 @@ const handleExistingRunMutation = async (req: Request, res: Response, runId: str
   jsonResponse(res, result.status, result.body);
 };
 
-export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfiguredPiSessionAdapter()): Router => {
+export const createApiRouter = (options: ApiRouterOptions = {}): Router => {
   const router = express.Router();
+  const piSessionAdapter = options.piSessionAdapter || createConfiguredPiSessionAdapter();
+  const browserAllowedProjectRoots = canonicalAllowedRoots(options.browserAllowedProjectRoots);
   router.use(express.json({ limit: '64kb' }));
 
   router.get('/pi-sessions', (req, res, next) => {
@@ -955,7 +1258,7 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
   // Secrets never leave the process: handlers return masked/absent token state.
   // Raw token payloads are rejected on write; only credential refs are accepted.
   router.get('/projects', (_req, res, next) => { void handleListProjects(res).catch(next); });
-  router.post('/projects', (req, res, next) => { void handleCreateProject(req, res).catch(next); });
+  router.post('/projects', (req, res, next) => { void handleCreateProject(req, res, browserAllowedProjectRoots).catch(next); });
   router.get('/projects/:projectId', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
@@ -966,10 +1269,15 @@ export const createApiRouter = (piSessionAdapter: PiSessionAdapter = createConfi
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
     return void handleUpdateProject(req, res, id).catch(next);
   });
+  router.delete('/projects/:projectId', (req, res, next) => {
+    const id = safeDecode(req.params.projectId);
+    if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
+    return void handleDeleteProject(res, id).catch(next);
+  });
   router.post('/projects/:projectId/migrate', (req, res, next) => {
     const id = safeDecode(req.params.projectId);
     if (id === null) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-    return void handleMigrateProject(res, id).catch(next);
+    return void handleMigrateProject(req, res, id, browserAllowedProjectRoots).catch(next);
   });
   router.get('/projects/:projectId/doctor', (req, res, next) => {
     const id = safeDecode(req.params.projectId);

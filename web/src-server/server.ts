@@ -3,7 +3,7 @@ import express, { type ErrorRequestHandler } from 'express';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApiRouter, routeApi } from './routes/api.js';
+import { createApiRouter, routeApi, type ApiRouterOptions } from './routes/api.js';
 import type { PiSessionAdapter } from './lib/piSessionAdapter.js';
 import { errorBody, jsonResponse } from './lib/http.js';
 import { STATIC_DIR } from './lib/paths.js';
@@ -23,16 +23,19 @@ const apiErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   jsonResponse(res, status, errorBody(status, code, err.message || 'Unhandled server error'));
 };
 
-export const createApp = (options: { piSessionAdapter?: PiSessionAdapter } = {}): express.Express => {
+export type ServerOptions = ApiRouterOptions;
+
+export const createApp = (options: ServerOptions | PiSessionAdapter = {}): express.Express => {
+  const routerOptions: ServerOptions = typeof options === 'object' && 'createSession' in options ? { piSessionAdapter: options } : options;
   const app = express();
-  app.use('/api', createApiRouter(options.piSessionAdapter));
+  app.use('/api', createApiRouter(routerOptions));
   app.use(express.static(STATIC_DIR, { index: 'index.html' }));
   app.use((_req, res) => jsonResponse(res, 404, errorBody(404, 'not_found', 'Resource not found')));
   app.use(apiErrorHandler);
   return app;
 };
 
-export const createServer = (options: { piSessionAdapter?: PiSessionAdapter } = {}): http.Server => http.createServer(createApp(options));
+export const createServer = (options: ServerOptions | PiSessionAdapter = {}): http.Server => http.createServer(createApp(options));
 
 export const parseArgs = (argv: string[]): ParsedArgs => {
   const opts: ParsedArgs = { host: DEFAULT_HOST, port: DEFAULT_PORT };
