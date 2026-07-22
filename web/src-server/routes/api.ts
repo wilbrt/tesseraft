@@ -236,7 +236,7 @@ const handleGetSettings = async (res: Response, projectId?: string): Promise<voi
 // These shell to `tesseraft control-plane project*` subcommands. Secrets never
 // leave the process: the control plane returns masked/absent token state only.
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const CREDENTIAL_REF_RE = /^(env|github-actions):\S+$/;
+const CREDENTIAL_REF_RE = /^(env|tesseraft|github-actions):\S+$/;
 const RAW_SECRET_KEY_NAMES = new Set(['token', 'apikey', 'accesstoken', 'password', 'secret']);
 const hasRawSecretKey = (value: unknown): boolean => {
   if (Array.isArray(value)) return value.some(hasRawSecretKey);

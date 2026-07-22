@@ -94,6 +94,15 @@ test('portable descriptor and user-local registry schemas publish separate owner
   assert.equal(whitespaceValidation.valid, false, 'Draft 2020-12 schema must reject whitespace-only registry workspace_root values');
 });
 
+test('SC-001 credential-ref schema accepts every supported store', () => {
+  const schemaPath = path.join(repoRoot, 'schemas', 'credential-ref.schema.json');
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  for (const ref of ['env:GITHUB_TOKEN', 'tesseraft:github/main', 'github-actions:secrets.GITHUB_TOKEN']) {
+    const validation = validateWithDraft202012(schema, ref);
+    assert.equal(validation.valid, true, `credential-ref schema must accept ${ref}: ${validation.output}`);
+  }
+});
+
 test('SC-005 local credential store publishes a versioned migration contract', () => {
   const credentialStoreSchemaPath = path.join(repoRoot, 'schemas', 'local-credential-store.schema.json');
   assert.equal(

@@ -2,6 +2,7 @@
   (:require
     [tesseraft.spec :as spec]
     [tesseraft.runtime.store :as store]
+    [tesseraft.control-plane.core :as cp]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]
@@ -200,12 +201,17 @@
     (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "origin" branch]))
     {:status "ok" :branch branch}))
 
-(defn github-token []
-  (let [token (System/getenv "GH_TOKEN")]
-    (when-not (str/blank? token) token)))
+(defn github-token
+  ([] (github-token {} nil))
+  ([ctx project]
+   (let [ref (get-in project [:connections :github :credential-ref])
+         token (:value (cp/resolve-credential {} ref))]
+     (when-not (str/blank? token) token))))
 
 (defn github-command-opts [ctx node]
-  (let [token (github-token)]
+  (let [project-id (get-in ctx [:run :project-id])
+        project (cp/resolve-project {} project-id)
+        token (when-not (:error project) (github-token ctx project))]
     (cond-> {:dir (repo-dir ctx node)}
       token (assoc :extra-env {"GH_TOKEN" token}))))
 

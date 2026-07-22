@@ -357,18 +357,47 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
-(defn local-credential-value [options ref path]
-  (let [creds (or (read-credentials options) {})
-        versioned (:credentials creds)]
-    (or (when (map? versioned)
-          (or (get versioned path)
-              (get versioned (keyword path))))
-        ;; Backward-compatible flat store lookups. These are deliberately
-        ;; scoped to the explicit selected ref/path; callers decide which store
-        ;; may consult this file.
-        (get creds ref)
-        (get creds path)
-        (get creds (keyword path)))))
+(defn valid-local-credential-store? [creds]
+  (and (map? creds)
+       (= 1 (:version creds))
+       (map? (:credentials creds))
+       (every? string? (vals (:credentials creds)))))
+
+(defn local-credential-value [options _ref path]
+  (let [creds (read-credentials options)]
+    (when (valid-local-credential-store? creds)
+      (let [versioned (:credentials creds)]
+        (or (get versioned path)
+            (get versioned (keyword path)))))))
+
+(defn resolve-credential
+  "Resolve a credential ref from exactly its selected store. Returns a map with
+  stable non-secret state plus `:value` only for in-process consumers. Public
+  callers must drop `:value` before serialization."
+  [options ref]
+  (cond
+    (or (nil? ref) (str/blank? (str ref))) {:present false :state "absent"}
+    (not (credential-ref? ref)) {:present false :state "invalid" :error "invalid credential-ref"}
+    :else
+    (let [[_ store-name path] (re-matches credential-ref-re (str ref))]
+      (case store-name
+        "env"
+        (let [v (System/getenv path)]
+          (if (str/blank? v)
+            {:present false :state "absent" :credential-ref ref}
+            {:present true :state "present" :credential-ref ref :value v}))
+        "tesseraft"
+        (let [creds (read-credentials options)]
+          (cond
+            (nil? creds) {:present false :state "absent" :credential-ref ref}
+            (not (valid-local-credential-store? creds)) {:present false :state "invalid" :credential-ref ref :error "invalid local credential store"}
+            :else (let [v (local-credential-value options ref path)]
+                    (if (str/blank? v)
+                      {:present false :state "absent" :credential-ref ref}
+                      {:present true :state "present" :credential-ref ref :value v}))))
+        "github-actions"
+        {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
+        {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
 
 (defn- norm-discovery [raw]
   (cond
@@ -973,31 +1002,9 @@
                              (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)})))))))))))))))))
 
 (defn mask-credential
-  "Resolve a credential-ref against the out-of-repo store and return a masked
-  state (present/absent/unresolved/invalid) WITHOUT ever returning the raw token.
-  `env:` refs are resolved from the process environment, `tesseraft:` refs from
-  the user-local versioned Tesseraft store, and `github-actions:` refs are
-  validated but not resolved locally (reported as unresolved)."
+  "Resolve a credential-ref and return only stable non-secret state."
   [options ref]
-  (cond
-    (or (nil? ref) (str/blank? (str ref))) {:present false :state "absent"}
-    (not (credential-ref? ref)) {:present false :state "invalid" :error "invalid credential-ref"}
-    :else
-    (let [[_ store-name path] (re-matches credential-ref-re ref)]
-      (case store-name
-        "env"
-        (let [v (System/getenv path)]
-          (if (str/blank? v)
-            {:present false :state "absent" :credential-ref ref}
-            {:present true :state "present" :credential-ref ref}))
-        "tesseraft"
-        (let [v (local-credential-value options ref path)]
-          (if (str/blank? v)
-            {:present false :state "absent" :credential-ref ref}
-            {:present true :state "present" :credential-ref ref}))
-        "github-actions"
-        {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
-        {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
+  (dissoc (resolve-credential options ref) :value))
 
 (defn get-project-connections
   ([] (get-project-connections {} nil))
