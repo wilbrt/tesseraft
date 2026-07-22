@@ -66,6 +66,39 @@ test('SC-006 runtime store redacts credential sentinels from durable state and e
   assert.match(durable, /event-context/);
 });
 
+test('SC-006 Jira adapter writes ticket artifacts through runtime redaction', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc006-jira-adapter-'));
+  const runDir = path.join(root, 'run');
+  const sentinel = 'SC006_JIRA_ADAPTER_SECRET_SENTINEL';
+  const script = String.raw`
+(require '[tesseraft.adapters.builtin :as builtin])
+(require '[babashka.fs :as fs])
+(let [run-dir (System/getenv "SC006_RUN_DIR")
+      sentinel (System/getenv "SC006_SENTINEL")
+      ctx {:run {:dir run-dir}
+           :inputs {:ticket "TESS-006"}
+           :credential-secrets [sentinel]}
+      node {:outputs {:ticket-json {:path "ticket.json"}}}]
+  (fs/create-dirs run-dir)
+  (binding [builtin/*process-extra-env* {"SC006_SENTINEL" sentinel}]
+    (builtin/jira-fetch-ticket! nil ctx nil node)))
+`;
+  execFileSync('bb', ['-e', script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      SC006_RUN_DIR: runDir,
+      SC006_SENTINEL: sentinel,
+      JIRA_FETCH_CMD: 'printf "{\\"ticket\\":\\"TESS-006\\",\\"leak\\":\\"%s\\",\\"keep\\":\\"jira-context\\"}" "$SC006_SENTINEL"'
+    },
+    encoding: 'utf8'
+  });
+
+  const artifact = fs.readFileSync(path.join(runDir, 'ticket.json'), 'utf8');
+  assert.doesNotMatch(artifact, new RegExp(sentinel), 'SC-006 Jira ticket artifact must redact resolved credential sentinels');
+  assert.match(artifact, /jira-context/);
+});
+
 test('SC-006 runtime redacts credential sentinels from prompts, logs, and JSON artifacts', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc006-sinks-'));
   const runDir = path.join(root, 'run');

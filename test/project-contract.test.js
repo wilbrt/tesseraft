@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
@@ -100,6 +101,48 @@ test('SC-001 credential-ref schema accepts every supported store', () => {
   for (const ref of ['env:GITHUB_TOKEN', 'tesseraft:github/main', 'github-actions:secrets.GITHUB_TOKEN']) {
     const validation = validateWithDraft202012(schema, ref);
     assert.equal(validation.valid, true, `credential-ref schema must accept ${ref}: ${validation.output}`);
+  }
+});
+
+test('SC-003 project create/update reject nested raw-secret payloads before persistence', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc003-project-writes-'));
+  const manifestPath = path.join(root, '.tesseraft', 'projects', 'sc003-raw.json');
+  const baseManifest = {
+    project_id: 'sc003-raw',
+    name: 'SC003 Raw Guard',
+    workspace_root: root,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['examples'] },
+    connections: { github: { 'credential-ref': 'env:SC003_SAFE_REF' } }
+  };
+  const runBb = (script) => execFileSync('bb', ['-e', script], { cwd: repoRoot, encoding: 'utf8' });
+  try {
+    const createOutput = runBb(`
+(require '[tesseraft.control-plane.core :as cp])
+(require '[cheshire.core :as json])
+(let [result (cp/create-project {:workspace-root ${JSON.stringify(root)}} "raw-create" {:connections {:github {:metadata [{:access_token "SC003_CREATE_SECRET_SENTINEL"}]}}})]
+  (println (json/generate-string result)))
+`);
+    const createResult = JSON.parse(createOutput);
+    assert.equal(createResult.status, 400, `SC-003 create-project must reject nested access_token payloads: ${createOutput}`);
+    assert.doesNotMatch(createOutput, /SC003_CREATE_SECRET_SENTINEL/);
+    assert.equal(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'raw-create.json')), false, 'rejected create must not persist a manifest');
+
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    const manifestBytes = JSON.stringify(baseManifest, null, 2);
+    fs.writeFileSync(manifestPath, manifestBytes);
+    const updateOutput = runBb(`
+(require '[tesseraft.control-plane.core :as cp])
+(require '[cheshire.core :as json])
+(let [result (cp/update-project {:workspace-root ${JSON.stringify(root)}} "sc003-raw" {:connections {:jira {:credentials [{:api-key "SC003_UPDATE_API_KEY_SENTINEL" :Password "SC003_UPDATE_PASSWORD_SENTINEL"}]}}})]
+  (println (json/generate-string result)))
+`);
+    const updateResult = JSON.parse(updateOutput);
+    assert.equal(updateResult.status, 400, `SC-003 update-project must reject nested api-key/password payloads: ${updateOutput}`);
+    assert.doesNotMatch(updateOutput, /SC003_UPDATE_API_KEY_SENTINEL|SC003_UPDATE_PASSWORD_SENTINEL/);
+    assert.equal(fs.readFileSync(manifestPath, 'utf8'), manifestBytes, 'rejected update must leave existing manifest bytes unchanged');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

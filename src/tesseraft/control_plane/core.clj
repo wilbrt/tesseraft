@@ -884,6 +884,10 @@
            (error-response 409 "conflict" "A project with that id already exists"
                            {:project_id project-id})))
 
+       (contains-raw-secret-key? spec)
+       (error-response 400 "bad_request"
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
+
        :else
        (if-let [err (validate-project-spec options project-id spec)]
          (error-response 400 "bad_request" err)
@@ -947,6 +951,10 @@
 
        (not (fs/exists? (project-manifest-path options project-id)))
        (error-response 404 "not_found" "Project not found" {:project_id project-id})
+
+       (contains-raw-secret-key? spec)
+       (error-response 400 "bad_request"
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
        (if-let [err (validate-project-spec options project-id spec)]

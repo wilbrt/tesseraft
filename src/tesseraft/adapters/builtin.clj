@@ -92,7 +92,7 @@
         command (or (System/getenv "JIRA_FETCH_CMD") "acli jira workitem view {{inputs.ticket}} --json")
         raw (shell! {:dir (repo-dir ctx)} "bash" "-lc" (render-command ctx command))
         out-path (artifact-path ctx (or (get-in node [:outputs :ticket-json :path]) "ticket.json"))]
-    (spit out-path raw)
+    (store/write-runtime-text! ctx out-path raw)
     {:status "ok" :ticket ticket :ticket-file out-path}))
 
 (defn git-ensure-branch! [_wf ctx _state-id node]
