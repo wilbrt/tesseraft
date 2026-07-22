@@ -93,3 +93,30 @@ test('portable descriptor and user-local registry schemas publish separate owner
   const whitespaceValidation = validateWithDraft202012(registrySchema, whitespaceRootRegistry);
   assert.equal(whitespaceValidation.valid, false, 'Draft 2020-12 schema must reject whitespace-only registry workspace_root values');
 });
+
+test('SC-005 local credential store publishes a versioned migration contract', () => {
+  const credentialStoreSchemaPath = path.join(repoRoot, 'schemas', 'local-credential-store.schema.json');
+  assert.equal(
+    fs.existsSync(credentialStoreSchemaPath),
+    true,
+    'SC-005 local credential migration requires schemas/local-credential-store.schema.json'
+  );
+
+  const credentialStoreSchema = JSON.parse(fs.readFileSync(credentialStoreSchemaPath, 'utf8'));
+  assert.equal(credentialStoreSchema.properties?.version?.const, 1, 'SC-005 local credential store schema must declare supported version 1');
+  assert.ok(credentialStoreSchema.required?.includes('credentials'), 'SC-005 local credential store schema must require credentials');
+
+  const producedStore = {
+    version: 1,
+    credentials: {
+      'github/main': 'sc005-github-sentinel',
+      'jira/main': 'sc005-jira-sentinel'
+    }
+  };
+  const producedValidation = validateWithDraft202012(credentialStoreSchema, producedStore);
+  assert.equal(
+    producedValidation.valid,
+    true,
+    `SC-005 migrated credential store must validate as versioned credentials: ${producedValidation.output}`
+  );
+});
