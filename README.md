@@ -49,7 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then performs a read-only Chromium inspection of the bundled
@@ -90,6 +90,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
 - `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
+- `examples/focused-tdd-to-pr/workflow.edn` — lower-token focused TDD with deterministic red/green/regression gates, already-covered scenario reconciliation, current-only review repair, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
 - See `docs/WORKFLOW_RUNS.md` for safe side-effecting workflow run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.
@@ -99,6 +100,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
+./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ```
 

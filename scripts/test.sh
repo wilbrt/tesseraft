@@ -23,6 +23,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/worktree-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
+./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
@@ -36,6 +37,9 @@ python3 test/canon-validation-runner.test.py
 
 printf '\nChecking portable project descriptor and registry contracts...\n'
 node --test test/project-contract.test.js
+
+printf '\nChecking focused TDD workflow contract...\n'
+python3 test/focused-tdd-workflow.test.py
 
 printf '\nChecking agent node model/provider plumbing...\n'
 AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"

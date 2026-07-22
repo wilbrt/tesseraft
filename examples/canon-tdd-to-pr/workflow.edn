@@ -7,7 +7,7 @@
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
           :branch {:type :string :required false}}
- :defaults {:max-rounds 50
+ :defaults {:max-rounds 100
             :state-timeout "45m"
             :base-branch "main"}
  :policies {:runtime-cannot-edit-workflow true
