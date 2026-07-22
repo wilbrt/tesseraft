@@ -336,6 +336,25 @@ const validateRegistry = (registry: JsonRecord): string | null => {
   return null;
 };
 
+class InvalidProjectRegistryError extends Error {}
+
+const readValidatedRegistry = (registryPath: string): JsonRecord => {
+  if (!fs.existsSync(registryPath)) return { version: 1, projects: {} };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
+  } catch {
+    throw new InvalidProjectRegistryError('Project registry is not readable JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InvalidProjectRegistryError('Project registry must be a JSON object');
+  }
+  const registry = parsed as JsonRecord;
+  const registryError = validateRegistry(registry);
+  if (registryError) throw new InvalidProjectRegistryError(registryError);
+  return registry;
+};
+
 const isPathWithin = (parent: string, child: string): boolean => {
   const relative = path.relative(parent, child);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -428,20 +447,17 @@ const handleDeleteProject = async (res: Response, projectId: string): Promise<vo
   let removed = false;
   let registry: JsonRecord = { version: 1, projects: {} };
   try {
-    if (fs.existsSync(registryPath)) {
-      const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', 'Project registry must be a JSON object'));
-      registry = parsed as JsonRecord;
-      const registryError = validateRegistry(registry);
-      if (registryError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', registryError));
-    }
-    const projects = registry.projects as JsonRecord;
+    registry = readValidatedRegistry(registryPath);
+    const projects = { ...(registry.projects as JsonRecord) };
     removed = Object.prototype.hasOwnProperty.call(projects, projectId);
     delete projects[projectId];
     registry = { ...registry, version: 1, projects };
     fs.mkdirSync(path.dirname(registryPath), { recursive: true });
     fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
   } catch (error) {
+    if (error instanceof InvalidProjectRegistryError) {
+      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
+    }
     return jsonResponse(res, 500, errorBody(500, 'registry_write_failed', 'Could not update project registry', { message: error instanceof Error ? error.message : String(error) }));
   }
   return jsonResponse(res, 200, { project_id: projectId, deleted: removed });
@@ -523,16 +539,6 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   const descriptorError = validateProjectDescriptor(descriptor);
   if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { project_id: projectId }));
 
-  const readRegistry = (): JsonRecord => {
-    if (!fs.existsSync(registryPath)) return { version: 1, projects: {} };
-    const parsed = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('project registry must be a JSON object');
-    const registry = parsed as JsonRecord;
-    const registryError = validateRegistry(registry);
-    if (registryError) throw new Error(registryError);
-    return registry;
-  };
-
   const descriptorPreexisting = fs.existsSync(descriptorPath);
   let registryBefore: string | null = null;
   let registrationPreexisting = false;
@@ -544,7 +550,7 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
       }
     }
     if (fs.existsSync(registryPath)) registryBefore = fs.readFileSync(registryPath, 'utf8');
-    const registry = readRegistry();
+    const registry = readValidatedRegistry(registryPath);
     const projects = registry.projects as JsonRecord;
     const existingRegistration = projects[projectId];
     registrationPreexisting = existingRegistration !== undefined;
@@ -574,6 +580,9 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
     }
     if (!descriptorPreexisting) {
       try { fs.rmSync(descriptorPath, { force: true }); } catch {}
+    }
+    if (error instanceof InvalidProjectRegistryError) {
+      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
     }
     return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
   }

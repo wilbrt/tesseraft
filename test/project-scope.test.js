@@ -185,8 +185,10 @@ test('core project registry rejects blank workspace_root without rewriting durab
   }
 
   assert.ok(failure, 'blank registry workspace_root must fail closed');
-  assert.equal(failure.status, 2, 'local CLI should report invalid durable registry state as a command failure');
-  assert.match(String(failure.stderr || ''), /invalid project registry workspace_root: blank-root/);
+  assert.equal(failure.status, 1, 'local CLI should return a structured command failure');
+  const body = JSON.parse(String(failure.stdout || '{}'));
+  assert.equal(body.error?.code, 'invalid_project_registry');
+  assert.match(body.error?.message || '', /workspace_root: blank-root/);
   assert.equal(fs.readFileSync(BLANK_REGISTRY, 'utf8'), invalidRegistryBytes, 'invalid registry bytes must remain unchanged');
   cleanup();
 });
@@ -220,10 +222,82 @@ test('core project registry rejects whitespace-only workspace_root without rewri
   }
 
   assert.ok(failure, 'whitespace-only registry workspace_root must fail closed');
-  assert.equal(failure.status, 2, 'local CLI should report invalid durable registry state as a command failure');
-  assert.match(String(failure.stderr || ''), /invalid project registry workspace_root: whitespace-root/);
+  assert.equal(failure.status, 1, 'local CLI should return a structured command failure');
+  const body = JSON.parse(String(failure.stdout || '{}'));
+  assert.equal(body.error?.code, 'invalid_project_registry');
+  assert.match(body.error?.message || '', /workspace_root: whitespace-root/);
   assert.equal(fs.readFileSync(BLANK_REGISTRY, 'utf8'), invalidRegistryBytes, 'invalid registry bytes must remain unchanged');
   cleanup();
+});
+
+test('invalid project registry shapes and local boundaries return one structured error without mutation', () => {
+  cleanup();
+  const fixtureRoot = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'invalid-registry-matrix-'));
+  const workspaceRoot = path.join(fixtureRoot, 'workspace');
+  const registryHome = path.join(fixtureRoot, 'home');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(workspaceRoot, '.tesseraft', 'project.json');
+  const settingsPath = path.join(workspaceRoot, '.tesseraft', 'settings.json');
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+  const descriptorBytes = JSON.stringify({ version: 1, project_id: 'matrix' }, null, 2);
+  const settingsBytes = JSON.stringify({ marker: 'preserve' });
+  fs.writeFileSync(descriptorPath, descriptorBytes);
+  fs.writeFileSync(settingsPath, settingsBytes);
+
+  const runFailure = (args, expectedBytes) => {
+    fs.writeFileSync(registryPath, expectedBytes);
+    let failure;
+    try {
+      execFileSync('./bin/tesseraft', [
+        'control-plane', '--workspace-root', workspaceRoot, '--tesseraft-home', registryHome, ...args
+      ], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure, `${args.join(' ')} must reject invalid registry state`);
+    const body = JSON.parse(String(failure.stdout || '{}'));
+    assert.equal(body.error?.code, 'invalid_project_registry', `${args.join(' ')} must return the stable registry code`);
+    assert.equal(body.status, 400);
+    assert.equal(fs.readFileSync(registryPath, 'utf8'), expectedBytes, 'registry bytes must remain exact');
+    assert.equal(fs.readFileSync(descriptorPath, 'utf8'), descriptorBytes, 'descriptor bytes must remain exact');
+    assert.equal(fs.readFileSync(settingsPath, 'utf8'), settingsBytes, 'settings bytes must remain exact');
+    assert.equal(fs.existsSync(path.join(workspaceRoot, '.tesseraft', 'projects')), false, 'legacy project state must not be created');
+  };
+
+  try {
+    const invalidShapes = [
+      '{',
+      '[]',
+      JSON.stringify({ version: 2, projects: {} }),
+      JSON.stringify({ version: 1, projects: [] }),
+      JSON.stringify({ version: 1, projects: { 'INVALID ID': { workspace_root: workspaceRoot } } }),
+      JSON.stringify({ version: 1, projects: { matrix: [] } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: '   ' } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, unknown: true } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, name: 1 } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, runs_root: 1 } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, source: 'manifest' } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, discovery: [] } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, discovery: { unknown: true } } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, discovery: { 'workflow-roots': 'bad' } } } }),
+      JSON.stringify({ version: 1, projects: { matrix: { workspace_root: workspaceRoot, discovery: { 'tesseraft-home': 1 } } } })
+    ];
+    for (const bytes of invalidShapes) runFailure(['projects'], bytes);
+
+    const malformedBytes = '{"version":1,"projects":';
+    for (const args of [
+      ['project', 'matrix'],
+      ['project', 'create', 'matrix'],
+      ['project', 'register', workspaceRoot],
+      ['project', 'update', 'matrix', '--name', 'Changed'],
+      ['project', 'unregister', 'matrix'],
+      ['project', 'migrate']
+    ]) runFailure(args, malformedBytes);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    cleanup();
+  }
 });
 
 test('SC-002 explicit project id reports agreeing descriptor and legacy duplicates', async (t) => {
@@ -668,6 +742,59 @@ test('project resolution rejects registration versus legacy root conflicts befor
   );
   assert.equal(fs.existsSync(path.join(SC006_REGISTERED_ROOT, '.tesseraft', 'settings.json')), false, 'conflict must not touch registered project state');
   assert.equal(fs.existsSync(path.join(SC006_LEGACY_ROOT, '.tesseraft', 'settings.json')), false, 'conflict must not touch legacy project state');
+});
+
+test('SC-006 reports descriptor, registration, and legacy roots in one non-mutating conflict', () => {
+  cleanup();
+  const fixtureRoot = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-three-source-'));
+  const descriptorRoot = path.join(fixtureRoot, 'descriptor');
+  const registrationRoot = path.join(fixtureRoot, 'registration');
+  const legacyRoot = path.join(fixtureRoot, 'legacy');
+  const registryHome = path.join(fixtureRoot, 'home');
+  const descriptorPath = path.join(descriptorRoot, '.tesseraft', 'project.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const legacyPath = path.join(descriptorRoot, '.tesseraft', 'projects', 'three-source.json');
+  const settingsPaths = [descriptorRoot, registrationRoot, legacyRoot]
+    .map((root) => path.join(root, '.tesseraft', 'settings.json'));
+  try {
+    for (const root of [descriptorRoot, registrationRoot, legacyRoot]) fs.mkdirSync(path.join(root, '.tesseraft'), { recursive: true });
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    fs.writeFileSync(descriptorPath, JSON.stringify({ version: 1, project_id: 'three-source', name: 'Descriptor' }, null, 2));
+    fs.writeFileSync(registryPath, JSON.stringify({ version: 1, projects: {
+      'three-source': { workspace_root: fs.realpathSync(registrationRoot), source: 'registration' }
+    } }, null, 2));
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      project_id: 'three-source', workspace_root: fs.realpathSync(legacyRoot), source: 'manifest'
+    }, null, 2));
+    settingsPaths.forEach((settingsPath, index) => fs.writeFileSync(settingsPath, JSON.stringify({ marker: `keep-${index}` })));
+
+    const watched = [descriptorPath, registryPath, legacyPath, ...settingsPaths];
+    const before = new Map(watched.map((file) => [file, fs.readFileSync(file)]));
+    let failure;
+    try {
+      execFileSync('./bin/tesseraft', [
+        'control-plane', '--workspace-root', descriptorRoot, '--tesseraft-home', registryHome,
+        'project', 'three-source'
+      ], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure, 'three disagreeing identity sources must fail closed');
+    const body = JSON.parse(String(failure.stdout || '{}'));
+    assert.equal(body.error?.code, 'project_identity_conflict');
+    const sources = body.error?.details?.sources;
+    assert.equal(sources?.length, 3, `all applicable sources must be reported; got ${JSON.stringify(sources)}`);
+    for (const [source, root] of [['descriptor', descriptorRoot], ['registration', registrationRoot], ['manifest', legacyRoot]]) {
+      assert.ok(sources.some((entry) => entry.source === source && path.normalize(entry.canonical_root) === fs.realpathSync(root)),
+        `${source} canonical root must be reported`);
+    }
+    assert.equal(body.project_id, undefined, 'conflict must not select a source');
+    for (const file of watched) assert.deepEqual(fs.readFileSync(file), before.get(file), `${file} bytes must remain unchanged`);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    cleanup();
+  }
 });
 
 test('SC-007 rejects unsupported versioned project descriptors before registration', async (t) => {

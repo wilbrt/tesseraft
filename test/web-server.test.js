@@ -1436,7 +1436,7 @@ test('project abstraction: control-plane CRUD + credential-ref validation agains
       malformed = JSON.parse(String(error.stdout || '{}'));
     }
     assert.equal(malformed?.status, 400, 'portable migration must reject malformed registry state');
-    assert.equal(malformed?.error?.code, 'migration_failed');
+    assert.equal(malformed?.error?.code, 'invalid_project_registry');
     assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'malformed registry bytes must be preserved exactly');
     assert.equal(fs.existsSync(path.join(portableRoot, '.tesseraft', 'project.json')), false, 'failed migration must not leave a descriptor behind');
   } finally {
@@ -1650,7 +1650,7 @@ test('project abstraction: HTTP portable migration rejects malformed registry wi
     });
     assert.equal(res.status, 400, 'HTTP migration must reject malformed registry projects state');
     const body = await res.json();
-    assert.match(body.error?.code || '', /invalid_project_registry|migration_failed/);
+    assert.equal(body.error?.code, 'invalid_project_registry');
     assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'HTTP migration must preserve malformed registry bytes exactly');
     assert.equal(fs.existsSync(path.join(projectRoot, '.tesseraft', 'project.json')), false, 'HTTP failed migration must not leave a descriptor behind');
   } finally {
@@ -1730,7 +1730,7 @@ test('project abstraction: HTTP portable migration rejects whitespace-only regis
     });
     assert.equal(res.status, 400, 'HTTP migration must reject whitespace-only registry workspace_root');
     const body = await res.json();
-    assert.match(body.error?.code || '', /invalid_project_registry|migration_failed/);
+    assert.equal(body.error?.code, 'invalid_project_registry');
     assert.equal(fs.readFileSync(registryPath, 'utf8'), invalidRegistryBytes, 'HTTP migration must preserve invalid registry bytes exactly');
     assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'HTTP migration must preserve legacy source bytes');
     assert.equal(fs.existsSync(descriptorPath), false, 'HTTP migration must not create a descriptor when registry state is invalid');

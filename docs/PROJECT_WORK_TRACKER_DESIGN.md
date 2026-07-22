@@ -124,7 +124,7 @@ Example target descriptor:
 
 ```json
 {
-  "schema_version": 1,
+  "version": 1,
   "project_id": "tesseraft",
   "name": "Tesseraft",
   "runs_root": ".agent-runs",

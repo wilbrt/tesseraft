@@ -296,6 +296,15 @@
       (print-json! result)
       (when (not= 0 (exit-status result))
         (System/exit (exit-status result))))
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :invalid-project-registry (:code (ex-data e)))
+        (do
+          (print-json! (control-plane/invalid-project-registry-response e))
+          (System/exit 1))
+        (do
+          (binding [*out* *err*]
+            (println (.getMessage e)))
+          (System/exit 2))))
     (catch Throwable t
       (binding [*out* *err*]
         (println (.getMessage t)))

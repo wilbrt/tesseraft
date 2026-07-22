@@ -142,13 +142,26 @@
                   :else nil)))
             (:projects registry)))))
 
+(defn invalid-project-registry-response [e]
+  (error-response 400 "invalid_project_registry" (.getMessage e)
+                  {:registry_path (:path (ex-data e))}))
+
 (defn read-project-registry [options]
   (let [p (project-registry-path options)]
     (if (fs/exists? p)
-      (let [registry (store/read-json p)]
-        (if-let [err (validate-project-registry registry)]
-          (throw (ex-info err {:code :invalid-project-registry :path (str p)}))
-          registry))
+      (try
+        (let [registry (store/read-json p)]
+          (if-let [err (validate-project-registry registry)]
+            (throw (ex-info err {:code :invalid-project-registry :path (str p)}))
+            registry))
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :invalid-project-registry (:code (ex-data e)))
+            (throw e)
+            (throw (ex-info "project registry is not readable JSON"
+                            {:code :invalid-project-registry :path (str p)} e))))
+        (catch Throwable t
+          (throw (ex-info "project registry is not readable JSON"
+                          {:code :invalid-project-registry :path (str p)} t))))
       {:version 1 :projects {}})))
 
 (defn read-project-registration [options project-id]
@@ -178,12 +191,14 @@
     (merge-registration-descriptor registration)
     (read-legacy-project-manifest options project-id)))
 
-(defn- read-project-sources [options project-id]
+(defn- read-project-sources [options project-id descriptor]
   (let [registration (read-project-registration options project-id)
         legacy (read-legacy-project-manifest options project-id)
         legacy-source (:source legacy)
         legacy-registration? (and legacy (or (= :registration legacy-source) (= "registration" legacy-source)))]
     (cond-> []
+      (and descriptor (not (:error descriptor)) (= project-id (:project_id descriptor)))
+      (conj (assoc descriptor :source :descriptor))
       registration (conj (merge-registration-descriptor registration))
       (and legacy (not (and registration legacy-registration?))) (conj legacy))))
 
@@ -480,11 +495,12 @@
   ([options] (resolve-project options nil))
   ([options project-id]
    (let [pid (or project-id "default")
-         sources (when (valid-project-id? pid) (read-project-sources options pid))
+         descriptor (read-project-descriptor options)
+         sources (when (valid-project-id? pid) (read-project-sources options pid descriptor))
          source-conflict (when (seq sources) (source-root-conflict options pid sources))]
      (if source-conflict
        source-conflict
-       (if-let [descriptor (read-project-descriptor options)]
+       (if-let [descriptor descriptor]
        (if (:error descriptor)
          descriptor
          (if (or (nil? project-id) (= "default" pid) (= pid (:project_id descriptor)))
@@ -732,6 +748,9 @@
 (defn update-project
   ([options project-id spec] (update-project options project-id spec false))
   ([options project-id spec _global?]
+   ;; Every project mutation validates durable registry state before inspecting
+   ;; or changing any project-owned or compatibility state.
+   (read-project-registry options)
    (let [spec (or spec {})]
      (cond
        (not (valid-project-id? project-id))
@@ -755,6 +774,8 @@
   in this phase (read-only fallback remains)."
   ([options] (migrate-project options "default"))
   ([options project-id]
+   ;; Migration is a registry boundary even for the legacy default form.
+   (read-project-registry options)
    (let [pid (or project-id "default")]
      (cond
        (not (= "default" pid))
@@ -910,6 +931,9 @@
 
                                (:conflict (ex-data e))
                                (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
+
+                               (= :invalid-project-registry (:code (ex-data e)))
+                               (invalid-project-registry-response e)
 
                                :else
                                (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
