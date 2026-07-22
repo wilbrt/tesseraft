@@ -22,6 +22,8 @@
 (defn artifact-path [ctx p]
   (let [rendered (spec/render-template-string p ctx)]
     (str (fs/path (run-dir ctx) rendered))))
+(defn write-artifact-json! [ctx p data]
+  (store/write-runtime-json! ctx p data))
 (defn artifact-text [ctx p]
   (when p
     (let [path (artifact-path ctx p)]
@@ -299,16 +301,16 @@
         _ (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" (github-ssh-repo-url repo) branch]))
         pr (or (github-existing-pr ctx node branch)
                (let [payload-file (artifact-path ctx "pr/create-payload.json")]
-                 (store/write-json! payload-file {:title (str/trim (slurp title-file))
-                                                  :body (slurp body-file)
-                                                  :head branch :base base :draft false})
+                 (write-artifact-json! ctx payload-file {:title (str/trim (slurp title-file))
+                                                          :body (slurp body-file)
+                                                          :head branch :base base :draft false})
                  (json/parse-string (shell! (github-command-opts ctx node) "gh" "api" "--method" "POST"
                                             (str "repos/" repo "/pulls") "--input" payload-file) true)))
         normalized (cond-> {:number (:number pr) :url (github-pr-url repo pr) :state (:state pr)
                             :headRefName (or (:headRefName pr) branch) :baseRefName (or (:baseRefName pr) base)}
                      (some-> (:url pr) non-empty-string github-api-pr-url->browser-url)
                      (assoc :api_url (non-empty-string (:url pr))))]
-    (store/write-json! pr-file normalized)
+    (write-artifact-json! ctx pr-file normalized)
     {:status "ok" :pr normalized :pr-file pr-file}))
 
 (defn gh-api-all [ctx node endpoint]
@@ -326,7 +328,7 @@
                   :reviews (gh-api-all ctx node (str "repos/" repo "/pulls/" number "/reviews?per_page=100"))
                   :review-comments (gh-api-all ctx node (str "repos/" repo "/pulls/" number "/comments?per_page=100"))}
         out-path (artifact-path ctx (or (get-in node [:outputs :feedback-json :path]) "pr/feedback/feedback.json"))]
-    (store/write-json! out-path feedback)
+    (write-artifact-json! ctx out-path feedback)
     {:status "ok" :feedback-file out-path}))
 
 (defn java-pid [proc]
@@ -450,7 +452,7 @@
                                 :cleanup_command (when pid (str "kill " pid))
                                 :owner "tesseraft deterministic handler :web/start-test-server"}}]
       (wait-for-http-ok url 10000)
-      (store/write-json! out-path artifact)
+      (write-artifact-json! ctx out-path artifact)
       {:status "ok" :test-server-file out-path :url url :pid pid})))
 
 (defn stop-test-server! [_wf ctx _state-id node]
@@ -568,8 +570,8 @@
                 :summary (if passed? "UI evidence contract validated" "UI evidence contract rejected the review pass")
                 :required_checks (sort required-ui-checks)
                 :issues_file (when-not passed? (get-in node [:inputs :issues-file]))}]
-    (when-not passed? (store/write-json! issues-path issues))
-    (store/write-json! validation-path result)
+    (when-not passed? (write-artifact-json! ctx issues-path issues))
+    (write-artifact-json! ctx validation-path result)
     result))
 
 (defn github-slug-from-remote [remote]
@@ -631,7 +633,7 @@
                        :directory destination-relative :readme_url readme-url
                        :markdown markdown :screenshots screenshots}
             published-path (output-path ctx node :published "visual-review/published.json")]
-        (store/write-json! published-path published)
+        (write-artifact-json! ctx published-path published)
         {:status "ok" :published_file published-path :evidence_directory destination-relative}))))
 
 (defn notify-pinga! [_wf ctx _state-id _node]
@@ -703,7 +705,7 @@
     :jira/fetch-ticket
     (let [ticket (mock-ticket ctx)
           out-path (output-path ctx node :ticket-json "ticket.json")]
-      (store/write-json! out-path ticket)
+      (write-artifact-json! ctx out-path ticket)
       {:status "ok" :mock true :ticket (:key ticket) :ticket-file out-path})
 
     :git/ensure-branch
@@ -726,7 +728,7 @@
     :github/create-pr
     (let [pr (mock-pr ctx node)
           pr-file (output-path ctx node :pr-json "pr/pr.json")]
-      (store/write-json! pr-file pr)
+      (write-artifact-json! ctx pr-file pr)
       {:status "ok" :mock true :pr pr :pr-file pr-file})
 
     :github/fetch-pr-feedback
@@ -735,13 +737,13 @@
                     :reviews []
                     :review-comments []}
           out-path (output-path ctx node :feedback-json "pr/feedback/feedback.json")]
-      (store/write-json! out-path feedback)
+      (write-artifact-json! ctx out-path feedback)
       {:status "ok" :mock true :feedback-file out-path})
 
     :web/start-test-server
     (let [server (mock-test-server ctx node)
           out-path (output-path ctx node :test-server "manual-testing/test-server.json")]
-      (store/write-json! out-path server)
+      (write-artifact-json! ctx out-path server)
       {:status "ok"
        :mock true
        :live false
@@ -760,19 +762,19 @@
                     :checks (mapv (fn [id] {:id id :passed true :details {:mock true}}) required-ui-checks)
                     :findings [] :mock true}
           out-path (output-path ctx node :evidence "manual-testing/ui-evidence.json")]
-      (store/write-json! out-path evidence)
+      (write-artifact-json! ctx out-path evidence)
       {:status "pass" :mock true :evidence_file out-path :issues_file nil})
 
     :web/validate-ui-review
     (let [validation {:status "pass" :summary "Mock UI evidence contract validated" :issues_file nil}
           out-path (output-path ctx node :validation "visual-review/validation.json")]
-      (store/write-json! out-path validation)
+      (write-artifact-json! ctx out-path validation)
       validation)
 
     :git/publish-visual-evidence
     (let [published {:status "ok" :mock true :directory "review-evidence/mock" :markdown "## Visual evidence\n\nMock evidence.\n"}
           out-path (output-path ctx node :published "visual-review/published.json")]
-      (store/write-json! out-path published)
+      (write-artifact-json! ctx out-path published)
       {:status "ok" :mock true :published_file out-path})
 
     :notify/pinga

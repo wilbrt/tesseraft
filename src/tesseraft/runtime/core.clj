@@ -221,8 +221,7 @@
                                :extra-env (run-owner-env ctx)}
                       cmd)
         log-file (str (fs/path (get-in ctx [:run :dir]) "logs" (str (name state-id) "-process-" (get-in ctx [:run :attempt]) ".log")))]
-    (fs/create-dirs (fs/parent log-file))
-    (spit log-file (str "COMMAND: " (str/join " " cmd) "\n\nSTDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
+    (store/write-runtime-text! ctx log-file (str "COMMAND: " (str/join " " cmd) "\n\nSTDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
     (if (zero? (:exit result))
       (merge {:log-file log-file}
              (if (str/blank? (:out result))
@@ -403,7 +402,7 @@
             new (store/read-json issue-file)
             keyfn (fn [i] [(:source i) (:title i) (:details i)])
             merged (->> (concat old new) (map #(vector (keyfn %) %)) (into {}) vals vec)]
-        (store/write-json! (get-in ctx [:run :issues-file]) merged)
+        (store/write-runtime-json! ctx (get-in ctx [:run :issues-file]) merged)
         ctx)
       ctx)
     ctx))
@@ -412,7 +411,7 @@
   (store/event! ctx {:event "effect.applied" :effect (name effect)})
   (case effect
     :merge-issues (merge-issues! ctx result)
-    :clear-issues (do (store/write-json! (get-in ctx [:run :issues-file]) []) ctx)
+    :clear-issues (do (store/write-runtime-json! ctx (get-in ctx [:run :issues-file]) []) ctx)
     :inc-round (update-in ctx [:run :round] inc)
     :inc-feedback-cycle (update-in ctx [:run :feedback-cycle] inc)
     :fail-run (assoc-in ctx [:run :status] "failed")
@@ -637,8 +636,7 @@
                    :status "pending"}
           ctx (if already?
                 ctx
-                (do (fs/create-dirs (fs/parent req-path))
-                    (store/write-json! req-path request)
+                (do (store/write-runtime-json! ctx req-path request)
                     (store/event! ctx {:event "approval.requested"
                                        :state (name state-id)
                                        :attempt attempt
@@ -741,8 +739,7 @@
                            :author author
                            :decided_at (store/now)}
              dec-path (approval-decision-path ctx state-id attempt)]
-         (fs/create-dirs (fs/parent dec-path))
-         (store/write-json! dec-path decision-rec)
+         (store/write-runtime-json! ctx dec-path decision-rec)
          ;; step! now sees the decision record and advances the run.
          {:run (:run (step! wf ctx))})))))
 

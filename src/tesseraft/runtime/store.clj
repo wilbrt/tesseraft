@@ -26,6 +26,14 @@
   (fs/create-dirs (fs/parent p))
   (spit (str p) (str (json/generate-string data) "\n") :append true)
   p)
+(defn write-text! [p text]
+  (fs/create-dirs (fs/parent p))
+  (spit (str p) text)
+  p)
+(defn append-text! [p text]
+  (fs/create-dirs (fs/parent p))
+  (spit (str p) text :append true)
+  p)
 
 (defn- redact-value [s secrets]
   (reduce (fn [acc secret]
@@ -66,8 +74,20 @@
   (filter #(and (string? %) (not (str/blank? %)))
           (concat (:credential-secrets ctx) (resolved-project-credential-secrets ctx))))
 
-(defn- durable-data [ctx data]
+(defn durable-data [ctx data]
   (scrub-secrets data (credential-secrets ctx)))
+
+(defn durable-text [ctx text]
+  (redact-value (str text) (credential-secrets ctx)))
+
+(defn write-runtime-json! [ctx p data]
+  (write-json! p (durable-data ctx data)))
+
+(defn write-runtime-text! [ctx p text]
+  (write-text! p (durable-text ctx text)))
+
+(defn append-runtime-text! [ctx p text]
+  (append-text! p (durable-text ctx text)))
 
 (defn save-context! [ctx]
   (write-edn! (fs/path (get-in ctx [:run :dir]) "state.edn") (durable-data ctx ctx))

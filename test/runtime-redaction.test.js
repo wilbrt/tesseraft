@@ -65,3 +65,68 @@ test('SC-006 runtime store redacts credential sentinels from durable state and e
   assert.match(durable, /non-secret-context/);
   assert.match(durable, /event-context/);
 });
+
+test('SC-006 runtime redacts credential sentinels from prompts, logs, and JSON artifacts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc006-sinks-'));
+  const runDir = path.join(root, 'run');
+  const home = path.join(root, 'home');
+  const workspace = path.join(root, 'workspace');
+  const workflowDir = path.join(root, 'workflow');
+  const sentinel = 'SC006_ALL_SINKS_SECRET_SENTINEL';
+  fs.mkdirSync(path.join(workspace, '.tesseraft', 'projects'), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.writeFileSync(path.join(home, 'credentials.json'), JSON.stringify({ version: 1, credentials: { token: sentinel } }));
+  fs.writeFileSync(path.join(workspace, '.tesseraft', 'projects', 'sc006.json'), JSON.stringify({
+    project_id: 'sc006',
+    workspace_root: '.',
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['examples'], 'tesseraft-home': home },
+    connections: { github: { 'credential-ref': 'tesseraft:token' } }
+  }));
+  fs.writeFileSync(path.join(workflowDir, 'prompt.tmpl'), 'Prompt leaks {{inputs.secret}} and keeps prompt-context\n');
+  const workflowFile = path.join(workflowDir, 'workflow.edn');
+  fs.writeFileSync(workflowFile, '');
+
+  const script = String.raw`
+(require '[tesseraft.runtime.store :as store])
+(require '[tesseraft.runtime.core :as runtime])
+(require '[tesseraft.executors.pi-cli :as pi-cli])
+(require '[babashka.fs :as fs])
+(let [sentinel (System/getenv "SC006_SENTINEL")
+      run-dir (System/getenv "SC006_RUN_DIR")
+      workspace (System/getenv "SC006_WORKSPACE")
+      home (System/getenv "SC006_HOME")
+      wf {:__file (System/getenv "SC006_WF_FILE") :__dir (System/getenv "SC006_WF_DIR")}
+      ctx {:run {:dir run-dir :id "sc006" :attempt 1 :project-id "sc006" :workspace-root workspace :tesseraft-home home :issues-file (str (fs/path run-dir "issues.json"))}
+           :inputs {:secret sentinel}
+           :credential-secrets [sentinel]}]
+  (store/ensure-run-dirs! ctx)
+  (pi-cli/render-prompt! wf ctx :agent {:prompt-template "prompt.tmpl"})
+  (runtime/run-process-node! wf ctx :proc {:command ["bash" "-lc" "printf '{\"status\":\"ok\",\"leak\":\"%s\",\"keep\":\"process-context\"}' \"$SC006_SENTINEL\"; printf '%s' \"$SC006_SENTINEL\" >&2"]})
+  (store/write-runtime-json! ctx (fs/path run-dir "artifacts" "direct.json") {:nested [{:secret sentinel :keep "artifact-context"}]})
+  nil)
+`;
+  execFileSync('bb', ['-e', script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      SC006_RUN_DIR: runDir,
+      SC006_WORKSPACE: workspace,
+      SC006_HOME: home,
+      SC006_WF_FILE: workflowFile,
+      SC006_WF_DIR: workflowDir,
+      SC006_SENTINEL: sentinel
+    },
+    encoding: 'utf8'
+  });
+
+  const durable = fs.readdirSync(runDir, { recursive: true })
+    .filter((entry) => fs.statSync(path.join(runDir, entry)).isFile())
+    .map((entry) => fs.readFileSync(path.join(runDir, entry), 'utf8'))
+    .join('\n');
+  assert.doesNotMatch(durable, new RegExp(sentinel), 'SC-006 durable prompts, logs, and artifacts must redact credential sentinels');
+  assert.match(durable, /prompt-context/);
+  assert.match(durable, /process-context/);
+  assert.match(durable, /artifact-context/);
+});

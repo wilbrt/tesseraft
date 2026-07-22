@@ -46,8 +46,7 @@
                           (str "prompts/generated/" (name state-id) "-" (get-in ctx [:run :attempt]) ".md"))
         rendered-output (spec/render-template-string prompt-output ectx)
         output-path (str (fs/path (get-in ctx [:run :dir]) rendered-output))]
-    (fs/create-dirs (fs/parent output-path))
-    (spit output-path rendered)
+    (store/write-runtime-text! ctx output-path rendered)
     output-path))
 
 (defn session-name [ctx state-id node]
@@ -83,17 +82,17 @@
                true (into ["-p" (str "@" prompt-file)]))]
     (fs/create-dirs (fs/parent log-file))
     (when (and provider (not (contains? provider-api-key-env provider)))
-      (spit log-file
-            (str "WARNING: pinned :provider \"" provider "\" is not in the known provider->env map; "
-                 "skipping credential pre-check.\n\n")))
+      (store/write-runtime-text! ctx log-file
+                                 (str "WARNING: pinned :provider \"" provider "\" is not in the known provider->env map; "
+                                      "skipping credential pre-check.\n\n")))
     (if cred-error
       (do
-        (spit log-file
-              (str "PROVIDER: " (or provider "<default>") "\n"
-                   "MODEL: " (or model "<default>") "\n"
-                   "THINKING: " (or thinking "<default>") "\n\n"
-                   "STATUS: credential-error\n\n"
-                   cred-error "\n"))
+        (store/write-runtime-text! ctx log-file
+                                   (str "PROVIDER: " (or provider "<default>") "\n"
+                                        "MODEL: " (or model "<default>") "\n"
+                                        "THINKING: " (or thinking "<default>") "\n\n"
+                                        "STATUS: credential-error\n\n"
+                                        cred-error "\n"))
         (cond-> {:executor "pi-cli"
                  :ok false
                  :exit-code 1
@@ -105,14 +104,14 @@
           model (assoc :model model)
           thinking (assoc :thinking thinking)))
       (do
-        (spit log-file
-              (str "COMMAND: " (str/join " " args) "\n\n"
-                   "CWD: " repo-root "\n\n"
-                   "PROVIDER: " (or provider "<default>") "\n"
-                   "MODEL: " (or model "<default>") "\n"
-                   "THINKING: " (or thinking "<default>") "\n\n"
-                   "PROMPT_FILE: " prompt-file "\n\n"
-                   "STATUS: running\n\n"))
+        (store/write-runtime-text! ctx log-file
+                                   (str "COMMAND: " (str/join " " args) "\n\n"
+                                        "CWD: " repo-root "\n\n"
+                                        "PROVIDER: " (or provider "<default>") "\n"
+                                        "MODEL: " (or model "<default>") "\n"
+                                        "THINKING: " (or thinking "<default>") "\n\n"
+                                        "PROMPT_FILE: " prompt-file "\n\n"
+                                        "STATUS: running\n\n"))
         (let [git-user (get-in ctx [:run :git-user])
               git-env (when git-user
                         {"GIT_AUTHOR_NAME" (:name git-user)
@@ -128,10 +127,9 @@
                                                         "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}
                                                        git-env)}
                             args)]
-          (spit log-file
-                (str "STATUS: exited " (:exit result) "\n\n"
-                     "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n")
-                :append true)
+          (store/append-runtime-text! ctx log-file
+                                      (str "STATUS: exited " (:exit result) "\n\n"
+                                           "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
           (cond-> {:executor "pi-cli"
                    :ok (zero? (:exit result))
                    :exit-code (:exit result)

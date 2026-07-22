@@ -183,13 +183,23 @@
     {:version 1
      :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) (:credentials creds)))}))
 
+(defn- same-file-path? [a b]
+  (= (str (.normalize (.toAbsolutePath (fs/path a))))
+     (str (.normalize (.toAbsolutePath (fs/path b))))))
+
+(defn- legacy-credentials-backup-path [dest]
+  (fs/path (str dest ".legacy.json")))
+
 (defn migrate-local-credentials
   "Migrate a flat legacy credential JSON object into the versioned user-local
-  credential store without mutating the legacy source. Existing identical
-  destinations are idempotent successes; other destinations are refused."
+  credential store. When the legacy source is the actual store path, the
+  original flat bytes are preserved at `<credentials-file>.legacy.json` before
+  the versioned store is installed. Existing identical destinations are
+  idempotent successes; other destinations are refused."
   [options legacy-file]
   (let [legacy-path (when-not (str/blank? (str legacy-file)) (fs/path legacy-file))
-        dest (fs/path (or (:credentials-file options) (credentials-file options)))]
+        dest (fs/path (or (:credentials-file options) (credentials-file options)))
+        same-path? (and legacy-path (same-file-path? legacy-path dest))]
     (cond
       (nil? legacy-path)
       (error-response 400 "bad_request" "credentials migrate requires --legacy-file")
@@ -199,21 +209,43 @@
 
       :else
       (try
-        (let [legacy (store/read-json legacy-path)]
-          (if-not (valid-legacy-credential-entries? legacy)
+        (let [legacy (store/read-json legacy-path)
+              existing-store (when (fs/exists? dest)
+                               (try (normalize-local-credential-store (store/read-json dest)) (catch Throwable _ ::invalid)))]
+          (cond
+            (and same-path? (map? existing-store))
+            (do
+              (owner-only-file! dest)
+              {:status 200
+               :state "unchanged"
+               :credentials_count (count (:credentials existing-store))
+               :credentials_file (str dest)
+               :legacy_file (str legacy-path)})
+
+            (not (valid-legacy-credential-entries? legacy))
             (error-response 400 "invalid_local_credential_store" "Legacy credential file must be a flat object of non-empty string values" {:legacy_file (str legacy-path)})
+
+            :else
             (let [migrated {:version 1
                             :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) legacy))}
                   result {:credentials_count (count (:credentials migrated))
                           :credentials_file (str dest)
                           :legacy_file (str legacy-path)}]
               (cond
-                (not (fs/exists? dest))
-                (do
+                (or same-path? (not (fs/exists? dest)))
+                (let [backup (when same-path? (legacy-credentials-backup-path dest))]
+                  (when backup
+                    (when (and (fs/exists? backup)
+                               (not= (slurp (str backup)) (slurp (str legacy-path))))
+                      (throw (ex-info "Legacy credential backup already exists with different bytes" {:backup_file (str backup)})))
+                    (when-not (fs/exists? backup)
+                      (fs/copy legacy-path backup)
+                      (owner-only-file! backup)))
                   (atomic-write-json-owner-only! dest migrated)
-                  (assoc result :status 201 :state "migrated"))
+                  (cond-> (assoc result :status 201 :state "migrated")
+                    backup (assoc :backup_file (str backup))))
 
-                (= migrated (try (normalize-local-credential-store (store/read-json dest)) (catch Throwable _ ::invalid)))
+                (= migrated existing-store)
                 (do
                   (owner-only-file! dest)
                   (assoc result :status 200 :state "unchanged"))

@@ -49,6 +49,42 @@ test('SC-005 migrates flat legacy local credentials without mutating source and 
   assert.equal(fs.readFileSync(dest, 'utf8'), destBefore, 'repeat migration must not rewrite an identical destination');
 });
 
+test('SC-005 migrates the actual legacy credentials.json path with a non-destructive backup and remains resolvable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc005-same-path-'));
+  const home = path.join(root, 'home');
+  const dest = path.join(home, 'credentials.json');
+  const backup = `${dest}.legacy.json`;
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(dest, JSON.stringify({ 'github/main': 'same-path-github', 'jira/main': 'same-path-jira' }, null, 2));
+  const legacyBefore = fs.readFileSync(dest, 'utf8');
+
+  const first = cp(['--tesseraft-home', home, 'credentials', 'migrate', '--legacy-file', dest]);
+  assert.equal(first.status, 201);
+  assert.equal(first.state, 'migrated');
+  assert.equal(first.backup_file, backup);
+  assert.equal(fs.readFileSync(backup, 'utf8'), legacyBefore, 'same-path migration must preserve original flat bytes in a backup');
+  assert.deepEqual(JSON.parse(fs.readFileSync(dest, 'utf8')), {
+    version: 1,
+    credentials: { 'github/main': 'same-path-github', 'jira/main': 'same-path-jira' }
+  });
+  if (process.platform !== 'win32') assert.equal(mode(dest), 0o600, 'migrated same-path store must be owner-only');
+
+  const resolved = JSON.parse(execFileSync('bb', ['-e', `(require '[cheshire.core :as json]) (require '[tesseraft.control-plane.core :as cp]) (println (json/generate-string (select-keys (cp/resolve-credential {:tesseraft-home "${home.replaceAll('\\', '\\\\')}"} "tesseraft:github/main") [:present :state :credential-ref])))`], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  }));
+  assert.equal(resolved.state, 'present');
+  assert.equal(resolved.present, true);
+
+  const destBeforeRepeat = fs.readFileSync(dest, 'utf8');
+  const backupBeforeRepeat = fs.readFileSync(backup, 'utf8');
+  const repeat = cp(['--tesseraft-home', home, 'credentials', 'migrate', '--legacy-file', dest]);
+  assert.equal(repeat.status, 200);
+  assert.equal(repeat.state, 'unchanged');
+  assert.equal(fs.readFileSync(dest, 'utf8'), destBeforeRepeat, 'repeat same-path migration must not rewrite versioned destination');
+  assert.equal(fs.readFileSync(backup, 'utf8'), backupBeforeRepeat, 'repeat same-path migration must preserve backup bytes');
+});
+
 test('SC-005 local credential migration preserves source bytes when destination writing fails', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc005-write-failure-'));
   const blockedHome = path.join(root, 'blocked-home');
