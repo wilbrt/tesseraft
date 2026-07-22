@@ -27,8 +27,30 @@
   (spit (str p) (str (json/generate-string data) "\n") :append true)
   p)
 
+(defn- redact-value [s secrets]
+  (reduce (fn [acc secret]
+            (if (and (string? secret) (not (str/blank? secret)))
+              (str/replace acc secret "[redacted]")
+              acc))
+          s
+          secrets))
+
+(defn- scrub-secrets [x secrets]
+  (cond
+    (string? x) (redact-value x secrets)
+    (map? x) (into {} (map (fn [[k v]] [k (scrub-secrets v secrets)])) x)
+    (vector? x) (mapv #(scrub-secrets % secrets) x)
+    (seq? x) (mapv #(scrub-secrets % secrets) x)
+    :else x))
+
+(defn- credential-secrets [ctx]
+  (filter #(and (string? %) (not (str/blank? %))) (:credential-secrets ctx)))
+
+(defn- durable-data [ctx data]
+  (scrub-secrets data (credential-secrets ctx)))
+
 (defn save-context! [ctx]
-  (write-edn! (fs/path (get-in ctx [:run :dir]) "state.edn") ctx)
+  (write-edn! (fs/path (get-in ctx [:run :dir]) "state.edn") (durable-data ctx ctx))
   ctx)
 
 (defn load-context [run-dir]
@@ -36,7 +58,7 @@
 
 (defn event! [ctx event]
   (append-jsonl! (fs/path (get-in ctx [:run :dir]) "events.jsonl")
-                (assoc event :at (now)))
+                (durable-data ctx (assoc event :at (now))))
   ctx)
 
 (defn ensure-run-dirs! [ctx]
