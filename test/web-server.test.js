@@ -1373,6 +1373,52 @@ test('SC-001 tesseraft credential refs resolve from the selected project local s
   }
 });
 
+test('SC-002 missing and unavailable credential refs expose stable non-secret states', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc002-stable-credential-states-'));
+  try {
+    const home = path.join(root, 'home');
+    const runCp = (args) => {
+      try {
+        return {
+          threw: false,
+          body: JSON.parse(execFileSync('./bin/tesseraft', [
+            'control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args
+          ], { encoding: 'utf8', stdio: 'pipe' }))
+        };
+      } catch (error) {
+        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
+      }
+    };
+
+    const missingName = 'SC002_MISSING_TOKEN_DO_NOT_DEFINE';
+    delete process.env[missingName];
+    assert.equal(runCp(['project', 'create', 'sc002-missing', '--github-credential-ref', `env:${missingName}`]).threw, false);
+    const missingConnections = runCp(['project', 'connections', 'sc002-missing']);
+    assert.equal(missingConnections.threw, false, `SC-002 missing selected-store lookup should not fail; got ${JSON.stringify(missingConnections.body)}`);
+    const missingState = missingConnections.body.connections.github['credential-state'];
+    assert.equal(
+      missingState.state,
+      'absent',
+      `SC-002 missing selected-store value must be classified as absent with a stable state field; got ${JSON.stringify(missingState)}`
+    );
+    assert.equal(missingState['credential-ref'], `env:${missingName}`);
+    assert.doesNotMatch(JSON.stringify(missingConnections.body), /SC002_SECRET_SENTINEL|SC002_ENV_FALLBACK_VALUE/);
+
+    assert.equal(runCp(['project', 'create', 'sc002-gha', '--github-credential-ref', 'github-actions:SC002_TOKEN']).threw, false);
+    const ghaConnections = runCp(['project', 'connections', 'sc002-gha']);
+    assert.equal(ghaConnections.threw, false, `SC-002 github-actions lookup should not fail; got ${JSON.stringify(ghaConnections.body)}`);
+    const ghaState = ghaConnections.body.connections.github['credential-state'];
+    assert.equal(
+      ghaState.state,
+      'unresolved',
+      `SC-002 locally unavailable github-actions store must be classified as unresolved with a stable state field; got ${JSON.stringify(ghaState)}`
+    );
+    assert.equal(ghaState['credential-ref'], 'github-actions:SC002_TOKEN');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
   let outsideDescriptorRoot = '';

@@ -959,30 +959,30 @@
 
 (defn mask-credential
   "Resolve a credential-ref against the out-of-repo store and return a masked
-  state (present/absent) WITHOUT ever returning the raw token. `env:` refs are
-  resolved from the process environment, `tesseraft:` refs from the user-local
-  versioned Tesseraft store, and `github-actions:` refs are validated but not
-  resolved locally (reported as :unresolved)."
+  state (present/absent/unresolved/invalid) WITHOUT ever returning the raw token.
+  `env:` refs are resolved from the process environment, `tesseraft:` refs from
+  the user-local versioned Tesseraft store, and `github-actions:` refs are
+  validated but not resolved locally (reported as unresolved)."
   [options ref]
   (cond
-    (or (nil? ref) (str/blank? (str ref))) {:present false}
-    (not (credential-ref? ref)) {:present false :error "invalid credential-ref"}
+    (or (nil? ref) (str/blank? (str ref))) {:present false :state "absent"}
+    (not (credential-ref? ref)) {:present false :state "invalid" :error "invalid credential-ref"}
     :else
     (let [[_ store-name path] (re-matches credential-ref-re ref)]
       (case store-name
         "env"
         (let [v (System/getenv path)]
           (if (str/blank? v)
-            {:present false :credential-ref ref}
-            {:present true :credential-ref ref}))
+            {:present false :state "absent" :credential-ref ref}
+            {:present true :state "present" :credential-ref ref}))
         "tesseraft"
         (let [v (local-credential-value options ref path)]
           (if (str/blank? v)
-            {:present false :credential-ref ref}
-            {:present true :credential-ref ref}))
+            {:present false :state "absent" :credential-ref ref}
+            {:present true :state "present" :credential-ref ref}))
         "github-actions"
-        {:present false :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
-        {:present false :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
+        {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
+        {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
 
 (defn get-project-connections
   ([] (get-project-connections {} nil))
