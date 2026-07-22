@@ -75,7 +75,7 @@
 
 (def ^:private project-id-re #"^[a-z0-9][a-z0-9-]{0,62}$")
 
-(def ^:private credential-ref-re #"^(env|github-actions):([^\s]+)$")
+(def ^:private credential-ref-re #"^(env|tesseraft|github-actions):([^\s]+)$")
 
 (defn valid-project-id? [s]
   (and (string? s) (re-matches project-id-re s)))
@@ -94,8 +94,8 @@
 
 (defn credential-ref?
   "True if `s` is a credential reference of the form `<store>:<path>`. Only
-  `env:` and `github-actions:` stores are recognized shape-wise; resolution is
-  only wired for `env:` in the initial implementation."
+  `env:`, `tesseraft:`, and `github-actions:` stores are recognized shape-wise;
+  local resolution is wired only for the selected store."
   [s]
   (and (string? s) (re-find credential-ref-re s)))
 
@@ -341,6 +341,19 @@
   (let [p (credentials-file options)]
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
+
+(defn local-credential-value [options ref path]
+  (let [creds (or (read-credentials options) {})
+        versioned (:credentials creds)]
+    (or (when (map? versioned)
+          (or (get versioned path)
+              (get versioned (keyword path))))
+        ;; Backward-compatible flat store lookups. These are deliberately
+        ;; scoped to the explicit selected ref/path; callers decide which store
+        ;; may consult this file.
+        (get creds ref)
+        (get creds path)
+        (get creds (keyword path)))))
 
 (defn- norm-discovery [raw]
   (cond
@@ -947,8 +960,9 @@
 (defn mask-credential
   "Resolve a credential-ref against the out-of-repo store and return a masked
   state (present/absent) WITHOUT ever returning the raw token. `env:` refs are
-  resolved from the process environment; `github-actions:` refs are validated
-  but not resolved locally (reported as :unresolved)."
+  resolved from the process environment, `tesseraft:` refs from the user-local
+  versioned Tesseraft store, and `github-actions:` refs are validated but not
+  resolved locally (reported as :unresolved)."
   [options ref]
   (cond
     (or (nil? ref) (str/blank? (str ref))) {:present false}
@@ -960,7 +974,12 @@
         (let [v (System/getenv path)]
           (if (str/blank? v)
             {:present false :credential-ref ref}
-            {:present true :credential-ref ref :preview (subs v (max 0 (- (count v) 4)))}))
+            {:present true :credential-ref ref}))
+        "tesseraft"
+        (let [v (local-credential-value options ref path)]
+          (if (str/blank? v)
+            {:present false :credential-ref ref}
+            {:present true :credential-ref ref}))
         "github-actions"
         {:present false :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
         {:present false :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
@@ -971,14 +990,11 @@
    (let [resolved (resolve-project options project-id)]
      (if (:error resolved)
        resolved
-       (let [creds (or (read-credentials options) {})]
-         {:connections
-          (into {} (for [[k v] (:connections resolved {})]
-                     (let [ref (:credential-ref v)
-                           masked (if (and ref (get creds (str ref)))
-                                    {:present true :credential-ref ref}
-                                    (mask-credential options ref))]
-                       [k (api-value (merge v {:credential-state masked}))])))})))))
+       {:connections
+        (into {} (for [[k v] (:connections resolved {})]
+                   (let [ref (:credential-ref v)
+                         masked (mask-credential options ref)]
+                     [k (api-value (merge v {:credential-state masked}))])))}))))
 
 (defn update-project-connections
   ([] (update-project-connections {} nil nil))

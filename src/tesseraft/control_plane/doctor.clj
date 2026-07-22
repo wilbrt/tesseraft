@@ -8,7 +8,7 @@
 
 (def statuses ["ready" "not-configured" "unreachable" "invalid"])
 (def check-order ["github-credential" "github-auth" "jira-base-url" "jira-credential" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root"])
-(def ^:private credential-ref-re #"^(env|github-actions):([^\s]+)$")
+(def ^:private credential-ref-re #"^(env|tesseraft|github-actions):([^\s]+)$")
 
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- blank? [v] (or (nil? v) (str/blank? (str v))))
@@ -26,10 +26,10 @@
     :else
     (let [[_ store-name path] (re-matches credential-ref-re (str ref))
           creds (or (cp/read-credentials options) {})]
-      (or (get creds (str ref))
-          (case store-name
-            "env" (System/getenv path)
-            nil)))))
+      (case store-name
+        "env" (System/getenv path)
+        "tesseraft" (cp/local-credential-value options (str ref) path)
+        nil))))
 
 (defn- redact-value [s secrets]
   (reduce (fn [acc secret]
@@ -86,7 +86,7 @@
         ref (conn-val c :credential-ref)]
     (cond
       (blank? ref) {:status "not-configured" :summary (str (str/capitalize (name service)) " credential reference is not configured.") :remediation "Configure a credential reference such as env:NAME."}
-      (not (re-matches credential-ref-re (str ref))) {:status "invalid" :summary "Credential reference has invalid syntax." :remediation "Use env:NAME or github-actions:NAME; do not store raw secrets."}
+      (not (re-matches credential-ref-re (str ref))) {:status "invalid" :summary "Credential reference has invalid syntax." :remediation "Use env:NAME, tesseraft:NAME, or github-actions:NAME; do not store raw secrets."}
       (resolved-token options ref) {:status "ready" :summary (str "Credential reference " ref " resolves locally.") :remediation nil}
       :else {:status "not-configured" :summary (str "Credential reference " ref " does not resolve locally.") :remediation "Set the referenced environment variable or local credential-store entry."})))
 

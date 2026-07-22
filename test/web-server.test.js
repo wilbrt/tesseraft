@@ -1331,6 +1331,48 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
   }
 });
 
+test('SC-001 tesseraft credential refs resolve from the selected project local store', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-tesseraft-selected-store-'));
+  try {
+    const home = path.join(root, 'home');
+    const credentialsPath = path.join(home, 'credentials.json');
+    fs.mkdirSync(path.dirname(credentialsPath), { recursive: true });
+    fs.writeFileSync(credentialsPath, JSON.stringify({
+      version: 1,
+      credentials: { SC001_LOCAL_TOKEN: 'SC001_TESSERAFT_LOCAL_SENTINEL' }
+    }, null, 2));
+
+    const runCp = (args) => {
+      try {
+        return {
+          threw: false,
+          body: JSON.parse(execFileSync('./bin/tesseraft', [
+            'control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args
+          ], { encoding: 'utf8', stdio: 'pipe' }))
+        };
+      } catch (error) {
+        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
+      }
+    };
+
+    const created = runCp(['project', 'create', 'sc001-local', '--github-credential-ref', 'tesseraft:SC001_LOCAL_TOKEN']);
+    assert.equal(
+      created.threw,
+      false,
+      `SC-001 tesseraft: refs must be accepted for project credential refs; got ${JSON.stringify(created.body)}`
+    );
+
+    const connections = runCp(['project', 'connections', 'sc001-local']);
+    assert.equal(connections.threw, false, `SC-001 connections lookup should succeed; got ${JSON.stringify(connections.body)}`);
+    const state = connections.body.connections.github['credential-state'];
+    assert.equal(state.present, true, `SC-001 tesseraft: refs should resolve from the versioned local store; got ${JSON.stringify(state)}`);
+    assert.equal(state['credential-ref'], 'tesseraft:SC001_LOCAL_TOKEN');
+    assert.doesNotMatch(JSON.stringify(connections.body), /SC001_TESSERAFT_LOCAL_SENTINEL/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
   let outsideDescriptorRoot = '';
