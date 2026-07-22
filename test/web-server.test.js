@@ -1062,7 +1062,7 @@ test('web server exposes git-user read and write via the control plane', async (
   assert.equal(refreshedBody.git_user.name, 'Tess Bot');
 });
 
-test('web server exposes settings read and write via the control plane with masked tokens', async (t) => {
+test('SC-004 web server exposes legacy settings credential state without value-derived previews', async (t) => {
   const configFile = path.join(process.cwd(), '.tesseraft', 'settings.json');
   fs.rmSync(configFile, { force: true });
   t.after(() => fs.rmSync(configFile, { force: true }));
@@ -1118,11 +1118,17 @@ test('web server exposes settings read and write via the control plane with mask
   assert.equal(written.settings.pi_default_model, 'gpt-4o-mini');
   assert.equal(written.settings.default_repo_root, '/tmp/my-repo');
   assert.equal(written.settings.color_scheme, 'matrix');
-  // Tokens must be masked — only present + last 4 preview, never full value.
+  // SC-004: public settings views expose only credential state, never value-derived previews.
   assert.equal(written.settings.github_token.present, true);
-  assert.equal(written.settings.github_token.preview, '1234');
+  assert.ok(
+    !('preview' in written.settings.github_token),
+    `SC-004 legacy settings github_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.github_token)}`
+  );
   assert.equal(written.settings.jira_token.present, true);
-  assert.equal(written.settings.jira_token.preview, 'abcd');
+  assert.ok(
+    !('preview' in written.settings.jira_token),
+    `SC-004 legacy settings jira_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.jira_token)}`
+  );
 
   const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   assert.equal(stored.github_token, 'ghp_secretvalue1234');
@@ -1142,7 +1148,10 @@ test('web server exposes settings read and write via the control plane with mask
   const unchangedBody = await unchanged.json();
   assert.equal(unchangedBody.settings.pi_default_provider, 'anthropic');
   assert.equal(unchangedBody.settings.github_token.present, true);
-  assert.equal(unchangedBody.settings.github_token.preview, '1234');
+  assert.ok(
+    !('preview' in unchangedBody.settings.github_token),
+    `SC-004 unchanged legacy settings token must preserve state without exposing a value-derived preview; got ${JSON.stringify(unchangedBody.settings.github_token)}`
+  );
   // And the stored value is unchanged.
   assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).github_token, 'ghp_secretvalue1234');
 

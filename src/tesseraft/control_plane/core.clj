@@ -425,7 +425,7 @@
 (defn mask-token [v]
   (if (or (nil? v) (not (string? v)) (str/blank? v))
     {:present false}
-    {:present true :preview (subs (str v) (max 0 (- (count (str v)) 4)))}))
+    {:present true}))
 
 (defn synthesize-default-project
   "Build the implicit default project from `default-options` + legacy
