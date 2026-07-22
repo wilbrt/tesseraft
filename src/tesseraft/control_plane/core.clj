@@ -319,7 +319,7 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
-(declare read-project-descriptor-at-root)
+(declare read-project-descriptor-at-root project-scoped-opts)
 
 (defn- merge-registration-descriptor [registration]
   (if (and (#{"registration" :registration} (:source registration))
@@ -1148,13 +1148,16 @@
 (defn get-project-connections
   ([] (get-project-connections {} nil))
   ([options project-id]
-   (let [resolved (resolve-project options project-id)]
-     (if (:error resolved)
-       resolved
+   (let [resolved (resolve-project options project-id)
+         sopts (when-not (:error resolved) (project-scoped-opts options project-id))]
+     (cond
+       (:error resolved) resolved
+       (:error sopts) sopts
+       :else
        {:connections
         (into {} (for [[k v] (:connections resolved {})]
                    (let [ref (:credential-ref v)
-                         masked (mask-credential options ref)]
+                         masked (mask-credential sopts ref)]
                      [k (api-value (merge v {:credential-state masked}))])))}))))
 
 (defn update-project-connections

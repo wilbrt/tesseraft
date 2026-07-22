@@ -1343,10 +1343,15 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
 test('SC-001 tesseraft credential refs resolve from the selected project local store across control-plane and doctor', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-tesseraft-selected-store-'));
   try {
-    const home = path.join(root, 'home');
-    const credentialsPath = path.join(home, 'credentials.json');
-    fs.mkdirSync(path.dirname(credentialsPath), { recursive: true });
-    fs.writeFileSync(credentialsPath, JSON.stringify({
+    const ambientHome = path.join(root, 'ambient-home');
+    const selectedHome = path.join(root, 'selected-home');
+    fs.mkdirSync(ambientHome, { recursive: true });
+    fs.mkdirSync(selectedHome, { recursive: true });
+    fs.writeFileSync(path.join(ambientHome, 'credentials.json'), JSON.stringify({
+      version: 1,
+      credentials: { SC001_AMBIENT_ONLY_TOKEN: 'SC001_TESSERAFT_AMBIENT_SENTINEL' }
+    }, null, 2));
+    fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
       version: 1,
       credentials: { SC001_LOCAL_TOKEN: 'SC001_TESSERAFT_LOCAL_SENTINEL' }
     }, null, 2));
@@ -1356,7 +1361,7 @@ test('SC-001 tesseraft credential refs resolve from the selected project local s
         return {
           threw: false,
           body: JSON.parse(execFileSync('./bin/tesseraft', [
-            'control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args
+            'control-plane', '--workspace-root', root, '--tesseraft-home', ambientHome, ...args
           ], { encoding: 'utf8', stdio: 'pipe' }))
         };
       } catch (error) {
@@ -1364,7 +1369,31 @@ test('SC-001 tesseraft credential refs resolve from the selected project local s
       }
     };
 
-    const created = runCp(['project', 'create', 'sc001-local', '--github-credential-ref', 'tesseraft:SC001_LOCAL_TOKEN']);
+    const ambientOnly = runCp([
+      'project', 'create', 'sc001-ambient-only',
+      '--tesseraft-home', selectedHome,
+      '--github-credential-ref', 'tesseraft:SC001_AMBIENT_ONLY_TOKEN'
+    ]);
+    assert.equal(ambientOnly.threw, false, `SC-001 ambient-only project create should succeed; got ${JSON.stringify(ambientOnly.body)}`);
+
+    const ambientOnlyConnections = runCp(['project', 'connections', 'sc001-ambient-only']);
+    assert.equal(ambientOnlyConnections.threw, false, `SC-001 ambient-only connections lookup should succeed; got ${JSON.stringify(ambientOnlyConnections.body)}`);
+    const ambientOnlyState = ambientOnlyConnections.body.connections.github['credential-state'];
+    assert.equal(ambientOnlyState.present, false, `SC-001 selected project store must not fall back to ambient credentials; got ${JSON.stringify(ambientOnlyState)}`);
+    assert.equal(ambientOnlyState.state, 'absent');
+    assert.doesNotMatch(JSON.stringify(ambientOnlyConnections.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
+
+    const ambientOnlyDoctor = runCp(['--project-id', 'sc001-ambient-only', 'doctor']);
+    assert.equal(ambientOnlyDoctor.threw, false, `SC-001 ambient-only doctor lookup should succeed; got ${JSON.stringify(ambientOnlyDoctor.body)}`);
+    const ambientOnlyCredentialCheck = ambientOnlyDoctor.body.checks.find((check) => check.id === 'github-credential');
+    assert.equal(ambientOnlyCredentialCheck?.status, 'not-configured', `SC-001 doctor must not resolve tesseraft: refs from ambient home; got ${JSON.stringify(ambientOnlyCredentialCheck)}`);
+    assert.doesNotMatch(JSON.stringify(ambientOnlyDoctor.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
+
+    const created = runCp([
+      'project', 'create', 'sc001-local',
+      '--tesseraft-home', selectedHome,
+      '--github-credential-ref', 'tesseraft:SC001_LOCAL_TOKEN'
+    ]);
     assert.equal(
       created.threw,
       false,
@@ -1374,15 +1403,15 @@ test('SC-001 tesseraft credential refs resolve from the selected project local s
     const connections = runCp(['project', 'connections', 'sc001-local']);
     assert.equal(connections.threw, false, `SC-001 connections lookup should succeed; got ${JSON.stringify(connections.body)}`);
     const state = connections.body.connections.github['credential-state'];
-    assert.equal(state.present, true, `SC-001 tesseraft: refs should resolve from the versioned local store; got ${JSON.stringify(state)}`);
+    assert.equal(state.present, true, `SC-001 tesseraft: refs should resolve from the selected project store; got ${JSON.stringify(state)}`);
     assert.equal(state['credential-ref'], 'tesseraft:SC001_LOCAL_TOKEN');
-    assert.doesNotMatch(JSON.stringify(connections.body), /SC001_TESSERAFT_LOCAL_SENTINEL/);
+    assert.doesNotMatch(JSON.stringify(connections.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
 
     const doctor = runCp(['--project-id', 'sc001-local', 'doctor']);
     assert.equal(doctor.threw, false, `SC-001 doctor lookup should succeed; got ${JSON.stringify(doctor.body)}`);
     const credentialCheck = doctor.body.checks.find((check) => check.id === 'github-credential');
-    assert.equal(credentialCheck?.status, 'ready', `SC-001 doctor must use the same tesseraft: resolver; got ${JSON.stringify(credentialCheck)}`);
-    assert.doesNotMatch(JSON.stringify(doctor.body), /SC001_TESSERAFT_LOCAL_SENTINEL/);
+    assert.equal(credentialCheck?.status, 'ready', `SC-001 doctor must use the same selected-store tesseraft: resolver; got ${JSON.stringify(credentialCheck)}`);
+    assert.doesNotMatch(JSON.stringify(doctor.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
