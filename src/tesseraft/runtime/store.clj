@@ -54,6 +54,11 @@
 (defn- runtime-options [ctx]
   (select-keys (:run ctx) [:workspace-root :tesseraft-home :runs-root :workflow-roots]))
 
+(defn- persisted-project-context [ctx project-id]
+  (let [project (get-in ctx [:run :project-context])
+        persisted-id (or (:project_id project) (:project-id project))]
+    (when (and (map? project) (= project-id persisted-id)) project)))
+
 (defn- resolved-project-credential-secrets [ctx]
   (try
     (let [resolve-project (requiring-resolve 'tesseraft.control-plane.core/resolve-project)
@@ -61,8 +66,9 @@
           resolve-credential (requiring-resolve 'tesseraft.control-plane.core/resolve-credential)
           project-id (get-in ctx [:run :project-id])
           options (runtime-options ctx)
-          project (resolve-project options project-id)
-          scoped (when-not (:error project) (project-scoped-opts options project-id))]
+          persisted-project (persisted-project-context ctx project-id)
+          project (or persisted-project (resolve-project options project-id))
+          scoped (if persisted-project options (when-not (:error project) (project-scoped-opts options project-id)))]
       (when-not (or (:error project) (:error scoped))
         (keep (fn [[_ conn]]
                 (when-let [ref (:credential-ref conn)]

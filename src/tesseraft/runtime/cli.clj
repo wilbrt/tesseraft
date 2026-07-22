@@ -10,6 +10,12 @@
 (defn parse-input [s]
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
 
+(defn parse-json-option [flag s]
+  (try
+    (json/parse-string s true)
+    (catch Throwable t
+      (throw (ex-info (str flag " must be JSON") {:flag flag} t)))))
+
 (defn parse-args [args]
   (loop [xs args acc {:inputs {} :max-steps 100 :command "run" :decision nil :summary nil :author-name nil :author-email nil}]
     (if (empty? xs)
@@ -28,6 +34,9 @@
           "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
           "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
           "--workspace-root" (recur more (assoc acc :workspace-root (cli-args/require-value a b)))
+          "--tesseraft-home" (recur more (assoc acc :tesseraft-home (cli-args/require-value a b)))
+          "--workflow-root" (recur more (update acc :workflow-roots (fnil conj []) (cli-args/require-value a b)))
+          "--project-context" (recur more (assoc acc :project-context (parse-json-option a (cli-args/require-value a b))))
           "--run-dir" (recur more (assoc acc :run-dir (cli-args/require-value a b)))
           "--executor" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))
           "--mode" (recur more (assoc acc :executor (keyword (cli-args/require-value a b))))

@@ -1388,6 +1388,103 @@ test('SC-001 tesseraft credential refs resolve from the selected project local s
   }
 });
 
+test('SC-001 runtime starts preserve selected project credential context across relocated workspaces', async () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-runtime-project-context-'));
+  const controlWorkspace = path.join(root, 'control');
+  const runtimeWorkspace = path.join(root, 'runtime-workspace');
+  const selectedHome = path.join(root, 'selected-home');
+  const otherHome = path.join(root, 'other-home');
+  const projectsDir = path.join(controlWorkspace, '.tesseraft', 'projects');
+  const workflowDir = path.join(runtimeWorkspace, '.tesseraft', 'workflows', 'runtime-context');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.mkdirSync(selectedHome, { recursive: true });
+  fs.mkdirSync(otherHome, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "runtime-context" :title "Runtime Context"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :deterministic
+                  :handler :noop/succeed
+                  :runtime {:timeout "10s"}
+                  :next :done}
+          :done {:type :terminal :status :success}}}
+`);
+  fs.writeFileSync(path.join(projectsDir, 'selected.json'), JSON.stringify({
+    project_id: 'selected',
+    name: 'Selected',
+    workspace_root: runtimeWorkspace,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'], 'tesseraft-home': selectedHome },
+    connections: { github: { 'credential-ref': 'tesseraft:GH_TOKEN' } }
+  }, null, 2));
+  fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
+    version: 1,
+    credentials: { GH_TOKEN: 'SC001_RUNTIME_SELECTED_SENTINEL' }
+  }, null, 2));
+  fs.writeFileSync(path.join(otherHome, 'credentials.json'), JSON.stringify({
+    version: 1,
+    credentials: { GH_TOKEN: 'SC001_RUNTIME_OTHER_SENTINEL' }
+  }, null, 2));
+
+  const child = spawn(process.execPath, ['web/dist-server/server.js', '--host', '127.0.0.1', '--port', '0'], {
+    cwd: process.cwd(),
+    env: { ...process.env, TESSERAFT_WORKSPACE_ROOT: controlWorkspace, TESSERAFT_HOME: otherHome },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  try {
+    const base = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`project-context server did not start: ${stderr}`)), 10000);
+      child.once('error', (error) => { clearTimeout(timeout); reject(error); });
+      child.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`project-context server exited with ${code}: ${stderr}`)); });
+      child.stdout.on('data', (chunk) => {
+        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timeout); resolve(`http://127.0.0.1:${match[1]}`); }
+      });
+    });
+
+    const startResponse = await fetch(`${base}/api/projects/selected/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_name: 'runtime-context', run_id: 'runtime-context-run', inputs: {}, max_steps: 1 })
+    });
+    assert.equal(startResponse.status, 202, `start should succeed through selected project context: ${JSON.stringify(await startResponse.clone().json().catch(() => ({})))}`);
+    const started = await startResponse.json();
+    const runDir = started.cli.result.run.dir;
+
+    const probeCode = `(require '[tesseraft.runtime.store :as s] '[tesseraft.adapters.builtin :as b] '[babashka.fs :as fs] '[cheshire.core :as json])
+(let [run-dir ${JSON.stringify(runDir)}
+      ctx (s/load-context run-dir)
+      opts (b/github-command-opts ctx {})
+      token (get-in opts [:extra-env "GH_TOKEN"])]
+  (s/write-runtime-json! ctx (fs/path run-dir "adapter-output.json") {:adapter opts :token token})
+  (s/event! ctx {:event "adapter.output" :adapter opts :token token})
+  (println (json/generate-string {:run (select-keys (:run ctx) [:project-id :workspace-root :runs-root :tesseraft-home :workflow-roots]) :opts opts :token token})))`;
+    const probe = JSON.parse(execFileSync('bb', ['--config', 'bb.edn', '-e', probeCode], { encoding: 'utf8' }));
+    assert.equal(probe.token, 'SC001_RUNTIME_SELECTED_SENTINEL', `real GitHub adapter options should use selected project local store: ${JSON.stringify(probe)}`);
+    assert.notEqual(probe.token, 'SC001_RUNTIME_OTHER_SENTINEL', 'ambient/other Tesseraft home must not be selected');
+    assert.equal(probe.run['tesseraft-home'], selectedHome);
+    assert.deepEqual(probe.run['workflow-roots'], ['.tesseraft/workflows']);
+
+    const durableBytes = [
+      fs.readFileSync(path.join(runDir, 'state.edn'), 'utf8'),
+      fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'),
+      fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8')
+    ].join('\n');
+    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_SELECTED_SENTINEL/);
+    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_OTHER_SENTINEL/);
+    assert.match(fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8'), /\[redacted\]/);
+  } finally {
+    child.kill('SIGTERM');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('SC-002 missing and unavailable credential refs expose stable non-secret states', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc002-stable-credential-states-'));
   try {

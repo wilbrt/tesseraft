@@ -969,21 +969,35 @@ const handleStartRun = async (req: Request, res: Response, projectId?: string): 
 
   const workflow = await runControlPlane([...pid, 'workflow', workflowName]);
   if (workflow.status !== 200) return jsonResponse(res, workflow.status, workflow.body);
-  const filePath = workflowPath(workflow.body);
+  let filePath = workflowPath(workflow.body);
   if (!filePath) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Workflow detail did not include a path'));
 
-  // Resolve the project's runs-root/workspace-root so the runtime writes the
-  // run dir under the selected project rather than the ambient cwd. The
-  // default project uses cwd('.') + '.agent-runs' (existing behavior).
+  // Resolve the project's runtime context so runtime adapters/redactors keep
+  // using the exact selected project instead of rediscovering from a relocated
+  // project workspace.
   let runtimeRoots: string[] = [];
+  let projectWorkspaceRoot: string | undefined;
   if (projectId) {
     const project = await runControlPlane(['project', projectId]);
     if (project.status === 200 && project.body && typeof project.body === 'object') {
-      const p = project.body as { workspace_root?: unknown; runs_root?: unknown };
-      if (typeof p.workspace_root === 'string' && p.workspace_root.trim() !== '') runtimeRoots.push('--workspace-root', p.workspace_root);
+      runtimeRoots.push('--project-context', JSON.stringify(project.body));
+      const p = project.body as { workspace_root?: unknown; runs_root?: unknown; discovery?: { 'workflow-roots'?: unknown; tesseraft_home?: unknown; 'tesseraft-home'?: unknown } };
+      if (typeof p.workspace_root === 'string' && p.workspace_root.trim() !== '') {
+        projectWorkspaceRoot = p.workspace_root;
+        runtimeRoots.push('--workspace-root', p.workspace_root);
+      }
       if (typeof p.runs_root === 'string' && p.runs_root.trim() !== '') runtimeRoots.push('--runs-root', p.runs_root);
+      const tesseraftHome = typeof p.discovery?.['tesseraft-home'] === 'string' ? p.discovery['tesseraft-home'] : p.discovery?.tesseraft_home;
+      if (typeof tesseraftHome === 'string' && tesseraftHome.trim() !== '') runtimeRoots.push('--tesseraft-home', tesseraftHome);
+      const workflowRoots = p.discovery?.['workflow-roots'];
+      if (Array.isArray(workflowRoots)) {
+        for (const root of workflowRoots) {
+          if (typeof root === 'string' && root.trim() !== '') runtimeRoots.push('--workflow-root', root);
+        }
+      }
     }
   }
+  if (projectWorkspaceRoot && !path.isAbsolute(filePath)) filePath = path.join(projectWorkspaceRoot, filePath);
 
   const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json', ...pid, ...runtimeRoots];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);

@@ -210,11 +210,16 @@
     (get-in ctx [:run :runs-root]) (assoc :runs-root (get-in ctx [:run :runs-root]))
     (get-in ctx [:run :workflow-roots]) (assoc :workflow-roots (get-in ctx [:run :workflow-roots]))))
 
+(defn- persisted-project-context [ctx project-id]
+  (let [project (get-in ctx [:run :project-context])
+        persisted-id (or (:project_id project) (:project-id project))]
+    (when (and (map? project) (= project-id persisted-id)) project)))
+
 (defn github-token
   ([] (github-token {} nil))
   ([ctx project]
    (let [project-id (or (get-in ctx [:run :project-id]) (:project_id project) (:project-id project))
-         options (if project-id
+         options (if (and project-id (not (persisted-project-context ctx project-id)))
                    (cp/project-scoped-opts (control-plane-options ctx) project-id)
                    (control-plane-options ctx))
          ref (get-in project [:connections :github :credential-ref])
@@ -224,7 +229,8 @@
 (defn github-command-opts [ctx node]
   (let [project-id (get-in ctx [:run :project-id])
         options (control-plane-options ctx)
-        project (cp/resolve-project options project-id)
+        project (or (persisted-project-context ctx project-id)
+                    (cp/resolve-project options project-id))
         token (when-not (:error project) (github-token ctx project))]
     (cond-> {:dir (repo-dir ctx node)}
       token (assoc :extra-env {"GH_TOKEN" token}))))

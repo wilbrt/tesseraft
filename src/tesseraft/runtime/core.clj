@@ -169,7 +169,7 @@
                    {:name git-user-name :email git-user-email})
         executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))
         project-id (or (:project-id opts) "default")
-        runtime-options (select-keys opts [:workspace-root :tesseraft-home :runs-root :workflow-roots])]
+        runtime-options (select-keys opts [:workspace-root :tesseraft-home :runs-root :workflow-roots :project-context])]
     {:workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
