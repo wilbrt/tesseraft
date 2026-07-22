@@ -5,6 +5,7 @@ This guide covers the side-effecting implementation workflows:
 - `examples/prompt-to-pr/workflow.edn`
 - `examples/code-review-loop/workflow.edn`
 - `examples/canon-tdd-to-pr/workflow.edn`
+- `examples/focused-tdd-to-pr/workflow.edn`
 
 Linting and prompt-collection checks are safe. Full or unbounded runs invoke Pi
 with `--approve` and can create worktrees, change files in the target repository,
@@ -30,6 +31,7 @@ bb test
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
+./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ```
 
 For a prompt-collection-only check, start a run and execute just the first node:
@@ -142,6 +144,13 @@ human approval pause. Use bounded `step` or `resume` when you want to inspect
 the generated use case before continuing. See
 [CANON_TDD_WORKFLOW.md](CANON_TDD_WORKFLOW.md) for the artifact model, Canon
 loop semantics, deterministic validation, and safe bounded mock guidance.
+
+The focused TDD workflow combines selection and test authoring, combines green
+implementation/refactoring/inventory update, and uses deterministic red,
+accumulated green, and regression gates. It reconciles already-supported
+scenarios without manufactured red and keeps only current review findings. See
+[FOCUSED_TDD_WORKFLOW.md](FOCUSED_TDD_WORKFLOW.md) for its evidence and
+convergence model.
 
 ## Where side effects happen
 

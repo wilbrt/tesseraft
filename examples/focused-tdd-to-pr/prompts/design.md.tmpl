@@ -1,0 +1,38 @@
+Fresh Pi session: DESIGN A SMALL BEHAVIORAL DELIVERY PLAN.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+- Optional requested branch: {{inputs.branch}}
+
+Goal:
+Produce the smallest coherent behavioral inventory and deterministic validation plan needed to deliver the request safely.
+
+Rules:
+- Inspect the repository; do not edit source or test code.
+- Describe behavior, boundaries, risks, and relevant files without prescribing speculative implementation details.
+- Create 1–8 non-overlapping scenarios. Each scenario must be independently observable and capable of meaningful red unless repository evidence already covers it.
+- Do not inflate the inventory with implementation tasks, documentation chores, broad regression commands, or permutations already covered by one behavior.
+- Keep every scenario `pending`; coverage reconciliation happens in the worktree.
+- Declare bounded broad validation commands that are already supported by the repository. Prefer argv arrays; strings require `"shell":true`.
+- Choose a lowercase safe branch using a conventional prefix, honoring `inputs.branch` when supplied and valid.
+- Do not commit, push, call external services, or create a PR.
+
+Write:
+- Design: {{run.dir}}/design/design.md
+- Repository constraints: {{run.dir}}/design/repository-constraints.md
+- Validation plan: {{run.dir}}/design/validation-plan.json
+- JSON scenario list: {{run.dir}}/test-list/scenarios-initial.json
+- Human-readable scenario list: {{run.dir}}/test-list/scenarios-initial.md
+- Branch: {{run.dir}}/design/branch-name.txt
+- Status: {{run.dir}}/design/status-{{run.round}}.json
+
+Validation plan shape:
+{"version":1,"checks":[{"id":"full-suite","command":["./scripts/test.sh"],"timeout_seconds":1800}]}
+
+Scenario shape:
+{"version":1,"scenarios":[{"id":"SC-001","description":"...","expected_behavior":"...","state":"pending","evidence":null}]}
+
+Status:
+{"status":"pass","summary":"focused behavior and validation plan ready","issues_file":null}

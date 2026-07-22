@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Focused TDD Scenario List",
+  "type": "object",
+  "required": ["version", "scenarios"],
+  "properties": {
+    "version": {"const": 1},
+    "scenarios": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "expected_behavior", "state"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^SC-[0-9]{3}$"},
+          "description": {"type": "string", "minLength": 1},
+          "expected_behavior": {"type": "string", "minLength": 1},
+          "state": {"enum": ["pending", "complete", "regression-covered"]},
+          "evidence": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

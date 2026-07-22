@@ -1,0 +1,215 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "focused-tdd-to-pr"
+            :title "Focused TDD to PR"
+            :description "Implement a bounded behavioral inventory with deterministic red, accumulated green, regression validation, current-only review repair, and PR creation."}
+ :inputs {:prompt {:type :string :required true}
+          :repo-root {:type :path :required true}
+          :base-branch {:type :string :default "main"}
+          :branch {:type :string :required false}}
+ :defaults {:max-rounds 20
+            :state-timeout "45m"
+            :base-branch "main"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :collect-prompt
+ :states
+ {:collect-prompt
+  {:type :process
+   :title "Collect prompt"
+   :command ["./scripts/collect_prompt.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :outputs {:prompt-json {:path "prompt/prompt.json" :required true}
+             :prompt-md {:path "prompt/prompt.md" :required true}}
+   :next :design}
+
+  :design
+  {:type :agent
+   :title "Design behavior and validation"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/design.md.tmpl"
+   :prompt-output "prompts/generated/design-{{run.round}}.md"
+   :session-name "focused-tdd-design-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "design/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :design {:path "design/design.md" :required true}
+             :constraints {:path "design/repository-constraints.md" :required true}
+             :validation-plan {:path "design/validation-plan.json" :schema "schemas/validation-plan.schema.json" :required true}
+             :test-list {:path "test-list/scenarios-initial.json" :schema "schemas/scenario-list.schema.json" :required true}
+             :test-list-md {:path "test-list/scenarios-initial.md" :required true}
+             :branch-name {:path "design/branch-name.txt" :required true}}
+   :transitions [{:when {:status "pass"} :next :ensure-worktree}
+                 {:when {:status "fail"} :effects [:inc-round] :next :design}]}
+
+  :ensure-worktree
+  {:type :deterministic
+   :title "Create isolated worktree"
+   :handler :git/ensure-worktree
+   :runtime {:timeout "5m"}
+   :inputs {:branch-file "design/branch-name.txt"}
+   :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
+   :next :prepare-test}
+
+  :prepare-test
+  {:type :agent
+   :title "Reconcile coverage and prepare one red"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.5"
+   :thinking "medium"
+   :prompt-template "prompts/prepare-test.md.tmpl"
+   :prompt-output "prompts/generated/prepare-test-{{run.round}}.md"
+   :session-name "focused-tdd-prepare-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "60m"}
+   :outputs {:status {:path "tdd/prepare-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :scenario {:path "tdd/current-scenario-{{run.round}}.json" :required true}
+             :report {:path "tdd/test-{{run.round}}.md" :required true}
+             :test-list {:path "test-list/scenarios-{{run.round}}.json" :schema "schemas/scenario-list.schema.json" :required true}
+             :focused-check {:path "tdd/check-{{run.round}}.json" :schema "schemas/focused-check.schema.json" :required false}
+             :issues {:path "tdd/prepare-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :run-red-check}
+                 {:when {:status "no_actions"} :next :run-regression-plan}
+                 {:when {:status "fail"} :effects [:inc-round] :next :prepare-test}]}
+
+  :run-red-check
+  {:type :process
+   :title "Run deterministic red check"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "red" :manifest-file "tdd/check-{{run.round}}.json"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "tdd/red-verification-{{run.round}}.md" :required true}
+             :issues {:path "tdd/red-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :implement-green}
+                 {:when {:status "fail"} :effects [:inc-round] :next :prepare-test}]}
+
+  :implement-green
+  {:type :agent
+   :title "Implement, refactor, and complete scenario"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.5"
+   :thinking "medium"
+   :prompt-template "prompts/implement-green.md.tmpl"
+   :prompt-output "prompts/generated/implement-green-{{run.round}}.md"
+   :session-name "focused-tdd-green-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "tdd/green-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "tdd/green-summary-{{run.round}}.md" :required true}
+             :test-list {:path "test-list/scenarios-{{run.round}}-final.json" :schema "schemas/scenario-list.schema.json" :required true}
+             :discoveries {:path "tdd/discovered-scenarios-{{run.round}}.json" :required true}
+             :issues {:path "tdd/green-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :run-green-check}
+                 {:when {:status "fail"} :effects [:inc-round] :next :implement-green}]}
+
+  :run-green-check
+  {:type :process
+   :title "Run deterministic accumulated green checks"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "green"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "tdd/green-verification-{{run.round}}.md" :required true}
+             :issues {:path "tdd/green-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:inc-round] :next :prepare-test}
+                 {:when {:status "fail"} :effects [:inc-round] :next :implement-green}]}
+
+  :run-regression-plan
+  {:type :process
+   :title "Run deterministic broad and focused regression"
+   :command ["./scripts/run_validation.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :inputs {:phase "regression"}
+   :runtime {:timeout "2h"}
+   :outputs {:report {:path "validation/report-{{run.round}}.md" :required true}
+             :issues {:path "validation/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :review}
+                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
+
+  :review
+  {:type :agent
+   :title "Review current code and evidence"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/review.md.tmpl"
+   :prompt-output "prompts/generated/review-{{run.round}}.md"
+   :session-name "focused-tdd-review-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
+   :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "review/report-{{run.round}}.md" :required true}
+             :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
+                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
+
+  :repair
+  {:type :agent
+   :title "Repair current findings"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.5"
+   :thinking "medium"
+   :prompt-template "prompts/repair.md.tmpl"
+   :prompt-output "prompts/generated/repair-{{run.round}}.md"
+   :session-name "focused-tdd-repair-{{run.round}}"
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
+   :outputs {:status {:path "repair/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "repair/summary-{{run.round}}.md" :required true}
+             :test-list {:path "test-list/scenarios-{{run.round}}-repair.json" :schema "schemas/scenario-list.schema.json" :required false}
+             :issues {:path "repair/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :effects [:inc-round] :next :prepare-test}
+                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
+
+  :pr-draft
+  {:type :agent
+   :title "Draft PR metadata"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "low"
+   :prompt-template "prompts/pr-draft.md.tmpl"
+   :prompt-output "prompts/generated/pr-draft-{{run.round}}.md"
+   :session-name "focused-tdd-pr-draft-{{run.round}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
+   :outputs {:status {:path "pr/draft-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :title {:path "pr/pr-title.txt" :required true}
+             :body {:path "pr/pr-body.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :create-pr}
+                 {:when {:status "fail"} :effects [:inc-round] :next :pr-draft}]}
+
+  :create-pr
+  {:type :deterministic
+   :title "Create pull request"
+   :handler :github/create-pr
+   :runtime {:cwd "{{run.worktree-dir}}" :timeout "5m" :requires-secrets [:github-token]}
+   :inputs {:title-file "pr/pr-title.txt"
+            :body-file "pr/pr-body.md"
+            :branch-file "design/branch-name.txt"
+            :repo-dir-file "worktree/path.txt"}
+   :outputs {:pr-json {:path "pr/pr.json" :required true}}
+   :next :done}
+
+  :done
+  {:type :terminal
+   :title "Done"
+   :status :success}}}

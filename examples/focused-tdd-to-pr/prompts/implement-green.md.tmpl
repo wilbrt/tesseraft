@@ -1,0 +1,35 @@
+Fresh Pi session: MAKE THE SELECTED SCENARIO GREEN, OPTIONALLY REFACTOR, AND UPDATE THE INVENTORY.
+
+Inputs:
+- Selected scenario: latest {{run.dir}}/tdd/current-scenario-*.json
+- Deterministic red report: latest {{run.dir}}/tdd/red-verification-*.md
+- Latest scenario list: latest JSON under {{run.dir}}/test-list/
+- Constraints: {{run.dir}}/design/repository-constraints.md
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Implement only the selected behavior, preserve accumulated behavior, and leave one coherent committed green increment.
+
+Rules:
+- Make the smallest production change that satisfies the selected test.
+- Do not delete, skip, or weaken tests or derive expected values from implementation output without independent justification.
+- Run the focused command and relevant prior checks while working.
+- Refactor only after green and only when it materially improves the changed code; behavior must remain unchanged.
+- Record newly discovered behavior in discoveries. Add only distinct, in-scope discoveries to the scenario list, which must never exceed eight entries.
+- Mark only the selected scenario `complete`, with its focused manifest/report as evidence. Preserve `regression-covered` classifications.
+- Preserve the prepared snapshot and write the current round's authoritative `-final` snapshot.
+- Commit the coherent test and implementation increment locally after it is green. Do not push or create a PR.
+
+Write:
+- Summary, including implementation and any refactor decision: {{run.dir}}/tdd/green-summary-{{run.round}}.md
+- Discoveries: {{run.dir}}/tdd/discovered-scenarios-{{run.round}}.json
+- Updated snapshot: {{run.dir}}/test-list/scenarios-{{run.round}}-final.json
+- Status: {{run.dir}}/tdd/green-status-{{run.round}}.json
+- Current actionable issues on failure only: {{run.dir}}/tdd/green-issues-{{run.round}}.json
+
+Discovery shape:
+{"scenarios":[{"description":"...","expected_behavior":"...","source":"implement-green"}]}
+
+Statuses:
+{"status":"pass","summary":"selected behavior is green and committed","issues_file":null}
+{"status":"fail","summary":"current green increment remains incomplete","issues_file":"tdd/green-issues-{{run.round}}.json"}
