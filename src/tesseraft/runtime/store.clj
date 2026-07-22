@@ -43,8 +43,28 @@
     (seq? x) (mapv #(scrub-secrets % secrets) x)
     :else x))
 
+(defn- runtime-options [ctx]
+  (select-keys (:run ctx) [:workspace-root :tesseraft-home :runs-root :workflow-roots]))
+
+(defn- resolved-project-credential-secrets [ctx]
+  (try
+    (let [resolve-project (requiring-resolve 'tesseraft.control-plane.core/resolve-project)
+          project-scoped-opts (requiring-resolve 'tesseraft.control-plane.core/project-scoped-opts)
+          resolve-credential (requiring-resolve 'tesseraft.control-plane.core/resolve-credential)
+          project-id (get-in ctx [:run :project-id])
+          options (runtime-options ctx)
+          project (resolve-project options project-id)
+          scoped (when-not (:error project) (project-scoped-opts options project-id))]
+      (when-not (or (:error project) (:error scoped))
+        (keep (fn [[_ conn]]
+                (when-let [ref (:credential-ref conn)]
+                  (:value (resolve-credential scoped ref))))
+              (:connections project))))
+    (catch Throwable _ nil)))
+
 (defn- credential-secrets [ctx]
-  (filter #(and (string? %) (not (str/blank? %))) (:credential-secrets ctx)))
+  (filter #(and (string? %) (not (str/blank? %)))
+          (concat (:credential-secrets ctx) (resolved-project-credential-secrets ctx))))
 
 (defn- durable-data [ctx data]
   (scrub-secrets data (credential-secrets ctx)))

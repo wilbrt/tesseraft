@@ -168,7 +168,8 @@
         git-user (when (and git-user-name git-user-email)
                    {:name git-user-name :email git-user-email})
         executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))
-        project-id (or (:project-id opts) "default")]
+        project-id (or (:project-id opts) "default")
+        runtime-options (select-keys opts [:workspace-root :tesseraft-home :runs-root :workflow-roots])]
     {:workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
@@ -186,7 +187,8 @@
            :created-at (store/now)
            :updated-at (store/now)}
          executor-mode (assoc :executor-mode executor-mode)
-         git-user (assoc :git-user git-user))}))
+         git-user (assoc :git-user git-user)
+         (seq runtime-options) (merge runtime-options))}))
 
 (defn artifact-path [ctx p]
   (let [rendered (spec/render-template-string p ctx)]

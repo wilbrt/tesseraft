@@ -201,16 +201,28 @@
     (apply shell! {:dir (repo-dir ctx node)} "git" (concat ua ["push" "origin" branch]))
     {:status "ok" :branch branch}))
 
+(defn- control-plane-options [ctx]
+  (cond-> {}
+    (get-in ctx [:run :workspace-root]) (assoc :workspace-root (get-in ctx [:run :workspace-root]))
+    (get-in ctx [:run :tesseraft-home]) (assoc :tesseraft-home (get-in ctx [:run :tesseraft-home]))
+    (get-in ctx [:run :runs-root]) (assoc :runs-root (get-in ctx [:run :runs-root]))
+    (get-in ctx [:run :workflow-roots]) (assoc :workflow-roots (get-in ctx [:run :workflow-roots]))))
+
 (defn github-token
   ([] (github-token {} nil))
   ([ctx project]
-   (let [ref (get-in project [:connections :github :credential-ref])
-         token (:value (cp/resolve-credential {} ref))]
+   (let [project-id (or (get-in ctx [:run :project-id]) (:project_id project) (:project-id project))
+         options (if project-id
+                   (cp/project-scoped-opts (control-plane-options ctx) project-id)
+                   (control-plane-options ctx))
+         ref (get-in project [:connections :github :credential-ref])
+         token (:value (cp/resolve-credential (if (:error options) (control-plane-options ctx) options) ref))]
      (when-not (str/blank? token) token))))
 
 (defn github-command-opts [ctx node]
   (let [project-id (get-in ctx [:run :project-id])
-        project (cp/resolve-project {} project-id)
+        options (control-plane-options ctx)
+        project (cp/resolve-project options project-id)
         token (when-not (:error project) (github-token ctx project))]
     (cond-> {:dir (repo-dir ctx node)}
       token (assoc :extra-env {"GH_TOKEN" token}))))

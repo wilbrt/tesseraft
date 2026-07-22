@@ -126,6 +126,105 @@
 (defn credentials-file [options]
   (fs/path (tesseraft-home options) "credentials.json"))
 
+(defn- owner-only-file! [p]
+  (try
+    (java.nio.file.Files/setPosixFilePermissions
+      (.toPath (fs/file p))
+      (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------"))
+    (catch UnsupportedOperationException _ nil)
+    (catch Throwable _ nil))
+  p)
+
+(defn- atomic-write-json-owner-only! [p data]
+  (let [target (fs/path p)
+        parent (fs/parent target)
+        tmp (fs/path parent (str "." (fs/file-name target) ".tmp-" (java.util.UUID/randomUUID)))]
+    (fs/create-dirs parent)
+    (try
+      (spit (str tmp) (json/generate-string data {:pretty true}))
+      (owner-only-file! tmp)
+      (try
+        (java.nio.file.Files/move (.toPath (fs/file tmp))
+                                  (.toPath (fs/file target))
+                                  (into-array java.nio.file.CopyOption
+                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+        (catch Throwable _
+          (java.nio.file.Files/move (.toPath (fs/file tmp))
+                                    (.toPath (fs/file target))
+                                    (into-array java.nio.file.CopyOption
+                                                [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))))
+      (owner-only-file! target)
+      (catch Throwable t
+        (fs/delete-if-exists tmp)
+        (throw t)))
+    target))
+
+(defn- credential-key-string [k]
+  (if (keyword? k)
+    (if-let [ns (namespace k)]
+      (str ns "/" (name k))
+      (name k))
+    (str k)))
+
+(defn- valid-legacy-credential-entries? [creds]
+  (and (map? creds)
+       (not (contains? creds :version))
+       (not (contains? creds :credentials))
+       (seq creds)
+       (every? (fn [[k v]]
+                 (and (not (str/blank? (credential-key-string k)))
+                      (string? v)
+                      (not (str/blank? v))))
+               creds)))
+
+(defn- normalize-local-credential-store [creds]
+  (when (and (map? creds) (= 1 (:version creds)) (map? (:credentials creds)))
+    {:version 1
+     :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) (:credentials creds)))}))
+
+(defn migrate-local-credentials
+  "Migrate a flat legacy credential JSON object into the versioned user-local
+  credential store without mutating the legacy source. Existing identical
+  destinations are idempotent successes; other destinations are refused."
+  [options legacy-file]
+  (let [legacy-path (when-not (str/blank? (str legacy-file)) (fs/path legacy-file))
+        dest (fs/path (or (:credentials-file options) (credentials-file options)))]
+    (cond
+      (nil? legacy-path)
+      (error-response 400 "bad_request" "credentials migrate requires --legacy-file")
+
+      (not (fs/exists? legacy-path))
+      (error-response 400 "invalid_local_credential_store" "Legacy credential file is not readable" {:legacy_file (str legacy-path)})
+
+      :else
+      (try
+        (let [legacy (store/read-json legacy-path)]
+          (if-not (valid-legacy-credential-entries? legacy)
+            (error-response 400 "invalid_local_credential_store" "Legacy credential file must be a flat object of non-empty string values" {:legacy_file (str legacy-path)})
+            (let [migrated {:version 1
+                            :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) legacy))}
+                  result {:credentials_count (count (:credentials migrated))
+                          :credentials_file (str dest)
+                          :legacy_file (str legacy-path)}]
+              (cond
+                (not (fs/exists? dest))
+                (do
+                  (atomic-write-json-owner-only! dest migrated)
+                  (assoc result :status 201 :state "migrated"))
+
+                (= migrated (try (normalize-local-credential-store (store/read-json dest)) (catch Throwable _ ::invalid)))
+                (do
+                  (owner-only-file! dest)
+                  (assoc result :status 200 :state "unchanged"))
+
+                :else
+                (error-response 409 "conflict" "Destination credential store already exists and will not be overwritten" {:credentials_file (str dest)})))))
+        (catch Throwable t
+          (error-response 400 "migration_failed" "Local credential migration could not be completed" {:message (.getMessage t)
+                                                                                                       :legacy_file (str legacy-path)
+                                                                                                       :credentials_file (str dest)}))))))
+
 (defn- validate-project-registry [registry]
   (let [allowed-top #{:version :projects}
         allowed-entry #{:name :workspace_root :runs_root :discovery :source}
