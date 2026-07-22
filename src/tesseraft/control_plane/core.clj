@@ -77,6 +77,21 @@
 
 (def ^:private credential-ref-re #"^(env|tesseraft|github-actions):([^\s]+)$")
 
+(def ^:private raw-secret-key-names #{"token" "apikey" "accesstoken" "password" "secret"})
+
+(defn- raw-secret-key? [k]
+  (contains? raw-secret-key-names
+             (str/replace (str/lower-case (name k)) #"[_-]" "")))
+
+(defn- contains-raw-secret-key? [x]
+  (cond
+    (map? x) (boolean (some (fn [[k v]]
+                              (or (raw-secret-key? k)
+                                  (contains-raw-secret-key? v)))
+                            x))
+    (sequential? x) (boolean (some contains-raw-secret-key? x))
+    :else false))
+
 (defn valid-project-id? [s]
   (and (string? s) (re-matches project-id-re s)))
 
@@ -1004,13 +1019,10 @@
        (not (map? updates))
        (error-response 400 "bad_request" "connections update must be an object")
 
-       (some (fn [[_ v]]
-               (and (map? v)
-                    (some #(contains? v %) [:token :github_token :jira_token :secret :password])))
-             updates)
-       ;; Raw token payloads are NEVER accepted; only refs + base-url.
+       (contains-raw-secret-key? updates)
+       ;; Raw secret payloads are NEVER accepted; only refs + base-url.
        (error-response 400 "bad_request"
-                      "Raw token payloads are not accepted; provide a credential-ref instead")
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
        (let [resolved (resolve-project options project-id)]

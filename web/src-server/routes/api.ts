@@ -237,6 +237,16 @@ const handleGetSettings = async (res: Response, projectId?: string): Promise<voi
 // leave the process: the control plane returns masked/absent token state only.
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CREDENTIAL_REF_RE = /^(env|github-actions):\S+$/;
+const RAW_SECRET_KEY_NAMES = new Set(['token', 'apikey', 'accesstoken', 'password', 'secret']);
+const hasRawSecretKey = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.some(hasRawSecretKey);
+  if (!value || typeof value !== 'object') return false;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (RAW_SECRET_KEY_NAMES.has(key.toLowerCase().replace(/[_-]/g, ''))) return true;
+    if (hasRawSecretKey(nested)) return true;
+  }
+  return false;
+};
 
 // Collect workflow roots from a request body, honoring both the flat
 // `workflow_roots` field and the nested design-doc shape
@@ -620,16 +630,8 @@ const handleUpdateProjectConnections = async (req: Request, res: Response, proje
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const body = (req.body || {}) as JsonRecord;
   // NEVER accept raw token payloads; only refs + base-url.
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    for (const v of Object.values(body as Record<string, JsonRecord>)) {
-      if (v && typeof v === 'object' && Array.isArray(v)) continue;
-      if (v && typeof v === 'object') {
-        const vs = v as Record<string, unknown>;
-        if (['token', 'github_token', 'jira_token', 'secret', 'password'].some((k) => k in vs)) {
-          return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw token payloads are not accepted; provide a credential_ref instead'));
-        }
-      }
-    }
+  if (hasRawSecretKey(body)) {
+    return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw secret payloads are not accepted; provide a credential_ref instead'));
   }
   const args = ['project', 'connections', projectId];
   const conns = body;

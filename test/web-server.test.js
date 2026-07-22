@@ -1419,6 +1419,54 @@ test('SC-002 missing and unavailable credential refs expose stable non-secret st
   }
 });
 
+test('SC-003 nested raw-secret connection payloads are rejected before persistence', async () => {
+  const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+  const manifestPath = path.join(projectsDir, 'sc003-raw.json');
+  const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const manifestBytes = JSON.stringify({
+      project_id: 'sc003-raw',
+      name: 'SC003 Raw Secret Guard',
+      workspace_root: '.',
+      runs_root: '.agent-runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+      connections: { github: { 'credential-ref': 'env:SC003_GITHUB_TOKEN' } }
+    }, null, 2);
+    fs.writeFileSync(manifestPath, manifestBytes);
+
+    const response = await fetch(`${base}/api/projects/sc003-raw/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        github: {
+          metadata: [{ access_token: 'SC003_NESTED_SECRET_SENTINEL' }],
+          nested: { 'api-key': 'SC003_NESTED_API_KEY_SENTINEL' }
+        },
+        jira: {
+          credentials: [{ password: 'SC003_NESTED_PASSWORD_SENTINEL' }]
+        }
+      })
+    });
+    const body = await response.json();
+    assert.equal(
+      response.status,
+      400,
+      `SC-003 nested raw-secret keys in maps/arrays must be rejected before connection persistence; got ${response.status} ${JSON.stringify(body)}`
+    );
+    assert.match(body.error?.message || '', /credential|secret|token|password|api-key/i);
+    assert.doesNotMatch(JSON.stringify(body), /SC003_NESTED_SECRET_SENTINEL|SC003_NESTED_API_KEY_SENTINEL|SC003_NESTED_PASSWORD_SENTINEL/);
+    assert.equal(fs.readFileSync(manifestPath, 'utf8'), manifestBytes, 'SC-003 rejected connection writes must leave manifest bytes unchanged');
+  } finally {
+    await close(server);
+    if (previous === null) fs.rmSync(manifestPath, { force: true });
+    else fs.writeFileSync(manifestPath, previous);
+  }
+});
+
 test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
   let outsideDescriptorRoot = '';
