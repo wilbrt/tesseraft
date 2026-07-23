@@ -75,7 +75,22 @@
 
 (def ^:private project-id-re #"^[a-z0-9][a-z0-9-]{0,62}$")
 
-(def ^:private credential-ref-re #"^(env|github-actions):([^\s]+)$")
+(def ^:private credential-ref-re #"^(env|tesseraft|github-actions):([^\s]+)$")
+
+(def ^:private raw-secret-key-names #{"token" "apikey" "accesstoken" "password" "secret"})
+
+(defn- raw-secret-key? [k]
+  (contains? raw-secret-key-names
+             (str/replace (str/lower-case (name k)) #"[_-]" "")))
+
+(defn- contains-raw-secret-key? [x]
+  (cond
+    (map? x) (boolean (some (fn [[k v]]
+                              (or (raw-secret-key? k)
+                                  (contains-raw-secret-key? v)))
+                            x))
+    (sequential? x) (boolean (some contains-raw-secret-key? x))
+    :else false))
 
 (defn valid-project-id? [s]
   (and (string? s) (re-matches project-id-re s)))
@@ -94,8 +109,8 @@
 
 (defn credential-ref?
   "True if `s` is a credential reference of the form `<store>:<path>`. Only
-  `env:` and `github-actions:` stores are recognized shape-wise; resolution is
-  only wired for `env:` in the initial implementation."
+  `env:`, `tesseraft:`, and `github-actions:` stores are recognized shape-wise;
+  local resolution is wired only for the selected store."
   [s]
   (and (string? s) (re-find credential-ref-re s)))
 
@@ -110,6 +125,137 @@
 
 (defn credentials-file [options]
   (fs/path (tesseraft-home options) "credentials.json"))
+
+(defn- owner-only-file! [p]
+  (try
+    (java.nio.file.Files/setPosixFilePermissions
+      (.toPath (fs/file p))
+      (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------"))
+    (catch UnsupportedOperationException _ nil)
+    (catch Throwable _ nil))
+  p)
+
+(defn- atomic-write-json-owner-only! [p data]
+  (let [target (fs/path p)
+        parent (fs/parent target)
+        tmp (fs/path parent (str "." (fs/file-name target) ".tmp-" (java.util.UUID/randomUUID)))]
+    (fs/create-dirs parent)
+    (try
+      (spit (str tmp) (json/generate-string data {:pretty true}))
+      (owner-only-file! tmp)
+      (try
+        (java.nio.file.Files/move (.toPath (fs/file tmp))
+                                  (.toPath (fs/file target))
+                                  (into-array java.nio.file.CopyOption
+                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+        (catch Throwable _
+          (java.nio.file.Files/move (.toPath (fs/file tmp))
+                                    (.toPath (fs/file target))
+                                    (into-array java.nio.file.CopyOption
+                                                [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))))
+      (owner-only-file! target)
+      (catch Throwable t
+        (fs/delete-if-exists tmp)
+        (throw t)))
+    target))
+
+(defn- credential-key-string [k]
+  (if (keyword? k)
+    (if-let [ns (namespace k)]
+      (str ns "/" (name k))
+      (name k))
+    (str k)))
+
+(defn- valid-legacy-credential-entries? [creds]
+  (and (map? creds)
+       (not (contains? creds :version))
+       (not (contains? creds :credentials))
+       (seq creds)
+       (every? (fn [[k v]]
+                 (and (not (str/blank? (credential-key-string k)))
+                      (string? v)
+                      (not (str/blank? v))))
+               creds)))
+
+(defn- normalize-local-credential-store [creds]
+  (when (and (map? creds) (= 1 (:version creds)) (map? (:credentials creds)))
+    {:version 1
+     :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) (:credentials creds)))}))
+
+(defn- same-file-path? [a b]
+  (= (str (.normalize (.toAbsolutePath (fs/path a))))
+     (str (.normalize (.toAbsolutePath (fs/path b))))))
+
+(defn- legacy-credentials-backup-path [dest]
+  (fs/path (str dest ".legacy.json")))
+
+(defn migrate-local-credentials
+  "Migrate a flat legacy credential JSON object into the versioned user-local
+  credential store. When the legacy source is the actual store path, the
+  original flat bytes are preserved at `<credentials-file>.legacy.json` before
+  the versioned store is installed. Existing identical destinations are
+  idempotent successes; other destinations are refused."
+  [options legacy-file]
+  (let [legacy-path (when-not (str/blank? (str legacy-file)) (fs/path legacy-file))
+        dest (fs/path (or (:credentials-file options) (credentials-file options)))
+        same-path? (and legacy-path (same-file-path? legacy-path dest))]
+    (cond
+      (nil? legacy-path)
+      (error-response 400 "bad_request" "credentials migrate requires --legacy-file")
+
+      (not (fs/exists? legacy-path))
+      (error-response 400 "invalid_local_credential_store" "Legacy credential file is not readable" {:legacy_file (str legacy-path)})
+
+      :else
+      (try
+        (let [legacy (store/read-json legacy-path)
+              existing-store (when (fs/exists? dest)
+                               (try (normalize-local-credential-store (store/read-json dest)) (catch Throwable _ ::invalid)))]
+          (cond
+            (and same-path? (map? existing-store))
+            (do
+              (owner-only-file! dest)
+              {:status 200
+               :state "unchanged"
+               :credentials_count (count (:credentials existing-store))
+               :credentials_file (str dest)
+               :legacy_file (str legacy-path)})
+
+            (not (valid-legacy-credential-entries? legacy))
+            (error-response 400 "invalid_local_credential_store" "Legacy credential file must be a flat object of non-empty string values" {:legacy_file (str legacy-path)})
+
+            :else
+            (let [migrated {:version 1
+                            :credentials (into {} (map (fn [[k v]] [(credential-key-string k) v]) legacy))}
+                  result {:credentials_count (count (:credentials migrated))
+                          :credentials_file (str dest)
+                          :legacy_file (str legacy-path)}]
+              (cond
+                (or same-path? (not (fs/exists? dest)))
+                (let [backup (when same-path? (legacy-credentials-backup-path dest))]
+                  (when backup
+                    (when (and (fs/exists? backup)
+                               (not= (slurp (str backup)) (slurp (str legacy-path))))
+                      (throw (ex-info "Legacy credential backup already exists with different bytes" {:backup_file (str backup)})))
+                    (when-not (fs/exists? backup)
+                      (fs/copy legacy-path backup)
+                      (owner-only-file! backup)))
+                  (atomic-write-json-owner-only! dest migrated)
+                  (cond-> (assoc result :status 201 :state "migrated")
+                    backup (assoc :backup_file (str backup))))
+
+                (= migrated existing-store)
+                (do
+                  (owner-only-file! dest)
+                  (assoc result :status 200 :state "unchanged"))
+
+                :else
+                (error-response 409 "conflict" "Destination credential store already exists and will not be overwritten" {:credentials_file (str dest)})))))
+        (catch Throwable t
+          (error-response 400 "migration_failed" "Local credential migration could not be completed" {:message (.getMessage t)
+                                                                                                       :legacy_file (str legacy-path)
+                                                                                                       :credentials_file (str dest)}))))))
 
 (defn- validate-project-registry [registry]
   (let [allowed-top #{:version :projects}
@@ -173,7 +319,7 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
-(declare read-project-descriptor-at-root)
+(declare read-project-descriptor-at-root project-scoped-opts)
 
 (defn- merge-registration-descriptor [registration]
   (if (and (#{"registration" :registration} (:source registration))
@@ -342,6 +488,92 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
+(defn valid-local-credential-store? [creds]
+  (and (map? creds)
+       (= 1 (:version creds))
+       (map? (:credentials creds))
+       (every? string? (vals (:credentials creds)))))
+
+(defn local-credential-value [options _ref path]
+  (let [creds (read-credentials options)]
+    (when (valid-local-credential-store? creds)
+      (let [versioned (:credentials creds)]
+        (or (get versioned path)
+            (get versioned (keyword path)))))))
+
+(defn production-credential-resolver
+  "Resolve a validated credential ref from its production-selected store."
+  [options ref]
+  (let [[_ store-name path] (re-matches credential-ref-re (str ref))]
+    (case store-name
+      "env"
+      (let [v (System/getenv path)]
+        (if (str/blank? v)
+          {:present false :state "absent" :credential-ref ref}
+          {:present true :state "present" :credential-ref ref :value v}))
+      "tesseraft"
+      (let [creds (read-credentials options)]
+        (cond
+          (nil? creds) {:present false :state "absent" :credential-ref ref}
+          (not (valid-local-credential-store? creds)) {:present false :state "invalid" :credential-ref ref :error "invalid local credential store"}
+          :else (let [v (local-credential-value options ref path)]
+                  (if (str/blank? v)
+                    {:present false :state "absent" :credential-ref ref}
+                    {:present true :state "present" :credential-ref ref :value v}))))
+      "github-actions"
+      {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
+      {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)})))
+
+(defn- resolver-failure [ref]
+  {:present false
+   :state "invalid"
+   :credential-ref ref
+   :error "credential resolver failed"})
+
+(defn- valid-resolver-result? [result]
+  (and (map? result)
+       (boolean? (:present result))
+       (contains? #{"present" "absent" "unresolved" "invalid"} (:state result))
+       (if (= "present" (:state result))
+         (and (:present result) (string? (:value result)) (not (str/blank? (:value result))))
+         (not (:present result)))))
+
+(defn- normalized-resolver-result [ref result injected?]
+  (let [base (cond-> {:present (:present result)
+                      :state (:state result)
+                      :credential-ref ref}
+               (= "present" (:state result)) (assoc :value (:value result)))]
+    (case (:state result)
+      "invalid" (assoc base :error (if injected?
+                                      "credential resolver reported invalid"
+                                      (or (:error result) "invalid credential")))
+      "unresolved" (assoc base :unresolved (if injected?
+                                             "credential resolver unavailable"
+                                             (or (:unresolved result) "credential resolver unavailable")))
+      base)))
+
+(defn resolve-credential
+  "Resolve a credential ref through the project-scoped resolver in `options`,
+  defaulting to the production environment/local-store resolver. Injected
+  resolvers receive `[scoped-options ref]` and are intentionally ephemeral.
+  Returns stable non-secret state plus `:value` only for in-process consumers;
+  public callers must drop `:value` before serialization."
+  [options ref]
+  (cond
+    (or (nil? ref) (str/blank? (str ref))) {:present false :state "absent"}
+    (not (credential-ref? ref)) {:present false :state "invalid" :error "invalid credential-ref"}
+    :else
+    (try
+      (let [scoped-options (opts options)
+            injected? (some? (:credential-resolver scoped-options))
+            resolver (or (:credential-resolver scoped-options) production-credential-resolver)
+            result (resolver scoped-options ref)]
+        (if (valid-resolver-result? result)
+          (normalized-resolver-result ref result injected?)
+          (resolver-failure ref)))
+      (catch Throwable _
+        (resolver-failure ref)))))
+
 (defn- norm-discovery [raw]
   (cond
     (nil? raw) nil
@@ -397,7 +629,7 @@
 (defn mask-token [v]
   (if (or (nil? v) (not (string? v)) (str/blank? v))
     {:present false}
-    {:present true :preview (subs (str v) (max 0 (- (count (str v)) 4)))}))
+    {:present true}))
 
 (defn synthesize-default-project
   "Build the implicit default project from `default-options` + legacy
@@ -696,6 +928,10 @@
            (error-response 409 "conflict" "A project with that id already exists"
                            {:project_id project-id})))
 
+       (contains-raw-secret-key? spec)
+       (error-response 400 "bad_request"
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
+
        :else
        (if-let [err (validate-project-spec options project-id spec)]
          (error-response 400 "bad_request" err)
@@ -759,6 +995,10 @@
 
        (not (fs/exists? (project-manifest-path options project-id)))
        (error-response 404 "not_found" "Project not found" {:project_id project-id})
+
+       (contains-raw-secret-key? spec)
+       (error-response 400 "bad_request"
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
        (if-let [err (validate-project-spec options project-id spec)]
@@ -945,40 +1185,24 @@
                              (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)})))))))))))))))))
 
 (defn mask-credential
-  "Resolve a credential-ref against the out-of-repo store and return a masked
-  state (present/absent) WITHOUT ever returning the raw token. `env:` refs are
-  resolved from the process environment; `github-actions:` refs are validated
-  but not resolved locally (reported as :unresolved)."
+  "Resolve a credential-ref and return only stable non-secret state."
   [options ref]
-  (cond
-    (or (nil? ref) (str/blank? (str ref))) {:present false}
-    (not (credential-ref? ref)) {:present false :error "invalid credential-ref"}
-    :else
-    (let [[_ store-name path] (re-matches credential-ref-re ref)]
-      (case store-name
-        "env"
-        (let [v (System/getenv path)]
-          (if (str/blank? v)
-            {:present false :credential-ref ref}
-            {:present true :credential-ref ref :preview (subs v (max 0 (- (count v) 4)))}))
-        "github-actions"
-        {:present false :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
-        {:present false :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
+  (dissoc (resolve-credential options ref) :value))
 
 (defn get-project-connections
   ([] (get-project-connections {} nil))
   ([options project-id]
-   (let [resolved (resolve-project options project-id)]
-     (if (:error resolved)
-       resolved
-       (let [creds (or (read-credentials options) {})]
-         {:connections
-          (into {} (for [[k v] (:connections resolved {})]
-                     (let [ref (:credential-ref v)
-                           masked (if (and ref (get creds (str ref)))
-                                    {:present true :credential-ref ref}
-                                    (mask-credential options ref))]
-                       [k (api-value (merge v {:credential-state masked}))])))})))))
+   (let [resolved (resolve-project options project-id)
+         sopts (when-not (:error resolved) (project-scoped-opts options project-id))]
+     (cond
+       (:error resolved) resolved
+       (:error sopts) sopts
+       :else
+       {:connections
+        (into {} (for [[k v] (:connections resolved {})]
+                   (let [ref (:credential-ref v)
+                         masked (mask-credential sopts ref)]
+                     [k (api-value (merge v {:credential-state masked}))])))}))))
 
 (defn update-project-connections
   ([] (update-project-connections {} nil nil))
@@ -988,13 +1212,10 @@
        (not (map? updates))
        (error-response 400 "bad_request" "connections update must be an object")
 
-       (some (fn [[_ v]]
-               (and (map? v)
-                    (some #(contains? v %) [:token :github_token :jira_token :secret :password])))
-             updates)
-       ;; Raw token payloads are NEVER accepted; only refs + base-url.
+       (contains-raw-secret-key? updates)
+       ;; Raw secret payloads are NEVER accepted; only refs + base-url.
        (error-response 400 "bad_request"
-                      "Raw token payloads are not accepted; provide a credential-ref instead")
+                      "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
        (let [resolved (resolve-project options project-id)]
@@ -1191,6 +1412,20 @@
            (seq conflicts) (assoc :conflicts conflicts)
            (seq duplicates) (assoc :duplicates duplicates))]))))
 
+(defn project-context-opts
+  "Build project-scoped options from an already resolved project context.
+  Ephemeral options such as `:credential-resolver` are preserved."
+  [options project]
+  (let [base (opts options)
+        control-ws (:workspace-root base)]
+    (-> base
+        (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
+               :runs-root (:runs_root project))
+        (assoc :workflow-roots (or (get-in project [:discovery :workflow-roots])
+                                   (:workflow-roots base))
+               :tesseraft-home (or (get-in project [:discovery :tesseraft-home])
+                                    (:tesseraft-home base))))))
+
 (defn project-scoped-opts
   "Build per-call options resolved from a project. The project's
   `:workspace_root`/`:runs_root`/discovery roots are relative to the control
@@ -1199,22 +1434,14 @@
   bare relative path that would silently relocate discovery to the process
   cwd. `:runs_root` stays relative (resolved by `run-state-files` against
   the now-absolutized workspace root). If the project can't be resolved,
-  returns `opts` unchanged (defensive fallback). The `default` project's
-  `workspace_root` is `.` (the control workspace), preserving existing
-  single-project behavior."
+  returns its structured error. The `default` project's `workspace_root` is
+  `.` (the control workspace), preserving existing single-project behavior."
   ([options] (project-scoped-opts options nil))
   ([options project-id]
    (let [project (resolve-project options project-id)]
      (if (:error project)
        project
-       (let [control-ws (:workspace-root (opts options))]
-         (-> (opts options)
-             (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
-                    :runs-root (:runs_root project))
-             (assoc :workflow-roots (or (get-in project [:discovery :workflow-roots])
-                                       (:workflow-roots (opts options)))
-                    :tesseraft-home (or (get-in project [:discovery :tesseraft-home])
-                                        (:tesseraft-home (opts options))))))))))
+       (project-context-opts options project)))))
 
 (defn list-workflows
   ([] (list-workflows {}))

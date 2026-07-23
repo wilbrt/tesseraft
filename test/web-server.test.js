@@ -1062,7 +1062,7 @@ test('web server exposes git-user read and write via the control plane', async (
   assert.equal(refreshedBody.git_user.name, 'Tess Bot');
 });
 
-test('web server exposes settings read and write via the control plane with masked tokens', async (t) => {
+test('SC-004 web server exposes legacy settings credential state without value-derived previews', async (t) => {
   const configFile = path.join(process.cwd(), '.tesseraft', 'settings.json');
   fs.rmSync(configFile, { force: true });
   t.after(() => fs.rmSync(configFile, { force: true }));
@@ -1118,11 +1118,17 @@ test('web server exposes settings read and write via the control plane with mask
   assert.equal(written.settings.pi_default_model, 'gpt-4o-mini');
   assert.equal(written.settings.default_repo_root, '/tmp/my-repo');
   assert.equal(written.settings.color_scheme, 'matrix');
-  // Tokens must be masked — only present + last 4 preview, never full value.
+  // SC-004: public settings views expose only credential state, never value-derived previews.
   assert.equal(written.settings.github_token.present, true);
-  assert.equal(written.settings.github_token.preview, '1234');
+  assert.ok(
+    !('preview' in written.settings.github_token),
+    `SC-004 legacy settings github_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.github_token)}`
+  );
   assert.equal(written.settings.jira_token.present, true);
-  assert.equal(written.settings.jira_token.preview, 'abcd');
+  assert.ok(
+    !('preview' in written.settings.jira_token),
+    `SC-004 legacy settings jira_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.jira_token)}`
+  );
 
   const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   assert.equal(stored.github_token, 'ghp_secretvalue1234');
@@ -1142,7 +1148,10 @@ test('web server exposes settings read and write via the control plane with mask
   const unchangedBody = await unchanged.json();
   assert.equal(unchangedBody.settings.pi_default_provider, 'anthropic');
   assert.equal(unchangedBody.settings.github_token.present, true);
-  assert.equal(unchangedBody.settings.github_token.preview, '1234');
+  assert.ok(
+    !('preview' in unchangedBody.settings.github_token),
+    `SC-004 unchanged legacy settings token must preserve state without exposing a value-derived preview; got ${JSON.stringify(unchangedBody.settings.github_token)}`
+  );
   // And the stored value is unchanged.
   assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).github_token, 'ghp_secretvalue1234');
 
@@ -1328,6 +1337,312 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
     assert.match(rawTokenBody.error.message, /credential/i);
   } finally {
     await close(server);
+  }
+});
+
+test('SC-001 tesseraft credential refs resolve from the selected project local store across control-plane and doctor', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-tesseraft-selected-store-'));
+  try {
+    const ambientHome = path.join(root, 'ambient-home');
+    const selectedHome = path.join(root, 'selected-home');
+    fs.mkdirSync(ambientHome, { recursive: true });
+    fs.mkdirSync(selectedHome, { recursive: true });
+    fs.writeFileSync(path.join(ambientHome, 'credentials.json'), JSON.stringify({
+      version: 1,
+      credentials: { SC001_AMBIENT_ONLY_TOKEN: 'SC001_TESSERAFT_AMBIENT_SENTINEL' }
+    }, null, 2));
+    fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
+      version: 1,
+      credentials: { SC001_LOCAL_TOKEN: 'SC001_TESSERAFT_LOCAL_SENTINEL' }
+    }, null, 2));
+
+    const runCp = (args) => {
+      try {
+        return {
+          threw: false,
+          body: JSON.parse(execFileSync('./bin/tesseraft', [
+            'control-plane', '--workspace-root', root, '--tesseraft-home', ambientHome, ...args
+          ], { encoding: 'utf8', stdio: 'pipe' }))
+        };
+      } catch (error) {
+        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
+      }
+    };
+
+    const ambientOnly = runCp([
+      'project', 'create', 'sc001-ambient-only',
+      '--tesseraft-home', selectedHome,
+      '--github-credential-ref', 'tesseraft:SC001_AMBIENT_ONLY_TOKEN'
+    ]);
+    assert.equal(ambientOnly.threw, false, `SC-001 ambient-only project create should succeed; got ${JSON.stringify(ambientOnly.body)}`);
+
+    const ambientOnlyConnections = runCp(['project', 'connections', 'sc001-ambient-only']);
+    assert.equal(ambientOnlyConnections.threw, false, `SC-001 ambient-only connections lookup should succeed; got ${JSON.stringify(ambientOnlyConnections.body)}`);
+    const ambientOnlyState = ambientOnlyConnections.body.connections.github['credential-state'];
+    assert.equal(ambientOnlyState.present, false, `SC-001 selected project store must not fall back to ambient credentials; got ${JSON.stringify(ambientOnlyState)}`);
+    assert.equal(ambientOnlyState.state, 'absent');
+    assert.doesNotMatch(JSON.stringify(ambientOnlyConnections.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
+
+    const ambientOnlyDoctor = runCp(['--project-id', 'sc001-ambient-only', 'doctor']);
+    assert.equal(ambientOnlyDoctor.threw, false, `SC-001 ambient-only doctor lookup should succeed; got ${JSON.stringify(ambientOnlyDoctor.body)}`);
+    const ambientOnlyCredentialCheck = ambientOnlyDoctor.body.checks.find((check) => check.id === 'github-credential');
+    assert.equal(ambientOnlyCredentialCheck?.status, 'not-configured', `SC-001 doctor must not resolve tesseraft: refs from ambient home; got ${JSON.stringify(ambientOnlyCredentialCheck)}`);
+    assert.doesNotMatch(JSON.stringify(ambientOnlyDoctor.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
+
+    const created = runCp([
+      'project', 'create', 'sc001-local',
+      '--tesseraft-home', selectedHome,
+      '--github-credential-ref', 'tesseraft:SC001_LOCAL_TOKEN'
+    ]);
+    assert.equal(
+      created.threw,
+      false,
+      `SC-001 tesseraft: refs must be accepted for project credential refs; got ${JSON.stringify(created.body)}`
+    );
+
+    const connections = runCp(['project', 'connections', 'sc001-local']);
+    assert.equal(connections.threw, false, `SC-001 connections lookup should succeed; got ${JSON.stringify(connections.body)}`);
+    const state = connections.body.connections.github['credential-state'];
+    assert.equal(state.present, true, `SC-001 tesseraft: refs should resolve from the selected project store; got ${JSON.stringify(state)}`);
+    assert.equal(state['credential-ref'], 'tesseraft:SC001_LOCAL_TOKEN');
+    assert.doesNotMatch(JSON.stringify(connections.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
+
+    const doctor = runCp(['--project-id', 'sc001-local', 'doctor']);
+    assert.equal(doctor.threw, false, `SC-001 doctor lookup should succeed; got ${JSON.stringify(doctor.body)}`);
+    const credentialCheck = doctor.body.checks.find((check) => check.id === 'github-credential');
+    assert.equal(credentialCheck?.status, 'ready', `SC-001 doctor must use the same selected-store tesseraft: resolver; got ${JSON.stringify(credentialCheck)}`);
+    assert.doesNotMatch(JSON.stringify(doctor.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SC-001 runtime starts preserve selected project credential context across relocated workspaces', async () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-runtime-project-context-'));
+  const controlWorkspace = path.join(root, 'control');
+  const runtimeWorkspace = path.join(root, 'runtime-workspace');
+  const selectedHome = path.join(root, 'selected-home');
+  const otherHome = path.join(root, 'other-home');
+  const projectsDir = path.join(controlWorkspace, '.tesseraft', 'projects');
+  const workflowDir = path.join(runtimeWorkspace, '.tesseraft', 'workflows', 'runtime-context');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.mkdirSync(selectedHome, { recursive: true });
+  fs.mkdirSync(otherHome, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "runtime-context" :title "Runtime Context"}
+ :defaults {:max-rounds 1 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :start
+ :states {:start {:type :deterministic
+                  :handler :noop/succeed
+                  :runtime {:timeout "10s"}
+                  :next :done}
+          :done {:type :terminal :status :success}}}
+`);
+  fs.writeFileSync(path.join(projectsDir, 'selected.json'), JSON.stringify({
+    project_id: 'selected',
+    name: 'Selected',
+    workspace_root: runtimeWorkspace,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'], 'tesseraft-home': selectedHome },
+    connections: { github: { 'credential-ref': 'tesseraft:GH_TOKEN' } }
+  }, null, 2));
+  fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
+    version: 1,
+    credentials: { GH_TOKEN: 'SC001_RUNTIME_SELECTED_SENTINEL' }
+  }, null, 2));
+  fs.writeFileSync(path.join(otherHome, 'credentials.json'), JSON.stringify({
+    version: 1,
+    credentials: { GH_TOKEN: 'SC001_RUNTIME_OTHER_SENTINEL' }
+  }, null, 2));
+
+  const child = spawn(process.execPath, ['web/dist-server/server.js', '--host', '127.0.0.1', '--port', '0'], {
+    cwd: process.cwd(),
+    env: { ...process.env, TESSERAFT_WORKSPACE_ROOT: controlWorkspace, TESSERAFT_HOME: otherHome },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  try {
+    const base = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`project-context server did not start: ${stderr}`)), 10000);
+      child.once('error', (error) => { clearTimeout(timeout); reject(error); });
+      child.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`project-context server exited with ${code}: ${stderr}`)); });
+      child.stdout.on('data', (chunk) => {
+        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timeout); resolve(`http://127.0.0.1:${match[1]}`); }
+      });
+    });
+
+    const startResponse = await fetch(`${base}/api/projects/selected/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_name: 'runtime-context', run_id: 'runtime-context-run', inputs: {}, max_steps: 1 })
+    });
+    assert.equal(startResponse.status, 202, `start should succeed through selected project context: ${JSON.stringify(await startResponse.clone().json().catch(() => ({})))}`);
+    const started = await startResponse.json();
+    const runDir = started.cli.result.run.dir;
+
+    const probeCode = `(require '[tesseraft.runtime.store :as s] '[tesseraft.adapters.builtin :as b] '[babashka.fs :as fs] '[cheshire.core :as json])
+(let [run-dir ${JSON.stringify(runDir)}
+      ctx (s/load-context run-dir)
+      opts (b/github-command-opts ctx {})
+      token (get-in opts [:extra-env "GH_TOKEN"])]
+  (s/write-runtime-json! ctx (fs/path run-dir "adapter-output.json") {:adapter opts :token token})
+  (s/event! ctx {:event "adapter.output" :adapter opts :token token})
+  (println (json/generate-string {:run (select-keys (:run ctx) [:project-id :workspace-root :runs-root :tesseraft-home :workflow-roots]) :opts opts :token token})))`;
+    const probe = JSON.parse(execFileSync('bb', ['--config', 'bb.edn', '-e', probeCode], { encoding: 'utf8' }));
+    assert.equal(probe.token, 'SC001_RUNTIME_SELECTED_SENTINEL', `real GitHub adapter options should use selected project local store: ${JSON.stringify(probe)}`);
+    assert.notEqual(probe.token, 'SC001_RUNTIME_OTHER_SENTINEL', 'ambient/other Tesseraft home must not be selected');
+    assert.equal(probe.run['tesseraft-home'], selectedHome);
+    assert.deepEqual(probe.run['workflow-roots'], ['.tesseraft/workflows']);
+
+    const durableBytes = [
+      fs.readFileSync(path.join(runDir, 'state.edn'), 'utf8'),
+      fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'),
+      fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8')
+    ].join('\n');
+    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_SELECTED_SENTINEL/);
+    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_OTHER_SENTINEL/);
+    assert.match(fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8'), /\[redacted\]/);
+  } finally {
+    child.kill('SIGTERM');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SC-002 missing and unavailable credential refs expose stable non-secret states', () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc002-stable-credential-states-'));
+  try {
+    const home = path.join(root, 'home');
+    const runCp = (args) => {
+      try {
+        return {
+          threw: false,
+          body: JSON.parse(execFileSync('./bin/tesseraft', [
+            'control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args
+          ], { encoding: 'utf8', stdio: 'pipe' }))
+        };
+      } catch (error) {
+        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
+      }
+    };
+
+    const missingName = 'SC002_MISSING_TOKEN_DO_NOT_DEFINE';
+    delete process.env[missingName];
+    assert.equal(runCp(['project', 'create', 'sc002-missing', '--github-credential-ref', `env:${missingName}`]).threw, false);
+    const missingConnections = runCp(['project', 'connections', 'sc002-missing']);
+    assert.equal(missingConnections.threw, false, `SC-002 missing selected-store lookup should not fail; got ${JSON.stringify(missingConnections.body)}`);
+    const missingState = missingConnections.body.connections.github['credential-state'];
+    assert.equal(
+      missingState.state,
+      'absent',
+      `SC-002 missing selected-store value must be classified as absent with a stable state field; got ${JSON.stringify(missingState)}`
+    );
+    assert.equal(missingState['credential-ref'], `env:${missingName}`);
+    assert.doesNotMatch(JSON.stringify(missingConnections.body), /SC002_SECRET_SENTINEL|SC002_ENV_FALLBACK_VALUE/);
+
+    assert.equal(runCp(['project', 'create', 'sc002-gha', '--github-credential-ref', 'github-actions:SC002_TOKEN']).threw, false);
+    const ghaConnections = runCp(['project', 'connections', 'sc002-gha']);
+    assert.equal(ghaConnections.threw, false, `SC-002 github-actions lookup should not fail; got ${JSON.stringify(ghaConnections.body)}`);
+    const ghaState = ghaConnections.body.connections.github['credential-state'];
+    assert.equal(
+      ghaState.state,
+      'unresolved',
+      `SC-002 locally unavailable github-actions store must be classified as unresolved with a stable state field; got ${JSON.stringify(ghaState)}`
+    );
+    assert.equal(ghaState['credential-ref'], 'github-actions:SC002_TOKEN');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SC-003 nested raw-secret connection payloads are rejected before persistence', async () => {
+  const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+  const manifestPath = path.join(projectsDir, 'sc003-raw.json');
+  const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const manifestBytes = JSON.stringify({
+      project_id: 'sc003-raw',
+      name: 'SC003 Raw Secret Guard',
+      workspace_root: '.',
+      runs_root: '.agent-runs',
+      discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+      connections: { github: { 'credential-ref': 'env:SC003_GITHUB_TOKEN' } }
+    }, null, 2);
+    fs.writeFileSync(manifestPath, manifestBytes);
+
+    const response = await fetch(`${base}/api/projects/sc003-raw/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        github: {
+          metadata: [{ access_token: 'SC003_NESTED_SECRET_SENTINEL' }],
+          nested: { 'api-key': 'SC003_NESTED_API_KEY_SENTINEL' }
+        },
+        jira: {
+          credentials: [{ password: 'SC003_NESTED_PASSWORD_SENTINEL' }]
+        }
+      })
+    });
+    const body = await response.json();
+    assert.equal(
+      response.status,
+      400,
+      `SC-003 nested raw-secret keys in maps/arrays must be rejected before connection persistence; got ${response.status} ${JSON.stringify(body)}`
+    );
+    assert.match(body.error?.message || '', /credential|secret|token|password|api-key/i);
+    assert.doesNotMatch(JSON.stringify(body), /SC003_NESTED_SECRET_SENTINEL|SC003_NESTED_API_KEY_SENTINEL|SC003_NESTED_PASSWORD_SENTINEL/);
+    assert.equal(fs.readFileSync(manifestPath, 'utf8'), manifestBytes, 'SC-003 rejected connection writes must leave manifest bytes unchanged');
+  } finally {
+    await close(server);
+    if (previous === null) fs.rmSync(manifestPath, { force: true });
+    else fs.writeFileSync(manifestPath, previous);
+  }
+});
+
+test('SC-001 HTTP connections accepts tesseraft credential refs without raw values', async () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-http-tesseraft-ref-'));
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+    const manifestPath = path.join(projectsDir, 'sc001-http.json');
+    const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+    fs.mkdirSync(projectsDir, { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      project_id: 'sc001-http',
+      name: 'SC001 HTTP Tesseraft',
+      workspace_root: '.',
+      runs_root: '.agent-runs',
+      discovery: { 'workflow-roots': ['examples'] },
+      connections: { github: { 'credential-ref': 'env:SC001_HTTP_INITIAL' } }
+    }, null, 2));
+    try {
+      const response = await fetch(`${base}/api/projects/sc001-http/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ github: { credential_ref: 'tesseraft:SC001_HTTP_TOKEN' } })
+      });
+      const body = await response.json();
+      assert.equal(response.status, 200, `HTTP connections must accept tesseraft: refs; got ${response.status} ${JSON.stringify(body)}`);
+      assert.equal(body.connections.github['credential-ref'], 'tesseraft:SC001_HTTP_TOKEN');
+      assert.doesNotMatch(JSON.stringify(body), /SC001_HTTP_SECRET_SENTINEL/);
+    } finally {
+      if (previous === null) fs.rmSync(manifestPath, { force: true });
+      else fs.writeFileSync(manifestPath, previous);
+    }
+  } finally {
+    await close(server);
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -236,7 +236,17 @@ const handleGetSettings = async (res: Response, projectId?: string): Promise<voi
 // These shell to `tesseraft control-plane project*` subcommands. Secrets never
 // leave the process: the control plane returns masked/absent token state only.
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const CREDENTIAL_REF_RE = /^(env|github-actions):\S+$/;
+const CREDENTIAL_REF_RE = /^(env|tesseraft|github-actions):\S+$/;
+const RAW_SECRET_KEY_NAMES = new Set(['token', 'apikey', 'accesstoken', 'password', 'secret']);
+const hasRawSecretKey = (value: unknown): boolean => {
+  if (Array.isArray(value)) return value.some(hasRawSecretKey);
+  if (!value || typeof value !== 'object') return false;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (RAW_SECRET_KEY_NAMES.has(key.toLowerCase().replace(/[_-]/g, ''))) return true;
+    if (hasRawSecretKey(nested)) return true;
+  }
+  return false;
+};
 
 // Collect workflow roots from a request body, honoring both the flat
 // `workflow_roots` field and the nested design-doc shape
@@ -620,16 +630,8 @@ const handleUpdateProjectConnections = async (req: Request, res: Response, proje
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const body = (req.body || {}) as JsonRecord;
   // NEVER accept raw token payloads; only refs + base-url.
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    for (const v of Object.values(body as Record<string, JsonRecord>)) {
-      if (v && typeof v === 'object' && Array.isArray(v)) continue;
-      if (v && typeof v === 'object') {
-        const vs = v as Record<string, unknown>;
-        if (['token', 'github_token', 'jira_token', 'secret', 'password'].some((k) => k in vs)) {
-          return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw token payloads are not accepted; provide a credential_ref instead'));
-        }
-      }
-    }
+  if (hasRawSecretKey(body)) {
+    return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw secret payloads are not accepted; provide a credential_ref instead'));
   }
   const args = ['project', 'connections', projectId];
   const conns = body;
@@ -967,21 +969,35 @@ const handleStartRun = async (req: Request, res: Response, projectId?: string): 
 
   const workflow = await runControlPlane([...pid, 'workflow', workflowName]);
   if (workflow.status !== 200) return jsonResponse(res, workflow.status, workflow.body);
-  const filePath = workflowPath(workflow.body);
+  let filePath = workflowPath(workflow.body);
   if (!filePath) return jsonResponse(res, 502, errorBody(502, 'bad_gateway', 'Workflow detail did not include a path'));
 
-  // Resolve the project's runs-root/workspace-root so the runtime writes the
-  // run dir under the selected project rather than the ambient cwd. The
-  // default project uses cwd('.') + '.agent-runs' (existing behavior).
+  // Resolve the project's runtime context so runtime adapters/redactors keep
+  // using the exact selected project instead of rediscovering from a relocated
+  // project workspace.
   let runtimeRoots: string[] = [];
+  let projectWorkspaceRoot: string | undefined;
   if (projectId) {
     const project = await runControlPlane(['project', projectId]);
     if (project.status === 200 && project.body && typeof project.body === 'object') {
-      const p = project.body as { workspace_root?: unknown; runs_root?: unknown };
-      if (typeof p.workspace_root === 'string' && p.workspace_root.trim() !== '') runtimeRoots.push('--workspace-root', p.workspace_root);
+      runtimeRoots.push('--project-context', JSON.stringify(project.body));
+      const p = project.body as { workspace_root?: unknown; runs_root?: unknown; discovery?: { 'workflow-roots'?: unknown; tesseraft_home?: unknown; 'tesseraft-home'?: unknown } };
+      if (typeof p.workspace_root === 'string' && p.workspace_root.trim() !== '') {
+        projectWorkspaceRoot = p.workspace_root;
+        runtimeRoots.push('--workspace-root', p.workspace_root);
+      }
       if (typeof p.runs_root === 'string' && p.runs_root.trim() !== '') runtimeRoots.push('--runs-root', p.runs_root);
+      const tesseraftHome = typeof p.discovery?.['tesseraft-home'] === 'string' ? p.discovery['tesseraft-home'] : p.discovery?.tesseraft_home;
+      if (typeof tesseraftHome === 'string' && tesseraftHome.trim() !== '') runtimeRoots.push('--tesseraft-home', tesseraftHome);
+      const workflowRoots = p.discovery?.['workflow-roots'];
+      if (Array.isArray(workflowRoots)) {
+        for (const root of workflowRoots) {
+          if (typeof root === 'string' && root.trim() !== '') runtimeRoots.push('--workflow-root', root);
+        }
+      }
     }
   }
+  if (projectWorkspaceRoot && !path.isAbsolute(filePath)) filePath = path.join(projectWorkspaceRoot, filePath);
 
   const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json', ...pid, ...runtimeRoots];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);

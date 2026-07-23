@@ -10,9 +10,6 @@
   (let [rendered (spec/render-template-string p ctx)]
     (if (str/starts-with? rendered "/") rendered (str (fs/path (get-in ctx [:run :dir]) rendered)))))
 
-(defn write-text! [path text]
-  (fs/create-dirs (fs/parent path))
-  (spit path text))
 
 (defn status-output? [k node]
   (or (= :status k)
@@ -34,21 +31,20 @@
   (when (spec/output-required? contract)
     (let [path (artifact-path ctx (spec/output-path contract))]
       (if (status-output? output-key node)
-        (store/write-json! path {:status "pass"
-                                 :summary "Mock executor dry-run pass"
-                                 :issues_file nil})
+        (store/write-runtime-json! ctx path {:status "pass"
+                                             :summary "Mock executor dry-run pass"
+                                             :issues_file nil})
         (let [value (placeholder-value ctx state-id output-key path)]
           (if (map? value)
-            (store/write-json! path value)
-            (write-text! path value)))))))
+            (store/write-runtime-json! ctx path value)
+            (store/write-runtime-text! ctx path value)))))))
 
 (defn run-agent-node! [wf ctx state-id node]
   (let [prompt-file (pi-cli/render-prompt! wf ctx state-id node)
         log-file (str (fs/path (get-in ctx [:run :dir]) "logs" (str (name state-id) "-mock-" (get-in ctx [:run :attempt]) ".log")))]
     (doseq [output (spec/output-contracts node)]
       (write-output! ctx state-id node output))
-    (fs/create-dirs (fs/parent log-file))
-    (spit log-file (str "MOCK EXECUTOR\n\nPROMPT_FILE: " prompt-file "\nSTATE: " (name state-id) "\n"))
+    (store/write-runtime-text! ctx log-file (str "MOCK EXECUTOR\n\nPROMPT_FILE: " prompt-file "\nSTATE: " (name state-id) "\n"))
     {:executor "mock"
      :ok true
      :status "pass"

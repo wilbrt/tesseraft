@@ -8,7 +8,6 @@
 
 (def statuses ["ready" "not-configured" "unreachable" "invalid"])
 (def check-order ["github-credential" "github-auth" "jira-base-url" "jira-credential" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root"])
-(def ^:private credential-ref-re #"^(env|github-actions):([^\s]+)$")
 
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- blank? [v] (or (nil? v) (str/blank? (str v))))
@@ -20,16 +19,7 @@
 (defn- conn-val [c k] (kwget c k (keyword (str/replace (name k) #"-" "_")) (name k) (str/replace (name k) #"-" "_")))
 
 (defn- resolved-token [options ref]
-  (cond
-    (blank? ref) nil
-    (not (re-matches credential-ref-re (str ref))) nil
-    :else
-    (let [[_ store-name path] (re-matches credential-ref-re (str ref))
-          creds (or (cp/read-credentials options) {})]
-      (or (get creds (str ref))
-          (case store-name
-            "env" (System/getenv path)
-            nil)))))
+  (:value (cp/resolve-credential options ref)))
 
 (defn- redact-value [s secrets]
   (reduce (fn [acc secret]
@@ -86,7 +76,7 @@
         ref (conn-val c :credential-ref)]
     (cond
       (blank? ref) {:status "not-configured" :summary (str (str/capitalize (name service)) " credential reference is not configured.") :remediation "Configure a credential reference such as env:NAME."}
-      (not (re-matches credential-ref-re (str ref))) {:status "invalid" :summary "Credential reference has invalid syntax." :remediation "Use env:NAME or github-actions:NAME; do not store raw secrets."}
+      (= "invalid" (:state (cp/resolve-credential options ref))) {:status "invalid" :summary "Credential reference has invalid syntax or the selected store is invalid." :remediation "Use env:NAME, tesseraft:NAME, or github-actions:NAME; do not store raw secrets."}
       (resolved-token options ref) {:status "ready" :summary (str "Credential reference " ref " resolves locally.") :remediation nil}
       :else {:status "not-configured" :summary (str "Credential reference " ref " does not resolve locally.") :remediation "Set the referenced environment variable or local credential-store entry."})))
 
@@ -192,13 +182,14 @@
    (let [project (cp/resolve-project options project-id)]
      (if (:error project)
        project
-       (let [github-secret (resolved-token options (conn-val (conn project :github) :credential-ref))
-             jira-secret (resolved-token options (conn-val (conn project :jira) :credential-ref))
+       (let [sopts (cp/project-scoped-opts options project-id)
+             github-secret (resolved-token sopts (conn-val (conn project :github) :credential-ref))
+             jira-secret (resolved-token sopts (conn-val (conn project :jira) :credential-ref))
              secrets (remove blank? [github-secret jira-secret])
-             checks [(check "github-credential" "GitHub credential reference" "static" #(credential-check options project :github))
-                     (check "github-auth" "GitHub authentication" "read-only" #(github-auth-check options project))
+             checks [(check "github-credential" "GitHub credential reference" "static" #(credential-check sopts project :github))
+                     (check "github-auth" "GitHub authentication" "read-only" #(github-auth-check sopts project))
                      (check "jira-base-url" "Jira base URL" "static" #(jira-base-url-check project))
-                     (check "jira-credential" "Jira credential reference" "static" #(credential-check options project :jira))
+                     (check "jira-credential" "Jira credential reference" "static" #(credential-check sopts project :jira))
                      (check "pi-provider-model" "Pi provider and model" "read-only" #(pi-check project))
                      (check "git-author" "Git author identity" "read-only" #(git-author-check options project))
                      (check "repository-root" "Repository root" "read-only" #(repository-check options project))

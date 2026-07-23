@@ -59,6 +59,7 @@
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
     (println "  tesseraft control-plane project migrate [<project-id>] [--legacy-manifest <file> --project-root <dir>]")
     (println "  tesseraft control-plane project connections <project-id>")
+    (println "  tesseraft control-plane credentials migrate --legacy-file <file>")
     (println "  tesseraft control-plane doctor")
     (println)
     (println "Options:")
@@ -187,6 +188,22 @@
             (recur (rest xs) acc)
             (recur (rest xs) (assoc acc :project-id a))))))))
 
+(defn parse-credentials-migrate-args [args]
+  (loop [xs args acc {:legacy-file nil}]
+    (if (empty? xs)
+      acc
+      (let [[a b & more] xs]
+        (case a
+          "--legacy-file" (recur more (assoc acc :legacy-file b))
+          (recur (rest xs) acc))))))
+
+(defn credentials-command [options args]
+  (let [[sub & rest] args]
+    (case sub
+      "migrate" (let [parsed (parse-credentials-migrate-args rest)]
+                  (control-plane/migrate-local-credentials options (:legacy-file parsed)))
+      (control-plane/error-response 400 "bad_request" (str "Unknown credentials subcommand: " sub)))))
+
 (defn parse-project-connections-args [args]
   (loop [xs args acc {}]
     (if (empty? xs)
@@ -289,6 +306,7 @@
                    "git-user" (git-user-command options (:args opts) project-id)
                    "settings" (settings-command options (:args opts) project-id)
                    "doctor" (doctor/doctor-report options project-id)
+                   "credentials" (credentials-command options (:args opts))
                    "projects" (projects-command options (:args opts))
                    "project" (project-command options (:args opts))
                    (usage!))]
