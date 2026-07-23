@@ -208,7 +208,8 @@
     (get-in ctx [:run :workspace-root]) (assoc :workspace-root (get-in ctx [:run :workspace-root]))
     (get-in ctx [:run :tesseraft-home]) (assoc :tesseraft-home (get-in ctx [:run :tesseraft-home]))
     (get-in ctx [:run :runs-root]) (assoc :runs-root (get-in ctx [:run :runs-root]))
-    (get-in ctx [:run :workflow-roots]) (assoc :workflow-roots (get-in ctx [:run :workflow-roots]))))
+    (get-in ctx [:run :workflow-roots]) (assoc :workflow-roots (get-in ctx [:run :workflow-roots]))
+    (:credential-resolver ctx) (assoc :credential-resolver (:credential-resolver ctx))))
 
 (defn- persisted-project-context [ctx project-id]
   (let [project (get-in ctx [:run :project-context])
@@ -219,11 +220,14 @@
   ([] (github-token {} nil))
   ([ctx project]
    (let [project-id (or (get-in ctx [:run :project-id]) (:project_id project) (:project-id project))
-         options (if (and project-id (not (persisted-project-context ctx project-id)))
-                   (cp/project-scoped-opts (control-plane-options ctx) project-id)
-                   (control-plane-options ctx))
+         base-options (control-plane-options ctx)
+         persisted (persisted-project-context ctx project-id)
+         options (cond
+                   persisted (cp/project-context-opts base-options persisted)
+                   project-id (cp/project-scoped-opts base-options project-id)
+                   :else base-options)
          ref (get-in project [:connections :github :credential-ref])
-         token (:value (cp/resolve-credential (if (:error options) (control-plane-options ctx) options) ref))]
+         token (:value (cp/resolve-credential (if (:error options) base-options options) ref))]
      (when-not (str/blank? token) token))))
 
 (defn github-command-opts [ctx node]

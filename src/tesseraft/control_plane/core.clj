@@ -501,34 +501,78 @@
         (or (get versioned path)
             (get versioned (keyword path)))))))
 
+(defn production-credential-resolver
+  "Resolve a validated credential ref from its production-selected store."
+  [options ref]
+  (let [[_ store-name path] (re-matches credential-ref-re (str ref))]
+    (case store-name
+      "env"
+      (let [v (System/getenv path)]
+        (if (str/blank? v)
+          {:present false :state "absent" :credential-ref ref}
+          {:present true :state "present" :credential-ref ref :value v}))
+      "tesseraft"
+      (let [creds (read-credentials options)]
+        (cond
+          (nil? creds) {:present false :state "absent" :credential-ref ref}
+          (not (valid-local-credential-store? creds)) {:present false :state "invalid" :credential-ref ref :error "invalid local credential store"}
+          :else (let [v (local-credential-value options ref path)]
+                  (if (str/blank? v)
+                    {:present false :state "absent" :credential-ref ref}
+                    {:present true :state "present" :credential-ref ref :value v}))))
+      "github-actions"
+      {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
+      {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)})))
+
+(defn- resolver-failure [ref]
+  {:present false
+   :state "invalid"
+   :credential-ref ref
+   :error "credential resolver failed"})
+
+(defn- valid-resolver-result? [result]
+  (and (map? result)
+       (boolean? (:present result))
+       (contains? #{"present" "absent" "unresolved" "invalid"} (:state result))
+       (if (= "present" (:state result))
+         (and (:present result) (string? (:value result)) (not (str/blank? (:value result))))
+         (not (:present result)))))
+
+(defn- normalized-resolver-result [ref result injected?]
+  (let [base (cond-> {:present (:present result)
+                      :state (:state result)
+                      :credential-ref ref}
+               (= "present" (:state result)) (assoc :value (:value result)))]
+    (case (:state result)
+      "invalid" (assoc base :error (if injected?
+                                      "credential resolver reported invalid"
+                                      (or (:error result) "invalid credential")))
+      "unresolved" (assoc base :unresolved (if injected?
+                                             "credential resolver unavailable"
+                                             (or (:unresolved result) "credential resolver unavailable")))
+      base)))
+
 (defn resolve-credential
-  "Resolve a credential ref from exactly its selected store. Returns a map with
-  stable non-secret state plus `:value` only for in-process consumers. Public
-  callers must drop `:value` before serialization."
+  "Resolve a credential ref through the project-scoped resolver in `options`,
+  defaulting to the production environment/local-store resolver. Injected
+  resolvers receive `[scoped-options ref]` and are intentionally ephemeral.
+  Returns stable non-secret state plus `:value` only for in-process consumers;
+  public callers must drop `:value` before serialization."
   [options ref]
   (cond
     (or (nil? ref) (str/blank? (str ref))) {:present false :state "absent"}
     (not (credential-ref? ref)) {:present false :state "invalid" :error "invalid credential-ref"}
     :else
-    (let [[_ store-name path] (re-matches credential-ref-re (str ref))]
-      (case store-name
-        "env"
-        (let [v (System/getenv path)]
-          (if (str/blank? v)
-            {:present false :state "absent" :credential-ref ref}
-            {:present true :state "present" :credential-ref ref :value v}))
-        "tesseraft"
-        (let [creds (read-credentials options)]
-          (cond
-            (nil? creds) {:present false :state "absent" :credential-ref ref}
-            (not (valid-local-credential-store? creds)) {:present false :state "invalid" :credential-ref ref :error "invalid local credential store"}
-            :else (let [v (local-credential-value options ref path)]
-                    (if (str/blank? v)
-                      {:present false :state "absent" :credential-ref ref}
-                      {:present true :state "present" :credential-ref ref :value v}))))
-        "github-actions"
-        {:present false :state "unresolved" :credential-ref ref :unresolved "github-actions store not wired for local resolution"}
-        {:present false :state "unresolved" :credential-ref ref :unresolved (str "unknown store: " store-name)}))))
+    (try
+      (let [scoped-options (opts options)
+            injected? (some? (:credential-resolver scoped-options))
+            resolver (or (:credential-resolver scoped-options) production-credential-resolver)
+            result (resolver scoped-options ref)]
+        (if (valid-resolver-result? result)
+          (normalized-resolver-result ref result injected?)
+          (resolver-failure ref)))
+      (catch Throwable _
+        (resolver-failure ref)))))
 
 (defn- norm-discovery [raw]
   (cond
@@ -1368,6 +1412,20 @@
            (seq conflicts) (assoc :conflicts conflicts)
            (seq duplicates) (assoc :duplicates duplicates))]))))
 
+(defn project-context-opts
+  "Build project-scoped options from an already resolved project context.
+  Ephemeral options such as `:credential-resolver` are preserved."
+  [options project]
+  (let [base (opts options)
+        control-ws (:workspace-root base)]
+    (-> base
+        (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
+               :runs-root (:runs_root project))
+        (assoc :workflow-roots (or (get-in project [:discovery :workflow-roots])
+                                   (:workflow-roots base))
+               :tesseraft-home (or (get-in project [:discovery :tesseraft-home])
+                                    (:tesseraft-home base))))))
+
 (defn project-scoped-opts
   "Build per-call options resolved from a project. The project's
   `:workspace_root`/`:runs_root`/discovery roots are relative to the control
@@ -1376,22 +1434,14 @@
   bare relative path that would silently relocate discovery to the process
   cwd. `:runs_root` stays relative (resolved by `run-state-files` against
   the now-absolutized workspace root). If the project can't be resolved,
-  returns `opts` unchanged (defensive fallback). The `default` project's
-  `workspace_root` is `.` (the control workspace), preserving existing
-  single-project behavior."
+  returns its structured error. The `default` project's `workspace_root` is
+  `.` (the control workspace), preserving existing single-project behavior."
   ([options] (project-scoped-opts options nil))
   ([options project-id]
    (let [project (resolve-project options project-id)]
      (if (:error project)
        project
-       (let [control-ws (:workspace-root (opts options))]
-         (-> (opts options)
-             (assoc :workspace-root (str (abs-path control-ws (:workspace_root project)))
-                    :runs-root (:runs_root project))
-             (assoc :workflow-roots (or (get-in project [:discovery :workflow-roots])
-                                       (:workflow-roots (opts options)))
-                    :tesseraft-home (or (get-in project [:discovery :tesseraft-home])
-                                        (:tesseraft-home (opts options))))))))))
+       (project-context-opts options project)))))
 
 (defn list-workflows
   ([] (list-workflows {}))

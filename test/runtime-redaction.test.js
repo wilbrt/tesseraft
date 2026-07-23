@@ -163,3 +163,61 @@ test('SC-006 runtime redacts credential sentinels from prompts, logs, and JSON a
   assert.match(durable, /process-context/);
   assert.match(durable, /artifact-context/);
 });
+
+test('WT2 injected resolver failures are safe and live resolver secrets redact durable output', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt2-resolver-failure-'));
+  const runDir = path.join(root, 'run');
+  const sentinel = 'WT2_INJECTED_RESOLVER_FAILURE_SENTINEL';
+  const script = String.raw`
+(require '[babashka.fs :as fs])
+(require '[cheshire.core :as json])
+(require '[clojure.string :as str])
+(require '[tesseraft.control-plane.core :as cp])
+(require '[tesseraft.runtime.store :as store])
+(let [run-dir (System/getenv "WT2_RUN_DIR")
+      sentinel (System/getenv "WT2_SENTINEL")
+      resolver (fn [_options ref]
+                 (if (= ref "tesseraft:failure")
+                   (throw (ex-info (str "resolver exploded with " sentinel)
+                                   {:nested {:secret sentinel}}))
+                   {:present true :state "present" :credential-ref ref :value sentinel}))
+      failure (cp/mask-credential {:credential-resolver resolver} "tesseraft:failure")
+      project {:project_id "injected"
+               :workspace_root "."
+               :runs_root ".agent-runs"
+               :discovery {:workflow-roots ["examples"]}
+               :connections {:github {:credential-ref "tesseraft:success"}
+                             :jira {:credential-ref "tesseraft:failure"}}}
+      ctx {:run {:dir run-dir
+                 :project-id "injected"
+                 :project-context project}
+           :credential-resolver resolver
+           :diagnostics {:failure failure
+                         :message (str "consumer failure included " sentinel)
+                         :keep "state-context"}}]
+  (fs/create-dirs run-dir)
+  (store/save-context! ctx)
+  (store/event! ctx {:event "credential.failure"
+                     :failure failure
+                     :message (str "event failure included " sentinel)
+                     :keep "event-context"})
+  (let [public-json (json/generate-string (cp/api-value failure))]
+    (assert (= "invalid" (:state failure)) "resolver failure was not classified safely")
+    (assert (not (str/includes? public-json sentinel)) "public resolver failure leaked its sentinel")
+    (println public-json)))
+`;
+  const publicFailure = execFileSync('bb', ['-e', script], {
+    cwd: repoRoot,
+    env: { ...process.env, WT2_RUN_DIR: runDir, WT2_SENTINEL: sentinel },
+    encoding: 'utf8'
+  }).trim();
+  const state = fs.readFileSync(path.join(runDir, 'state.edn'), 'utf8');
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
+  const durable = `${state}\n${events}`;
+
+  assert.doesNotMatch(publicFailure, new RegExp(sentinel));
+  assert.doesNotMatch(durable, new RegExp(sentinel));
+  assert.doesNotMatch(state, /credential-resolver/, 'ephemeral resolver functions must not be persisted');
+  assert.match(durable, /state-context/);
+  assert.match(durable, /event-context/);
+});
