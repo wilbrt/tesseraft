@@ -4,7 +4,7 @@ Status: Planned
 
 Delivery workflows:
 
-- behavioral contracts: [`canon-tdd-to-pr`](../examples/canon-tdd-to-pr/workflow.edn)
+- behavioral contracts: [`focused-tdd-to-pr`](../examples/focused-tdd-to-pr/workflow.edn)
 - integration/UI/examples: [`code-review-loop`](../examples/code-review-loop/workflow.edn)
 
 Related current contracts:
@@ -415,7 +415,7 @@ containing all dependencies.
 For a Canon behavioral increment:
 
 ```bash
-./bin/tesseraft run start examples/canon-tdd-to-pr/workflow.edn \
+./bin/tesseraft run start examples/focused-tdd-to-pr/workflow.edn \
   --run-id <id> \
   --input repo-root=. \
   --input base-branch=main \
@@ -444,7 +444,7 @@ push/PR side effect. See [`WORKFLOW_RUNS.md`](WORKFLOW_RUNS.md).
 
 ## WT1 — Project identity, discovery, registry, and migration
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** Current project abstraction baseline
 
@@ -494,7 +494,7 @@ Settings UI, or automatic deletion of legacy manifests.
 ### Canon TDD prompt
 
 ```text
-Implement WT1 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr.
+Implement WT1 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr.
 Add the canonical versioned `.tesseraft/project.json` descriptor, bounded
 nearest-project discovery, explicit user-local registration, conflict-safe
 project selection, and transactional non-destructive legacy manifest migration.
@@ -513,7 +513,7 @@ test; update STATUS.edn/README only if capability truth changes.
 
 ## WT2 — Credential stores, ownership, and recursive secret safety
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** WT1
 
@@ -555,7 +555,7 @@ OAuth flow, hosted vault, or UI redesign beyond removing previews.
 ### Canon TDD prompt
 
 ```text
-Implement WT2 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr
+Implement WT2 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr
 after WT1. Create one project-scoped credential resolver used by control plane,
 doctor, and adapters; make env:, tesseraft:, and validated github-actions:
 references select explicit stores; version the local credential file; and
@@ -573,7 +573,7 @@ warranted.
 
 ## WT3 — Optional primary work-tracker configuration contract
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** WT2
 
@@ -613,7 +613,7 @@ provider credentials in tests.
 ### Canon TDD prompt
 
 ```text
-Implement WT3 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr
+Implement WT3 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr
 after WT2. Add an optional primary `connections.work-tracker` role with a common
 provider/credential-ref/config envelope and registered schemas for Plane, Jira,
 and GitHub Issues; omission means no tracker. Build focused, non-overlapping
@@ -690,7 +690,7 @@ bb test; update status docs only for implemented truth.
 
 ## WT5 — Provider-neutral read boundary and Plane adapter
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** WT4
 
@@ -731,7 +731,7 @@ Jira example, or UI backlog browser.
 ### Canon TDD prompt
 
 ```text
-Implement WT5 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr
+Implement WT5 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr
 after WT4. Define a versioned normalized work-item artifact and provider-neutral
 `:work-tracker/fetch-item` handler, then add the smallest read-only Plane API-key
 adapter for cloud/self-hosted scope. Build focused, non-overlapping scenarios for
@@ -747,7 +747,7 @@ schema tests and bb test; update capability status if warranted.
 
 ## WT6 — Jira and GitHub Issues normalized read adapters
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** WT5
 
@@ -789,7 +789,7 @@ refactor, or legacy adapter removal.
 ### Canon TDD prompt
 
 ```text
-Implement WT6 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr
+Implement WT6 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr
 after WT5. Add read-only Jira and GitHub Issues adapters behind the normalized
 `:work-tracker/fetch-item` boundary while preserving legacy jira-to-pr and
 GitHub code-host/PR behavior. Let the Canon workflow build the focused behavioral
@@ -861,7 +861,7 @@ STATUS.edn/README only for actual capability truth.
 
 ## WT7 — Plane bootstrap and idempotent one-way synchronization
 
-**Delivery workflow:** `canon-tdd-to-pr`
+**Delivery workflow:** `focused-tdd-to-pr`
 
 **Depends on:** WT5; WT6I optional
 
@@ -904,7 +904,7 @@ from every run event, Jira/GitHub mutation, or bulk import of stale roadmap docs
 ### Canon TDD prompt
 
 ```text
-Implement WT7 from docs/PROJECT_WORK_TRACKER_DESIGN.md with canon-tdd-to-pr
+Implement WT7 from docs/PROJECT_WORK_TRACKER_DESIGN.md with focused-tdd-to-pr
 after WT5. Add a versioned repository work-plan format and Plane bootstrap
 command that is read-only/dry-run by default and mutates only with explicit
 --apply. Build focused, non-overlapping scenarios for deterministic dry-run,

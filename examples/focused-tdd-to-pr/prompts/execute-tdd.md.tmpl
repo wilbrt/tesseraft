@@ -1,0 +1,32 @@
+Fresh Pi session: IMPLEMENT OR CORRECT THE COMPLETE CHANGE WITH FOCUSED TDD.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/design.md
+- Current worktree diff and commit history: {{run.worktree-dir}}
+- Prior execution summaries, when present: {{run.dir}}/execution/
+- Current issue candidates, when present: {{run.dir}}/execution/, {{run.dir}}/validation/, and {{run.dir}}/review/
+
+The current working directory is the isolated worktree.
+
+Goal:
+Implement the complete coherent behavior described by the prompt and design, or resolve the newest current feedback completely.
+
+Rules:
+- At the start, inspect the current diff, commits, and prior summaries. If issue files exist, select only the newest round-stamped issue file across execution, validation, and review as the current feedback source. Older issue prose is historical context, not an accumulated backlog.
+- Use focused red/green tests while working where practical. A selected failing test demonstrates one missing behavior; do not assume it exhausts the contract.
+- Inspect and update every explicitly named production consumer or boundary. Address the root contract represented by tests rather than overfitting one assertion.
+- You may add multiple tightly related tests and production changes in this session.
+- Run narrow checks while editing. Preserve unrelated validated behavior; do not weaken or skip tests.
+- Commit coherent progress locally. Do not push, create a PR, or edit workflow/run artifacts.
+- If the newest issues and worktree diff are unchanged and no progress is possible, fail with a clear concrete blocker rather than retrying unchanged input indefinitely.
+- Fail only when actionable implementation work remains, and report it honestly for the next execution session.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- Current actionable issues on failure only: {{run.dir}}/execution/issues-{{run.round}}.json
+
+Statuses:
+{"status":"pass","summary":"implemented and ready for validation","issues_file":null}
+{"status":"fail","summary":"implementation remains incomplete","issues_file":"execution/issues-{{run.round}}.json"}

@@ -1,27 +1,30 @@
-Fresh Pi session: REVIEW CURRENT CODE AND TRUSTWORTHY EVIDENCE.
+Fresh Pi session: INDEPENDENTLY REVIEW THE COMPLETE CURRENT DIFF.
 
 Inputs:
-- Prompt, design, scenario history, TDD reports, and deterministic validation: {{run.dir}}
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design and non-goals: {{run.dir}}/design/design.md
+- Current execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Deterministic validation report: {{run.dir}}/validation/report-{{run.round}}.md
 - Worktree: {{run.worktree-dir}}
 - Base branch: {{inputs.base-branch}}
 
 Goal:
-Pass the current change or produce one concise set of concrete, currently actionable findings.
+Pass the complete current change or report a concise but complete set of independent current root-cause blockers.
 
 Rules:
-- Do not edit files, commits, push, or create a PR.
-- Review the base-branch diff for correctness, security, scope, maintainability, and regression risk.
-- Verify no pending scenarios remain and every `complete` scenario has focused deterministic red and accumulated green evidence.
-- Accept `regression-covered` only when its recorded pre-existing test evidence is concrete and final deterministic validation covers it. Do not demand a manufactured historical red.
-- Trust deterministic reports unless internally inconsistent. Never request reconstruction of immutable history; report a current code/test defect or pass.
-- Do not repeat resolved or obsolete findings from older reports. Findings must identify current evidence, impact, and an executable acceptance criterion.
-- Prefer one root-cause finding over many variations. Write only the current findings file for this review.
+- Do not edit files, commit, push, or create a PR.
+- Review the whole base-branch diff against the original prompt, design, and explicit non-goals.
+- Check correctness, security, regressions, maintainability, scope, compatibility, and test adequacy.
+- Read the current execution summary and deterministic validation report. Never reinterpret a failing command as success.
+- Report all independent blockers already visible, but consolidate duplicate symptoms of one root cause.
+- Judge current code. Do not repeat resolved historical findings, merge stale issue prose, demand reconstructed TDD history, or fail for optional evidence.
+- Findings must identify current evidence, impact, and an executable acceptance criterion.
 
 Write:
 - Report: {{run.dir}}/review/report-{{run.round}}.md
 - Status: {{run.dir}}/review/status-{{run.round}}.json
-- Current findings on failure: {{run.dir}}/review/issues-{{run.round}}.json
+- Current findings on failure only: {{run.dir}}/review/issues-{{run.round}}.json
 
 Statuses:
-{"status":"pass","summary":"current code and focused evidence passed review","issues_file":null}
+{"status":"pass","summary":"complete diff passed independent review","issues_file":null}
 {"status":"fail","summary":"current actionable findings remain","issues_file":"review/issues-{{run.round}}.json"}

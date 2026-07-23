@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Canon TDD Validation Plan",
+  "title": "Focused TDD Final Validation Plan",
   "type": "object",
   "required": ["version", "checks"],
   "properties": {

@@ -90,7 +90,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
 - `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
-- `examples/focused-tdd-to-pr/workflow.edn` — lower-token focused TDD with deterministic red/green/regression gates, already-covered scenario reconciliation, current-only review repair, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
+- `examples/focused-tdd-to-pr/workflow.edn` — lightweight focused TDD inside one coherent implementation state, followed by deterministic repository validation, independent whole-diff review, direct current-only correction cycles, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
 - See `docs/WORKFLOW_RUNS.md` for safe side-effecting workflow run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.

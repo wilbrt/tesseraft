@@ -145,11 +145,12 @@ the generated use case before continuing. See
 [CANON_TDD_WORKFLOW.md](CANON_TDD_WORKFLOW.md) for the artifact model, Canon
 loop semantics, deterministic validation, and safe bounded mock guidance.
 
-The focused TDD workflow combines selection and test authoring, combines green
-implementation/refactoring/inventory update, and uses deterministic red,
-accumulated green, and regression gates. It reconciles already-supported
-scenarios without manufactured red and keeps only current review findings. See
-[FOCUSED_TDD_WORKFLOW.md](FOCUSED_TDD_WORKFLOW.md) for its evidence and
+The focused TDD workflow keeps local red/green iteration inside one coherent
+`execute-tdd` agent session. A deterministic final validation process and an
+independent whole-diff review follow; execution, validation, and review failures
+return directly to `execute-tdd` with only the newest current findings. It does
+not create a scenario ledger or machine-enforce per-test red history. See
+[FOCUSED_TDD_WORKFLOW.md](FOCUSED_TDD_WORKFLOW.md) for its artifact and
 convergence model.
 
 ## Where side effects happen
@@ -161,9 +162,10 @@ convergence model.
   test lists, scenario/test authoring, semantic red assessment, implementation,
   refactoring, repair, and review.
 - Canon TDD red/green/post-refactor/final-regression commands run through a
-  workflow-owned process helper from explicit validation manifests. Expected
-  failed checks select normal retry transitions; runner faults remain external
-  process failures.
+  workflow-owned process helper from explicit validation manifests. Focused TDD
+  uses its process helper only for the final repository validation plan.
+  Expected failed checks select normal retry transitions; runner faults remain
+  external process failures.
 - `ensure-worktree` fetches `origin` and creates or reuses an isolated Git
   worktree and implementation branch.
 - `create-pr` pushes the branch directly to the repository's GitHub SSH URL,

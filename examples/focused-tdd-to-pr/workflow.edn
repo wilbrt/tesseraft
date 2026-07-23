@@ -2,12 +2,12 @@
  :kind :workflow
  :metadata {:name "focused-tdd-to-pr"
             :title "Focused TDD to PR"
-            :description "Implement a bounded behavioral inventory with deterministic red, accumulated green, regression validation, current-only review repair, and PR creation."}
+            :description "Design once, implement coherently with focused TDD, run deterministic validation, independently review the whole diff, and create a pull request."}
  :inputs {:prompt {:type :string :required true}
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
           :branch {:type :string :required false}}
- :defaults {:max-rounds 20
+ :defaults {:max-rounds 10
             :state-timeout "45m"
             :base-branch "main"}
  :policies {:runtime-cannot-edit-workflow true
@@ -32,25 +32,22 @@
 
   :design
   {:type :agent
-   :title "Design behavior and validation"
+   :title "Design concise delivery plan"
    :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.6-sol"
    :thinking "medium"
    :prompt-template "prompts/design.md.tmpl"
-   :prompt-output "prompts/generated/design-{{run.round}}.md"
-   :session-name "focused-tdd-design-{{run.round}}"
+   :prompt-output "prompts/generated/design-{{run.attempt}}.md"
+   :session-name "focused-tdd-design-{{run.attempt}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
-   :outputs {:status {:path "design/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+   :outputs {:status {:path "design/status-{{run.attempt}}.json" :schema "../../schemas/status.schema.json" :required true}
              :design {:path "design/design.md" :required true}
-             :constraints {:path "design/repository-constraints.md" :required true}
              :validation-plan {:path "design/validation-plan.json" :schema "schemas/validation-plan.schema.json" :required true}
-             :test-list {:path "test-list/scenarios-initial.json" :schema "schemas/scenario-list.schema.json" :required true}
-             :test-list-md {:path "test-list/scenarios-initial.md" :required true}
              :branch-name {:path "design/branch-name.txt" :required true}}
    :transitions [{:when {:status "pass"} :next :ensure-worktree}
-                 {:when {:status "fail"} :effects [:inc-round] :next :design}]}
+                 {:when {:status "fail"} :next :design}]}
 
   :ensure-worktree
   {:type :deterministic
@@ -59,92 +56,41 @@
    :runtime {:timeout "5m"}
    :inputs {:branch-file "design/branch-name.txt"}
    :outputs {:worktree-path {:path "worktree/path.txt" :required true}}
-   :next :prepare-test}
+   :next :execute-tdd}
 
-  :prepare-test
+  :execute-tdd
   {:type :agent
-   :title "Reconcile coverage and prepare one red"
+   :title "Implement with focused TDD"
    :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.5"
    :thinking "medium"
-   :prompt-template "prompts/prepare-test.md.tmpl"
-   :prompt-output "prompts/generated/prepare-test-{{run.round}}.md"
-   :session-name "focused-tdd-prepare-{{run.round}}"
-   :tools [:read :bash :edit :write :grep :find :ls]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "60m"}
-   :outputs {:status {:path "tdd/prepare-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :scenario {:path "tdd/current-scenario-{{run.round}}.json" :required true}
-             :report {:path "tdd/test-{{run.round}}.md" :required true}
-             :test-list {:path "test-list/scenarios-{{run.round}}.json" :schema "schemas/scenario-list.schema.json" :required true}
-             :focused-check {:path "tdd/check-{{run.round}}.json" :schema "schemas/focused-check.schema.json" :required false}
-             :issues {:path "tdd/prepare-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :run-red-check}
-                 {:when {:status "no_actions"} :next :run-regression-plan}
-                 {:when {:status "fail"} :effects [:inc-round] :next :prepare-test}]}
-
-  :run-red-check
-  {:type :process
-   :title "Run deterministic red check"
-   :command ["./scripts/run_validation.py"]
-   :input-mode :json-stdin
-   :output-mode :json-stdout
-   :inputs {:phase "red" :manifest-file "tdd/check-{{run.round}}.json"}
-   :runtime {:timeout "2h"}
-   :outputs {:report {:path "tdd/red-verification-{{run.round}}.md" :required true}
-             :issues {:path "tdd/red-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :implement-green}
-                 {:when {:status "fail"} :effects [:inc-round] :next :prepare-test}]}
-
-  :implement-green
-  {:type :agent
-   :title "Implement, refactor, and complete scenario"
-   :executor :pi-cli
-   :provider "openai-codex"
-   :model "gpt-5.5"
-   :thinking "medium"
-   :prompt-template "prompts/implement-green.md.tmpl"
-   :prompt-output "prompts/generated/implement-green-{{run.round}}.md"
-   :session-name "focused-tdd-green-{{run.round}}"
+   :prompt-template "prompts/execute-tdd.md.tmpl"
+   :prompt-output "prompts/generated/execute-tdd-{{run.round}}.md"
+   :session-name "focused-tdd-execute-{{run.round}}"
    :tools [:read :bash :edit :write :grep :find :ls]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
-   :outputs {:status {:path "tdd/green-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :summary {:path "tdd/green-summary-{{run.round}}.md" :required true}
-             :test-list {:path "test-list/scenarios-{{run.round}}-final.json" :schema "schemas/scenario-list.schema.json" :required true}
-             :discoveries {:path "tdd/discovered-scenarios-{{run.round}}.json" :required true}
-             :issues {:path "tdd/green-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :next :run-green-check}
-                 {:when {:status "fail"} :effects [:inc-round] :next :implement-green}]}
+   :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :summary {:path "execution/summary-{{run.round}}.md" :required true}
+             :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
+   :transitions [{:when {:status "pass"} :next :run-validation}
+                 {:when {:status "fail"} :effects [:inc-round] :next :execute-tdd}]}
 
-  :run-green-check
+  :run-validation
   {:type :process
-   :title "Run deterministic accumulated green checks"
+   :title "Run deterministic repository validation"
    :command ["./scripts/run_validation.py"]
    :input-mode :json-stdin
    :output-mode :json-stdout
-   :inputs {:phase "green"}
-   :runtime {:timeout "2h"}
-   :outputs {:report {:path "tdd/green-verification-{{run.round}}.md" :required true}
-             :issues {:path "tdd/green-verification-issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :effects [:inc-round] :next :prepare-test}
-                 {:when {:status "fail"} :effects [:inc-round] :next :implement-green}]}
-
-  :run-regression-plan
-  {:type :process
-   :title "Run deterministic broad and focused regression"
-   :command ["./scripts/run_validation.py"]
-   :input-mode :json-stdin
-   :output-mode :json-stdout
-   :inputs {:phase "regression"}
    :runtime {:timeout "2h"}
    :outputs {:report {:path "validation/report-{{run.round}}.md" :required true}
              :issues {:path "validation/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :review}
-                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
+                 {:when {:status "fail"} :effects [:inc-round] :next :execute-tdd}]}
 
   :review
   {:type :agent
-   :title "Review current code and evidence"
+   :title "Review the complete current diff"
    :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.6-sol"
@@ -158,26 +104,7 @@
              :report {:path "review/report-{{run.round}}.md" :required true}
              :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
-                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
-
-  :repair
-  {:type :agent
-   :title "Repair current findings"
-   :executor :pi-cli
-   :provider "openai-codex"
-   :model "gpt-5.5"
-   :thinking "medium"
-   :prompt-template "prompts/repair.md.tmpl"
-   :prompt-output "prompts/generated/repair-{{run.round}}.md"
-   :session-name "focused-tdd-repair-{{run.round}}"
-   :tools [:read :bash :edit :write :grep :find :ls]
-   :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
-   :outputs {:status {:path "repair/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
-             :summary {:path "repair/summary-{{run.round}}.md" :required true}
-             :test-list {:path "test-list/scenarios-{{run.round}}-repair.json" :schema "schemas/scenario-list.schema.json" :required false}
-             :issues {:path "repair/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
-   :transitions [{:when {:status "pass"} :effects [:inc-round] :next :prepare-test}
-                 {:when {:status "fail"} :effects [:inc-round] :next :repair}]}
+                 {:when {:status "fail"} :effects [:inc-round] :next :execute-tdd}]}
 
   :pr-draft
   {:type :agent
@@ -187,15 +114,15 @@
    :model "gpt-5.6-sol"
    :thinking "low"
    :prompt-template "prompts/pr-draft.md.tmpl"
-   :prompt-output "prompts/generated/pr-draft-{{run.round}}.md"
-   :session-name "focused-tdd-pr-draft-{{run.round}}"
+   :prompt-output "prompts/generated/pr-draft-{{run.attempt}}.md"
+   :session-name "focused-tdd-pr-draft-{{run.attempt}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
-   :outputs {:status {:path "pr/draft-status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+   :outputs {:status {:path "pr/draft-status-{{run.attempt}}.json" :schema "../../schemas/status.schema.json" :required true}
              :title {:path "pr/pr-title.txt" :required true}
              :body {:path "pr/pr-body.md" :required true}}
    :transitions [{:when {:status "pass"} :next :create-pr}
-                 {:when {:status "fail"} :effects [:inc-round] :next :pr-draft}]}
+                 {:when {:status "fail"} :next :pr-draft}]}
 
   :create-pr
   {:type :deterministic

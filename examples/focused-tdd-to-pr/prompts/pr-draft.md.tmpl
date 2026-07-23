@@ -2,7 +2,7 @@ Fresh Pi session: DRAFT PR METADATA ONLY.
 
 Inputs:
 - Prompt and design: {{run.dir}}/prompt/ and {{run.dir}}/design/
-- Scenario inventory, deterministic validation, and final review: {{run.dir}}
+- Latest execution summary, deterministic validation report, and final review: {{run.dir}}
 - Worktree: {{run.worktree-dir}}
 
 Goal:
@@ -11,13 +11,13 @@ Draft accurate, concise pull request metadata for the accepted change.
 Rules:
 - Do not edit source or tests, push, call GitHub, or create a PR.
 - Summarize delivered behavior rather than workflow mechanics.
-- Include focused and broad validation actually recorded in artifacts.
+- Include validation actually recorded in artifacts.
 - State material risks or follow-up honestly; do not expose internal chain-of-thought.
 
 Write:
 - Title: {{run.dir}}/pr/pr-title.txt
 - Body: {{run.dir}}/pr/pr-body.md
-- Status: {{run.dir}}/pr/draft-status-{{run.round}}.json
+- Status: {{run.dir}}/pr/draft-status-{{run.attempt}}.json
 
 Status:
 {"status":"pass","summary":"PR metadata drafted","issues_file":null}
