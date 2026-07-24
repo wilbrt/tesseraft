@@ -49,11 +49,12 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
-localhost, then performs a read-only Chromium inspection of the bundled
-`smoke-demo` workflow graph. Install the pinned Chromium revision once with:
+localhost, then runs Chromium coverage for workflow inspection and isolated
+mutable UI journeys. Mutable tests use temporary workspaces and do not alter
+the developer repository. Install the pinned Chromium revision once with:
 
 ```bash
 npx playwright install --with-deps chromium
@@ -66,7 +67,7 @@ npm run web:e2e
 npm run web:e2e:ui
 ```
 
-This gate is localhost-only and does not create workflows or start runs.
+This gate is localhost-only, requires no external services, and removes its temporary workflows and runs after testing.
 
 ## Mock executor dry run
 
@@ -89,6 +90,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/prompt-to-pr/workflow.edn` — prompt collection, design, execution, review, and PR creation. Lint-only by default; running it invokes Pi and GitHub side effects.
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
+- `examples/playwright-code-review-loop/workflow.edn` — code-review-loop variant that replaces agentic regression testing with a deterministic `npm run web:e2e` gate in the implementation worktree.
 - `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
 - `examples/focused-tdd-to-pr/workflow.edn` — lightweight focused TDD inside one coherent implementation state, followed by deterministic repository validation, independent whole-diff review, direct current-only correction cycles, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
@@ -99,6 +101,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
+./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn

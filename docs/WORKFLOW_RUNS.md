@@ -4,6 +4,7 @@ This guide covers the side-effecting implementation workflows:
 
 - `examples/prompt-to-pr/workflow.edn`
 - `examples/code-review-loop/workflow.edn`
+- `examples/playwright-code-review-loop/workflow.edn`
 - `examples/canon-tdd-to-pr/workflow.edn`
 - `examples/focused-tdd-to-pr/workflow.edn`
 
@@ -16,6 +17,7 @@ push to GitHub, and create pull requests.
 Before running side-effecting nodes, make sure you have:
 
 - `bb`, `pi`, and `gh` installed and on `PATH`;
+- for `playwright-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
 - GitHub SSH write access for branch publication;
@@ -30,6 +32,7 @@ These checks do not run Pi or GitHub commands:
 bb test
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
+./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ```
@@ -86,7 +89,10 @@ Resume with a bounded number of steps:
 ```
 
 Use the same command shape with `examples/prompt-to-pr/workflow.edn` and
-`.agent-runs/prompt-to-pr/<id>` for the simpler prompt-to-PR flow.
+`.agent-runs/prompt-to-pr/<id>` for the simpler prompt-to-PR flow. Substitute
+`examples/playwright-code-review-loop/workflow.edn` and
+`.agent-runs/playwright-code-review-loop/<id>` to use the variant whose
+regression gate runs `npm run web:e2e` in the implementation worktree.
 
 ## Inspecting run state and artifacts
 
@@ -110,7 +116,7 @@ Useful run files and directories include:
 - `logs/` — process and Pi stdout/stderr logs.
 - `prompts/generated/` — rendered prompts sent to Pi.
 - `pi-sessions/` — Pi session data.
-- `prompt/`, `design/`, `execution/`, `manual-testing/`, `review/`, and `pr/` —
+- `prompt/`, `design/`, `execution/`, `manual-testing/` or `playwright/`, `review/`, and `pr/` —
   workflow artifacts declared by the nodes.
 
 The code-review-loop state sequence is:
@@ -119,6 +125,17 @@ The code-review-loop state sequence is:
 collect-prompt -> design -> ensure-worktree -> execute
   -> manual-testing -> review -> pr-draft -> create-pr -> done
 ```
+
+The Playwright variant replaces only the regression-testing state:
+
+```text
+collect-prompt -> design -> ensure-worktree -> execute
+  -> playwright-testing -> review -> pr-draft -> create-pr -> done
+```
+
+A nonzero or timed-out `npm run web:e2e` result writes a Playwright report and
+issues, increments the round, and returns to `execute`. Malformed process
+requests remain external failures.
 
 Declared `status: fail` outcomes from execution or review merge issues,
 increment the round where appropriate, and return to execution. This expected
@@ -158,7 +175,9 @@ convergence model.
 - `collect-prompt` runs a local process and writes `prompt/prompt.json`,
   `prompt/prompt.md`, and logs under the run directory.
 - Agent nodes render prompts, then run `pi --approve` in their configured
-  working directory. The Canon TDD workflow uses agents for use cases,
+  working directory. The Playwright code-review-loop additionally runs
+  `npm run web:e2e` in the implementation worktree and captures its output in
+  the run directory. The Canon TDD workflow uses agents for use cases,
   test lists, scenario/test authoring, semantic red assessment, implementation,
   refactoring, repair, and review.
 - Canon TDD red/green/post-refactor/final-regression commands run through a

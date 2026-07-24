@@ -1,0 +1,32 @@
+Fresh Pi session: EXECUTION.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/design.md
+- Issues from prior attempts: {{run.issues-file}}
+- Original repository root: {{inputs.repo-root}}
+- Worktree: {{run.worktree-dir}}
+
+The current working directory is the isolated worktree. Make changes there.
+
+Goal:
+Implement the design and resolve all outstanding issues.
+
+Rules:
+- You may edit source code and tests.
+- Keep changes focused on the prompt and design.
+- Run relevant tests, lint, type checks, or builds when practical.
+- Do not push or create a pull request.
+- Do not edit this workflow or its run artifacts.
+- Commit coherent changes locally when the repository uses Git.
+- If the change alters a Tesseraft capability, update `STATUS.edn` and run `bb status` so README status remains truthful.
+- Fail only when actionable work remains; write clear issues for the next execution attempt.
+
+Write:
+- Summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Status: {{run.dir}}/execution/status-{{run.round}}.json
+- If failing: {{run.dir}}/execution/issues-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"implemented and validated","issues_file":null}
+{"status":"fail","summary":"implementation needs another attempt","issues_file":"execution/issues-{{run.round}}.json"}
