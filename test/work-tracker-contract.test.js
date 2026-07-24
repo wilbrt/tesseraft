@@ -52,6 +52,15 @@ test('WT3 publishes no-tracker and built-in work-tracker schemas', () => {
   ]) {
     assert.equal(validateWithDraft202012(trackerSchema, tracker), true, `valid ${tracker.provider} tracker schema`);
   }
+  assert.equal(validateWithDraft202012(trackerSchema, {
+    provider: 'plane', 'credential-ref': 'env:PLANE_TOKEN', config: { 'base-url': 'https://jira.example', 'project-key': 'TES' }
+  }), false, 'built-in provider/config pairs are discriminated');
+  assert.equal(validateWithDraft202012(trackerSchema, {
+    provider: 'acme-tracker', 'credential-ref': 'env:ACME_TOKEN', config: { project: 'DEMO' }
+  }), true, 'custom providers are schema-admissible but runtime-registered');
+  assert.equal(validateWithDraft202012(trackerSchema, {
+    provider: 'plane', 'schema-version': 99, 'credential-ref': 'env:PLANE_TOKEN', config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'workspace', 'project-id': 'project' }
+  }), false, 'unsupported schema versions are rejected by schema');
 });
 
 test('WT3 core create inspect update clear normalizes tracker and preserves legacy connections', () => {
@@ -82,6 +91,14 @@ test('WT3 core create inspect update clear normalizes tracker and preserves lega
     assert.equal(update.connections.github['credential-ref'], 'env:GITHUB_TOKEN', 'GitHub code-host connection is independent');
     assert.equal(update.connections.jira['base-url'], 'https://legacy-jira.example', 'legacy Jira connection is preserved');
 
+    const aggregateUpdate = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(println (json/generate-string (cp/update-project {:workspace-root ${q(root)}} "wt3-alpha" {:connections {:work-tracker {:provider "jira" :credential-ref "env:JIRA_TRACKER" :config {:base-url "https://jira-tracker.example" :project-key "WT3"}}}})))
+`);
+    assert.equal(aggregateUpdate.connections['work-tracker'].provider, 'jira');
+    assert.equal(aggregateUpdate.connections.github['credential-ref'], 'env:GITHUB_TOKEN', 'aggregate project update preserves GitHub');
+    assert.equal(aggregateUpdate.connections.jira['base-url'], 'https://legacy-jira.example', 'aggregate project update preserves legacy Jira');
+
     const cleared = bbJson(`
 (require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
 (println (json/generate-string (cp/update-project-connections {:workspace-root ${q(root)}} "wt3-alpha" {:clear-work-tracker true})))
@@ -111,6 +128,20 @@ test('WT3 rejects malformed trackers atomically and isolates projects', () => {
 `);
     assert.equal(bad.status, 400);
     assert.equal(fs.readFileSync(manifestA, 'utf8'), before, 'failed update leaves project bytes unchanged');
+
+    const numericProvider = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(println (json/generate-string (cp/update-project-connections {:workspace-root ${q(root)}} "wt3-a" {:work-tracker {:provider 123 :credential-ref "env:BAD" :config {:base-url "https://jira.example" :project-key "A"}}})))
+`);
+    assert.equal(numericProvider.status, 400);
+    assert.match(numericProvider.error.message, /provider/);
+
+    const numericProjectKey = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(println (json/generate-string (cp/update-project-connections {:workspace-root ${q(root)}} "wt3-a" {:work-tracker {:provider "jira" :credential-ref "env:JIRA" :config {:base-url "https://jira.example" :project-key 123}}})))
+`);
+    assert.equal(numericProjectKey.status, 400);
+    assert.equal(fs.readFileSync(manifestA, 'utf8'), before, 'type validation failures leave bytes unchanged');
 
     const secret = bbJson(`
 (require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])

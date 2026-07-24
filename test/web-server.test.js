@@ -1335,6 +1335,55 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
     assert.equal(rawTokenRes.status, 400);
     const rawTokenBody = await rawTokenRes.json();
     assert.match(rawTokenBody.error.message, /credential/i);
+
+    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+    const manifestPath = path.join(projectsDir, 'wt3-http-review.json');
+    const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+    fs.mkdirSync(projectsDir, { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      project_id: 'wt3-http-review',
+      name: 'WT3 HTTP Review',
+      workspace_root: '.',
+      runs_root: '.agent-runs',
+      discovery: { 'workflow-roots': ['examples'] },
+      connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+    }, null, 2));
+    try {
+      const badVersion = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          work_tracker: {
+            provider: 'jira',
+            schema_version: 99,
+            credential_ref: 'env:WT3_HTTP_JIRA',
+            config: { base_url: 'https://jira.example', project_key: 'WT3' }
+          }
+        })
+      });
+      assert.equal(badVersion.status, 400, 'HTTP rejects unsupported work_tracker schema_version');
+
+      const validSnake = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          work_tracker: {
+            provider: 'jira',
+            schema_version: 1,
+            credential_ref: 'env:WT3_HTTP_JIRA',
+            config: { base_url: 'https://jira.example', project_key: 'WT3' }
+          }
+        })
+      });
+      const validBody = await validSnake.json();
+      assert.equal(validSnake.status, 200, `HTTP accepts snake_case tracker aliases; got ${validSnake.status} ${JSON.stringify(validBody)}`);
+      assert.equal(validBody.connections['work-tracker'].provider, 'jira');
+      assert.deepEqual(validBody.connections['work-tracker'].config, { 'base-url': 'https://jira.example', 'project-key': 'WT3' });
+      assert.ok(validBody.connections.github, 'HTTP work-tracker update preserves GitHub connection');
+    } finally {
+      if (previous === null) fs.rmSync(manifestPath, { force: true });
+      else fs.writeFileSync(manifestPath, previous);
+    }
   } finally {
     await close(server);
   }

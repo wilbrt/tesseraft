@@ -127,7 +127,7 @@
     (catch Throwable _ false)))
 
 (defn- normalize-key [k]
-  (keyword (str/replace (name k) #"_" "-")))
+  (keyword (str/replace (if (keyword? k) (name k) (str k)) #"_" "-")))
 
 (defn- normalize-keys-shallow [m]
   (into {} (map (fn [[k v]] [(normalize-key k) v]) m)))
@@ -142,15 +142,15 @@
              :validate (fn [config]
                          (cond
                            (not (valid-http-url? (:api-base-url config))) "plane api-base-url must be an http(s) URL"
-                           (str/blank? (str (:workspace-slug config))) "plane workspace-slug is required"
-                           (str/blank? (str (:project-id config))) "plane project-id is required"
+                           (not (and (string? (:workspace-slug config)) (not (str/blank? (:workspace-slug config))))) "plane workspace-slug is required"
+                           (not (and (string? (:project-id config)) (not (str/blank? (:project-id config))))) "plane project-id is required"
                            :else nil))}
      :jira {:required #{:base-url :project-key}
             :optional #{}
             :validate (fn [config]
                         (cond
                           (not (valid-http-url? (:base-url config))) "jira base-url must be an http(s) URL"
-                          (str/blank? (str (:project-key config))) "jira project-key is required"
+                          (not (and (string? (:project-key config)) (not (str/blank? (:project-key config))))) "jira project-key is required"
                           :else nil))}
      :github-issues {:required #{:repository}
                      :optional #{}
@@ -197,16 +197,17 @@
       (contains-raw-secret-key? raw) (error-response 400 "bad_request" "Raw secret payloads are not accepted; provide a credential-ref instead")
       :else
       (let [m (normalize-keys-shallow raw)
-            provider (some-> (:provider m) normalize-key)
+            provider-raw (:provider m)
+            provider (when (or (string? provider-raw) (keyword? provider-raw)) (normalize-key provider-raw))
             config (when (map? (:config m)) (normalize-keys-shallow (:config m)))
             version (:schema-version m)]
         (cond
           (seq (unsupported-fields m #{:provider :schema-version :credential-ref :config}))
           (error-response 400 "bad_request" "work-tracker contains unknown fields")
-          (and (some? version) (not= 1 version))
+          (and (contains? m :schema-version) (not= 1 version))
           (error-response 400 "bad_request" "Unsupported work-tracker schema-version")
           (nil? provider)
-          (error-response 400 "bad_request" "work-tracker provider is required")
+          (error-response 400 "bad_request" "work-tracker provider is required and must be a string")
           (not (credential-ref? (:credential-ref m)))
           (error-response 400 "bad_request" "Invalid work-tracker credential-ref")
           (not (map? (:config m)))
@@ -1113,7 +1114,10 @@
          (error-response 400 "bad_request" err)
          (let [current (or (read-project-manifest options project-id) {})
                spec* (cond-> spec (contains? spec :connections) (update :connections normalize-connections))
-               merged (merge current spec*)]
+               merged (merge current spec*)
+               merged (if (contains? spec* :connections)
+                        (assoc merged :connections (merge (:connections current {}) (:connections spec*)))
+                        merged)]
            (store/write-json! (project-manifest-path options project-id) merged)
            (get-project options project-id)))))))
 

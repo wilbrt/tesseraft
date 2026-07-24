@@ -285,16 +285,27 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
 };
 
+const normalizeEnvelopeKey = (key: string): string => key.replace(/_/g, '-');
+
 const normalizeWorkTrackerArgs = (raw: unknown): string[] | { error: string } => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'work_tracker must be an object' };
   const wt = raw as JsonRecord;
+  for (const key of Object.keys(wt)) {
+    if (!new Set(['provider', 'credential-ref', 'credential_ref', 'schema-version', 'schema_version', 'config']).has(key)) return { error: 'work_tracker contains unknown fields' };
+  }
   const provider = wt.provider;
   const credentialRef = wt.credential_ref ?? wt['credential-ref'];
+  const schemaVersion = wt.schema_version ?? wt['schema-version'];
   const config = wt.config;
   if (typeof provider !== 'string' || provider.trim() === '') return { error: 'work_tracker.provider is required' };
+  if (schemaVersion !== undefined && schemaVersion !== 1) return { error: 'Unsupported work_tracker.schema_version' };
   if (typeof credentialRef !== 'string' || !CREDENTIAL_REF_RE.test(credentialRef)) return { error: 'Invalid work_tracker.credential_ref' };
   if (!config || typeof config !== 'object' || Array.isArray(config)) return { error: 'work_tracker.config must be an object' };
-  return ['--work-tracker-provider', provider, '--work-tracker-credential-ref', credentialRef, '--work-tracker-config', JSON.stringify(config)];
+  const normalizedEnvelope: JsonRecord = {};
+  for (const [key, value] of Object.entries(wt)) normalizedEnvelope[normalizeEnvelopeKey(key)] = value;
+  const args = ['--work-tracker-provider', provider, '--work-tracker-credential-ref', credentialRef, '--work-tracker-config', JSON.stringify(config)];
+  if (Object.prototype.hasOwnProperty.call(normalizedEnvelope, 'schema-version')) args.splice(2, 0, '--work-tracker-schema-version', String(normalizedEnvelope['schema-version']));
+  return args;
 };
 
 const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
