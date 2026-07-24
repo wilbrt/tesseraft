@@ -287,6 +287,39 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
 
 const normalizeEnvelopeKey = (key: string): string => key.replace(/_/g, '-');
 
+const collectAliasedField = (raw: JsonRecord, role: string, canonical: string, aliases: string[]): unknown | { error: string } => {
+  const present = aliases.filter((key) => Object.prototype.hasOwnProperty.call(raw, key));
+  if (present.length > 1) return { error: `${role} connection contains duplicate aliases for ${canonical}` };
+  return present.length === 1 ? raw[present[0]] : undefined;
+};
+
+const isFieldError = (value: unknown): value is { error: string } => (
+  !!value && typeof value === 'object' && 'error' in value && typeof (value as { error?: unknown }).error === 'string'
+);
+
+const validateLegacyConnection = (role: 'jira' | 'github', raw: unknown): string[] | { error: string } => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: `${role} connection must be an object` };
+  const conn = raw as JsonRecord;
+  const allowed = role === 'jira' ? new Set(['base-url', 'base_url', 'credential-ref', 'credential_ref']) : new Set(['credential-ref', 'credential_ref']);
+  for (const key of Object.keys(conn)) if (!allowed.has(key)) return { error: `Unknown ${role} connection field: ${key}` };
+  const args: string[] = [];
+  if (role === 'jira') {
+    const baseUrl = collectAliasedField(conn, role, 'base-url', ['base-url', 'base_url']);
+    if (isFieldError(baseUrl)) return baseUrl;
+    if (baseUrl !== undefined) {
+      if (typeof baseUrl !== 'string') return { error: 'jira.base_url must be a string' };
+      args.push('--jira-base-url', baseUrl);
+    }
+  }
+  const credentialRef = collectAliasedField(conn, role, 'credential-ref', ['credential-ref', 'credential_ref']);
+  if (isFieldError(credentialRef)) return credentialRef;
+  if (credentialRef !== undefined) {
+    if (typeof credentialRef !== 'string' || !CREDENTIAL_REF_RE.test(credentialRef)) return { error: `Invalid ${role}.credential_ref` };
+    args.push(role === 'jira' ? '--jira-credential-ref' : '--github-credential-ref', credentialRef);
+  }
+  return args;
+};
+
 const normalizeWorkTrackerArgs = (raw: unknown): string[] | { error: string } => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'work_tracker must be an object' };
   const wt = raw as JsonRecord;
@@ -669,12 +702,20 @@ const handleUpdateProjectConnections = async (req: Request, res: Response, proje
   const args = ['project', 'connections', projectId];
   let hasMutation = false;
   const c = body;
-  const jira = c.jira as JsonRecord | undefined;
-  const github = c.github as JsonRecord | undefined;
-  if (jira !== undefined && (!jira || typeof jira !== 'object' || Array.isArray(jira))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'jira connection must be an object'));
-  if (github !== undefined && (!github || typeof github !== 'object' || Array.isArray(github))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'github connection must be an object'));
-  if (jira) { if (typeof jira.base_url === 'string') { args.push('--jira-base-url', jira.base_url); hasMutation = true; } if (typeof jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', jira.credential_ref); hasMutation = true; } }
-  if (github && typeof github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', github.credential_ref); hasMutation = true; }
+  if (c.jira !== undefined) {
+    const jiraArgs = validateLegacyConnection('jira', c.jira);
+    if ('error' in jiraArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', jiraArgs.error));
+    if (jiraArgs.length === 0) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'jira connection update requires at least one field'));
+    args.push(...jiraArgs);
+    hasMutation = true;
+  }
+  if (c.github !== undefined) {
+    const githubArgs = validateLegacyConnection('github', c.github);
+    if ('error' in githubArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', githubArgs.error));
+    if (githubArgs.length === 0) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'github connection update requires at least one field'));
+    args.push(...githubArgs);
+    hasMutation = true;
+  }
   const tracker = c.work_tracker ?? c['work-tracker'];
   if (tracker === null || c.clear_work_tracker === true || c['clear-work-tracker'] === true) { args.push('--clear-work-tracker'); hasMutation = true; }
   else if (tracker !== undefined) { const wtArgs = normalizeWorkTrackerArgs(tracker); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); hasMutation = true; }

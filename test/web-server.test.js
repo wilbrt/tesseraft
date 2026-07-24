@@ -1385,6 +1385,28 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
       });
       assert.equal(badVersion.status, 400, 'HTTP rejects unsupported work_tracker schema_version');
 
+      const badLegacyNested = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jira: { base_url: 'https://new.example', unexpected_scope: { x: 1 } } })
+      });
+      assert.equal(badLegacyNested.status, 400, 'HTTP rejects unknown nested legacy Jira fields');
+      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
+        project_id: 'wt3-http-review',
+        name: 'WT3 HTTP Review',
+        workspace_root: '.',
+        runs_root: '.agent-runs',
+        discovery: { 'workflow-roots': ['examples'] },
+        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+      }, null, 2), 'malformed legacy role update leaves project bytes unchanged');
+
+      const duplicateAlias = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ github: { credential_ref: 'env:ONE', 'credential-ref': 'env:TWO' } })
+      });
+      assert.equal(duplicateAlias.status, 400, 'HTTP rejects duplicate legacy connection aliases');
+
       const validSnake = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },

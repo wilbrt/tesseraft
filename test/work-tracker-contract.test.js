@@ -168,3 +168,102 @@ test('WT3 rejects malformed trackers atomically and isolates projects', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test('WT3 registered portable project connection mutations update descriptor without shadow manifest', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt3-registered-'));
+  const home = path.join(root, 'home');
+  const projectRoot = path.join(root, 'project-a');
+  const otherRoot = path.join(root, 'project-b');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const otherDescriptorPath = path.join(otherRoot, '.tesseraft', 'project.json');
+  try {
+    fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+    fs.mkdirSync(path.dirname(otherDescriptorPath), { recursive: true });
+    fs.writeFileSync(descriptorPath, JSON.stringify({
+      version: 1,
+      project_id: 'wt3-registered',
+      name: 'WT3 Registered',
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['examples'] },
+      connections: {
+        github: { 'credential-ref': 'env:WT3_REG_GITHUB' },
+        'work-tracker': { provider: 'jira', 'credential-ref': 'env:WT3_REG_JIRA', config: { 'base-url': 'https://jira.example', 'project-key': 'OLD' } }
+      }
+    }, null, 2));
+    fs.writeFileSync(otherDescriptorPath, JSON.stringify({ version: 1, project_id: 'wt3-other', connections: {} }, null, 2));
+
+    const result = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(cp/create-project {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-registered" {:workspace_root ${q(projectRoot)} :source "registration"})
+(cp/create-project {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-other" {:workspace_root ${q(otherRoot)} :source "registration"})
+(def updated (cp/update-project-connections {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-registered" {:work-tracker {:provider "github-issues" :credential-ref "env:WT3_REG_GH_ISSUES" :config {:repository "owner/repo"}}}))
+(def inspected (cp/get-project-connections {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-registered"))
+(def cleared (cp/update-project-connections {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-registered" {:clear-work-tracker true}))
+(println (json/generate-string {:updated updated :inspected inspected :cleared cleared}))
+`);
+    assert.equal(result.updated.connections['work-tracker'].provider, 'github-issues');
+    assert.equal(result.inspected.connections['work-tracker'].provider, 'github-issues');
+    assert.equal(result.cleared.connections['work-tracker'], undefined);
+    assert.equal(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'wt3-registered.json')), false, 'registered mutation must not create a legacy shadow manifest');
+    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
+    assert.equal(descriptor.connections.github['credential-ref'], 'env:WT3_REG_GITHUB');
+    assert.equal(descriptor.connections['work-tracker'], undefined, 'clear removes only descriptor-owned work-tracker');
+    assert.deepEqual(JSON.parse(fs.readFileSync(otherDescriptorPath, 'utf8')).connections, {}, 'other registered project descriptor is unchanged');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WT3 portable migration preserves valid connections and rejects secret-bearing trackers atomically', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt3-migrate-'));
+  const home = path.join(root, 'home');
+  const projectRoot = path.join(root, 'portable');
+  const legacyPath = path.join(root, 'legacy.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  try {
+    fs.mkdirSync(projectRoot, { recursive: true });
+    fs.writeFileSync(legacyPath, JSON.stringify({
+      project_id: 'wt3-migrate',
+      name: 'WT3 Migrate',
+      workspace_root: projectRoot,
+      runs_root: 'runs',
+      discovery: { 'workflow-roots': ['examples'] },
+      connections: {
+        github: { 'credential-ref': 'env:WT3_MIG_GITHUB' },
+        jira: { 'base-url': 'https://legacy-jira.example', 'credential-ref': 'env:WT3_MIG_JIRA' },
+        'work-tracker': { provider: 'plane', 'credential-ref': 'env:WT3_MIG_PLANE', config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'ws', 'project-id': 'pid' } }
+      }
+    }, null, 2));
+    const migrated = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(println (json/generate-string (cp/migrate-project-portable {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-migrate" ${q(legacyPath)} ${q(projectRoot)})))
+`);
+    assert.equal(migrated.connections.github['credential-ref'], 'env:WT3_MIG_GITHUB');
+    assert.equal(migrated.connections.jira['base-url'], 'https://legacy-jira.example');
+    assert.equal(migrated.connections['work-tracker'].provider, 'plane');
+    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
+    assert.equal(descriptor.connections['work-tracker'].provider, 'plane');
+
+    const badRoot = path.join(root, 'bad-portable');
+    const badLegacyPath = path.join(root, 'bad-legacy.json');
+    fs.mkdirSync(badRoot, { recursive: true });
+    fs.writeFileSync(badLegacyPath, JSON.stringify({
+      project_id: 'wt3-bad-migrate',
+      workspace_root: badRoot,
+      runs_root: 'runs',
+      connections: { 'work-tracker': { provider: 'jira', 'credential-ref': 'env:WT3_BAD', config: { 'base-url': 'https://jira.example', 'project-key': 'BAD', nested: [{ refresh_token: 'WT3_MIGRATE_SECRET_SENTINEL' }] } } }
+    }, null, 2));
+    const badBytes = fs.readFileSync(badLegacyPath, 'utf8');
+    const rejected = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(println (json/generate-string (cp/migrate-project-portable {:workspace-root ${q(root)} :tesseraft-home ${q(home)}} "wt3-bad-migrate" ${q(badLegacyPath)} ${q(badRoot)})))
+`);
+    assert.equal(rejected.status, 400);
+    assert.doesNotMatch(JSON.stringify(rejected), /WT3_MIGRATE_SECRET_SENTINEL/);
+    assert.equal(fs.readFileSync(badLegacyPath, 'utf8'), badBytes, 'failed migration preserves legacy bytes');
+    assert.equal(fs.existsSync(path.join(badRoot, '.tesseraft', 'project.json')), false, 'failed migration leaves no descriptor');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
