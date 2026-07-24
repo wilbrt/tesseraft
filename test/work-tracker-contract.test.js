@@ -150,6 +150,15 @@ test('WT3 rejects malformed trackers atomically and isolates projects', () => {
     assert.equal(secret.status, 400);
     assert.doesNotMatch(JSON.stringify(secret), /WT3_SECRET_SENTINEL/);
 
+    const customSecret = bbJson(`
+(require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
+(cp/register-work-tracker-provider! "acme-tracker" {:required #{:project} :optional #{:metadata}})
+(println (json/generate-string (cp/update-project-connections {:workspace-root ${q(root)}} "wt3-a" {:work-tracker {:provider "acme-tracker" :credential-ref "env:ACME" :config {:project "A" :metadata [{:refresh_token "WT3_CUSTOM_SECRET_SENTINEL"}]}}})))
+`);
+    assert.equal(customSecret.status, 400);
+    assert.doesNotMatch(JSON.stringify(customSecret), /WT3_CUSTOM_SECRET_SENTINEL/);
+    assert.equal(fs.readFileSync(manifestA, 'utf8'), before, 'custom-provider secret failures leave bytes unchanged');
+
     const projectB = bbJson(`
 (require '[tesseraft.control-plane.core :as cp]) (require '[cheshire.core :as json])
 (println (json/generate-string (cp/get-project-connections {:workspace-root ${q(root)}} "wt3-b")))

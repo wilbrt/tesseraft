@@ -80,8 +80,9 @@
 (def ^:private raw-secret-key-names #{"token" "apikey" "accesstoken" "password" "secret"})
 
 (defn- raw-secret-key? [k]
-  (contains? raw-secret-key-names
-             (str/replace (str/lower-case (name k)) #"[_-]" "")))
+  (let [normalized (str/replace (str/lower-case (name k)) #"[_-]" "")]
+    (or (contains? raw-secret-key-names normalized)
+        (str/ends-with? normalized "token"))))
 
 (defn- contains-raw-secret-key? [x]
   (cond

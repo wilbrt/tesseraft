@@ -1349,6 +1349,28 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
       connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
     }, null, 2));
     try {
+      const badArray = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify([])
+      });
+      assert.equal(badArray.status, 400, 'HTTP rejects malformed non-object connection bodies');
+
+      const unknownRole = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unexpected_scope: { value: 1 } })
+      });
+      assert.equal(unknownRole.status, 400, 'HTTP rejects unsupported connection roles instead of treating them as no-ops');
+      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
+        project_id: 'wt3-http-review',
+        name: 'WT3 HTTP Review',
+        workspace_root: '.',
+        runs_root: '.agent-runs',
+        discovery: { 'workflow-roots': ['examples'] },
+        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+      }, null, 2), 'malformed HTTP updates leave project bytes unchanged');
+
       const badVersion = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },

@@ -654,23 +654,31 @@ const handleGetProjectDoctor = async (res: Response, projectId: string): Promise
 
 const handleUpdateProjectConnections = async (req: Request, res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-  const body = (req.body || {}) as JsonRecord;
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    return jsonResponse(res, 400, errorBody(400, 'bad_request', 'connections update body must be an object'));
+  }
+  const body = req.body as JsonRecord;
   // NEVER accept raw token payloads; only refs + base-url.
   if (hasRawSecretKey(body)) {
     return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw secret payloads are not accepted; provide a credential_ref instead'));
   }
-  const args = ['project', 'connections', projectId];
-  const conns = body;
-  if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
-    const c = conns as JsonRecord;
-    const jira = c.jira as JsonRecord | undefined;
-    const github = c.github as JsonRecord | undefined;
-    if (jira) { if (typeof jira.base_url === 'string') args.push('--jira-base-url', jira.base_url); if (typeof jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', jira.credential_ref); } }
-    if (github && typeof github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', github.credential_ref); }
-    const tracker = c.work_tracker ?? c['work-tracker'];
-    if (tracker === null || c.clear_work_tracker === true || c['clear-work-tracker'] === true) args.push('--clear-work-tracker');
-    else if (tracker !== undefined) { const wtArgs = normalizeWorkTrackerArgs(tracker); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); }
+  const allowedTopLevel = new Set(['jira', 'github', 'work_tracker', 'work-tracker', 'clear_work_tracker', 'clear-work-tracker']);
+  for (const key of Object.keys(body)) {
+    if (!allowedTopLevel.has(key)) return jsonResponse(res, 400, errorBody(400, 'bad_request', `Unknown project connection role: ${key}`));
   }
+  const args = ['project', 'connections', projectId];
+  let hasMutation = false;
+  const c = body;
+  const jira = c.jira as JsonRecord | undefined;
+  const github = c.github as JsonRecord | undefined;
+  if (jira !== undefined && (!jira || typeof jira !== 'object' || Array.isArray(jira))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'jira connection must be an object'));
+  if (github !== undefined && (!github || typeof github !== 'object' || Array.isArray(github))) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'github connection must be an object'));
+  if (jira) { if (typeof jira.base_url === 'string') { args.push('--jira-base-url', jira.base_url); hasMutation = true; } if (typeof jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', jira.credential_ref); hasMutation = true; } }
+  if (github && typeof github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', github.credential_ref); hasMutation = true; }
+  const tracker = c.work_tracker ?? c['work-tracker'];
+  if (tracker === null || c.clear_work_tracker === true || c['clear-work-tracker'] === true) { args.push('--clear-work-tracker'); hasMutation = true; }
+  else if (tracker !== undefined) { const wtArgs = normalizeWorkTrackerArgs(tracker); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); hasMutation = true; }
+  if (!hasMutation) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'connections update requires at least one supported mutation'));
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
 };
