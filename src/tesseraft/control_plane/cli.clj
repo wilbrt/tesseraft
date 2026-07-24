@@ -159,6 +159,15 @@
           "--end-line" (recur more (assoc acc :end-line (parse-long b)))
           (recur (rest xs) acc))))))
 
+(defn parse-json-object-flag [flag value]
+  (try
+    (let [parsed (json/parse-string (cli-args/require-value flag value) true)]
+      (if (map? parsed)
+        parsed
+        (throw (ex-info (str flag " must be a JSON object") {:flag flag}))))
+    (catch Throwable t
+      (throw (ex-info (str flag " must be a JSON object") {:flag flag :message (.getMessage t)})))))
+
 (defn parse-project-create-args [args]
   (loop [xs args acc {:spec {}}]
     (if (empty? xs)
@@ -173,6 +182,9 @@
           "--jira-base-url" (recur more (assoc-in acc [:spec :connections :jira :base-url] b))
           "--jira-credential-ref" (recur more (assoc-in acc [:spec :connections :jira :credential-ref] b))
           "--github-credential-ref" (recur more (assoc-in acc [:spec :connections :github :credential-ref] b))
+          "--work-tracker-provider" (recur more (assoc-in acc [:spec :connections :work-tracker :provider] b))
+          "--work-tracker-credential-ref" (recur more (assoc-in acc [:spec :connections :work-tracker :credential-ref] b))
+          "--work-tracker-config" (recur more (assoc-in acc [:spec :connections :work-tracker :config] (parse-json-object-flag a b)))
           "--source" (recur more (assoc-in acc [:spec :source] b))
           (recur (rest xs) acc))))))
 
@@ -213,6 +225,10 @@
           "--jira-base-url" (recur more (assoc-in acc [:jira :base-url] b))
           "--jira-credential-ref" (recur more (assoc-in acc [:jira :credential-ref] b))
           "--github-credential-ref" (recur more (assoc-in acc [:github :credential-ref] b))
+          "--work-tracker-provider" (recur more (assoc-in acc [:work-tracker :provider] b))
+          "--work-tracker-credential-ref" (recur more (assoc-in acc [:work-tracker :credential-ref] b))
+          "--work-tracker-config" (recur more (assoc-in acc [:work-tracker :config] (parse-json-object-flag a b)))
+          "--clear-work-tracker" (recur (rest xs) (assoc acc :clear-work-tracker true))
           (recur (rest xs) acc))))))
 
 (defn project-command [options args]

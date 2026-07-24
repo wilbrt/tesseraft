@@ -4,7 +4,8 @@ A **Project** is a first-class, named configuration aggregate. Repository-owned
 identity lives in the portable descriptor `.tesseraft/project.json`; machine-local
 registration lives in the user registry `$TESSERAFT_HOME/projects/registry.json`.
 Together they identify a workspace root, run root, workflow discovery context,
-non-secret settings, and project-specific Jira/GitHub connection configuration.
+non-secret settings, project-specific Jira/GitHub connection configuration, and
+an optional primary work-tracker connection.
 
 A project makes the previously-scattered project-scoped config into a single
 addressable identity so that:
@@ -31,7 +32,16 @@ Portable repository descriptor (`.tesseraft/project.json`, versionable):
   "discovery": { "workflow-roots": ["examples"] },
   "connections": {
     "jira": { "base-url": "https://example.atlassian.net", "credential-ref": "env:JIRA_TOKEN" },
-    "github": { "credential-ref": "env:GITHUB_TOKEN" }
+    "github": { "credential-ref": "env:GITHUB_TOKEN" },
+    "work-tracker": {
+      "provider": "plane",
+      "credential-ref": "env:PLANE_TOKEN",
+      "config": {
+        "api-base-url": "https://api.plane.so",
+        "workspace-slug": "acme",
+        "project-id": "project-uuid"
+      }
+    }
   }
 }
 ```
@@ -69,6 +79,36 @@ fallback/migration sources.
 A portable migration writes `.tesseraft/project.json` and matching user-local
 registry state without deleting or rewriting the legacy source bytes.
 
+## Work tracker connection
+
+`connections.work-tracker` is optional. Omission means the project has no primary
+tracker. The role is independent from legacy `connections.github` (code host/PR)
+and legacy `connections.jira` semantics.
+
+Canonical persisted/public shape uses kebab-case:
+
+```json
+{
+  "provider": "jira",
+  "credential-ref": "tesseraft:jira/tracker",
+  "config": { "base-url": "https://example.atlassian.net", "project-key": "TES" }
+}
+```
+
+Built-in providers are contract-only in WT3; Tesseraft validates and stores the
+configuration but does not call provider APIs, fetch issues, sync state, or add
+UI behavior.
+
+- `plane`: `config.api-base-url` must be `http(s)`, plus `workspace-slug` and
+  `project-id`.
+- `jira`: `config.base-url` must be `http(s)`, plus `project-key`.
+- `github-issues`: `config.repository` must be `owner/name`.
+
+CLI/HTTP writes accept snake_case aliases at the boundary and return normalized
+kebab-case. Raw secret-looking keys are rejected recursively; use
+`credential-ref`. Clearing `work-tracker` is idempotent and leaves GitHub/Jira
+connections unchanged.
+
 ## Control-plane commands
 
 ```
@@ -77,7 +117,7 @@ tesseraft control-plane project <project-id>
 tesseraft control-plane project create <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]
 tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]
 tesseraft control-plane project migrate [<project-id>]
-tesseraft control-plane project connections <project-id>
+tesseraft control-plane project connections <project-id> [--work-tracker-provider <plane|jira|github-issues> --work-tracker-credential-ref <ref> --work-tracker-config '<json>'] [--clear-work-tracker]
 tesseraft control-plane --project-id <project-id> doctor
 ```
 
@@ -110,4 +150,5 @@ start.
 - `schemas/user-project-registry.schema.json` — user-local `$TESSERAFT_HOME/projects/registry.json` registry shape.
 - `schemas/project.schema.json` — legacy project manifest shape retained for compatibility.
 - `schemas/credential-ref.schema.json` — credential reference shape.
+- `schemas/work-tracker*.schema.json` — optional project work-tracker envelope and built-in provider config shapes.
 - `schemas/run-state.schema.json` — optional `project_id`.

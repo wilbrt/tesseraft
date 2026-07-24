@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plane Work Tracker Config",
+  "type": "object",
+  "required": ["api-base-url", "workspace-slug", "project-id"],
+  "properties": {
+    "api-base-url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+    "workspace-slug": { "type": "string", "minLength": 1 },
+    "project-id": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

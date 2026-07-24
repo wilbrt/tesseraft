@@ -118,10 +118,11 @@ composition and safe rehearsal fast while preserving source-of-truth rules:
 
 A first-class [Project](PROJECTS.md) is a named aggregate owning a workspace
 root, run root, workflow discovery context, non-secret settings, and
-project-specific Jira/GitHub connection configuration. Raw credentials are kept
-out of repositories behind `credential-ref` strings of the form `<store>:<path>`
-(only `env:` is wired for local resolution; `github-actions:` is
-validated-but-unresolved locally).
+project-specific Jira/GitHub connection configuration plus an optional primary
+`connections.work-tracker` role. Raw credentials are kept out of repositories
+behind `credential-ref` strings of the form `<store>:<path>` (only `env:` is
+wired for local resolution; `github-actions:` is validated-but-unresolved
+locally).
 
 | Method | Path | Maps to | Notes |
 | --- | --- | --- | --- |
@@ -131,8 +132,18 @@ validated-but-unresolved locally).
 | PUT | `/api/projects/{id}` | `project update {id}` | Partial update of non-secret fields. |
 | POST | `/api/projects/{id}/migrate` | `project migrate {id}` | Legacy→default migration; 409 if default already exists. |
 | GET | `/api/projects/{id}/connections` | `project connections {id}` | Connection metadata + masked state; no raw tokens. |
-| PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update `base_url` / `credential-ref`; **never** accepts raw token payloads. |
+| PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update legacy Jira/GitHub refs or set/clear `work_tracker`; **never** accepts raw token payloads. |
 | GET | `/api/projects/{id}/doctor` | `--project-id {id} doctor` | Local-first readiness report with `ready`, `not-configured`, `unreachable`, and `invalid` checks. Static/read-only only; no raw secrets or subprocess output. |
+
+`PUT /api/projects/{id}/connections` accepts either `work_tracker` or
+`work-tracker`; nested `credential_ref`/`credential-ref` and snake/kebab config
+keys are normalized at the boundary. `work_tracker: null`, `clear_work_tracker:
+true`, or `clear-work-tracker: true` clears only the tracker and is idempotent.
+Responses use canonical kebab-case and include masked `credential-state` only.
+Built-in provider configs are `plane` (`api-base-url`, `workspace-slug`,
+`project-id`), `jira` (`base-url`, `project-key`), and `github-issues`
+(`repository` as `owner/name`). WT3 performs no provider API calls, issue sync,
+fetch, or UI execution behavior.
 
 Existing default routes are unscoped and operate on the implicit `default` project
 (non-breaking for single-project users). Project-scoped operations thread a

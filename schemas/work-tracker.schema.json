@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft Work Tracker Connection",
+  "description": "Optional project-owned work tracker envelope. Omit connections.work-tracker when the project has no tracker.",
+  "type": "object",
+  "required": ["provider", "credential-ref", "config"],
+  "properties": {
+    "provider": { "enum": ["plane", "jira", "github-issues"] },
+    "schema-version": { "const": 1 },
+    "credential-ref": { "$ref": "credential-ref.schema.json" },
+    "config": {
+      "oneOf": [
+        { "$ref": "work-tracker-plane.schema.json" },
+        { "$ref": "work-tracker-jira.schema.json" },
+        { "$ref": "work-tracker-github-issues.schema.json" }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

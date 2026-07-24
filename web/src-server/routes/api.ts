@@ -242,7 +242,8 @@ const hasRawSecretKey = (value: unknown): boolean => {
   if (Array.isArray(value)) return value.some(hasRawSecretKey);
   if (!value || typeof value !== 'object') return false;
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (RAW_SECRET_KEY_NAMES.has(key.toLowerCase().replace(/[_-]/g, ''))) return true;
+    const normalizedKey = key.toLowerCase().replace(/[_-]/g, '');
+    if (RAW_SECRET_KEY_NAMES.has(normalizedKey) || normalizedKey.endsWith('token')) return true;
     if (hasRawSecretKey(nested)) return true;
   }
   return false;
@@ -284,6 +285,18 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
 };
 
+const normalizeWorkTrackerArgs = (raw: unknown): string[] | { error: string } => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'work_tracker must be an object' };
+  const wt = raw as JsonRecord;
+  const provider = wt.provider;
+  const credentialRef = wt.credential_ref ?? wt['credential-ref'];
+  const config = wt.config;
+  if (typeof provider !== 'string' || provider.trim() === '') return { error: 'work_tracker.provider is required' };
+  if (typeof credentialRef !== 'string' || !CREDENTIAL_REF_RE.test(credentialRef)) return { error: 'Invalid work_tracker.credential_ref' };
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return { error: 'work_tracker.config must be an object' };
+  return ['--work-tracker-provider', provider, '--work-tracker-credential-ref', credentialRef, '--work-tracker-config', JSON.stringify(config)];
+};
+
 const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   const allowed = new Set(['version', 'project_id', 'name', 'runs_root', 'discovery', 'connections']);
   for (const key of Object.keys(descriptor)) if (!allowed.has(key)) return `Unknown project descriptor field: ${key}`;
@@ -305,11 +318,12 @@ const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   if (descriptor.connections && typeof descriptor.connections === 'object' && !Array.isArray(descriptor.connections)) {
     const connections = descriptor.connections as JsonRecord;
     for (const [name, raw] of Object.entries(connections)) {
-      if (name !== 'jira' && name !== 'github') return `Unknown project descriptor connection: ${name}`;
+      if (name !== 'jira' && name !== 'github' && name !== 'work-tracker') return `Unknown project descriptor connection: ${name}`;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return `Invalid project descriptor connection: ${name}`;
       const conn = raw as JsonRecord;
-      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : new Set(['credential-ref']);
+      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : name === 'github' ? new Set(['credential-ref']) : new Set(['provider', 'credential-ref', 'config', 'schema-version']);
       for (const key of Object.keys(conn)) if (!allowedConn.has(key)) return `Unknown project descriptor connection field: ${name}.${key}`;
+      if (name === 'work-tracker') continue;
       if (conn['base-url'] !== undefined && typeof conn['base-url'] !== 'string') return `Invalid project descriptor connection: ${name}.base-url`;
       if (conn['credential-ref'] !== undefined && (typeof conn['credential-ref'] !== 'string' || !CREDENTIAL_REF_RE.test(conn['credential-ref']))) return `Invalid project descriptor connection: ${name}.credential-ref`;
     }
@@ -445,6 +459,7 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
     const c = conns as Record<string, JsonRecord>;
     if (c.jira) { if (typeof c.jira['base-url'] === 'string') args.push('--jira-base-url', c.jira['base-url']); if (typeof c.jira['credential-ref'] === 'string') args.push('--jira-credential-ref', c.jira['credential-ref']); }
     if (c.github && typeof c.github['credential-ref'] === 'string') args.push('--github-credential-ref', c.github['credential-ref']);
+    if (c['work-tracker']) { const wtArgs = normalizeWorkTrackerArgs(c['work-tracker']); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); }
   }
   if (projectRoot) args.push('--source', 'registration');
   const result = await runControlPlane(args);
@@ -636,9 +651,14 @@ const handleUpdateProjectConnections = async (req: Request, res: Response, proje
   const args = ['project', 'connections', projectId];
   const conns = body;
   if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
-    const c = conns as Record<string, JsonRecord>;
-    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', c.jira.credential_ref); } }
-    if (c.github && typeof c.github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', c.github.credential_ref); }
+    const c = conns as JsonRecord;
+    const jira = c.jira as JsonRecord | undefined;
+    const github = c.github as JsonRecord | undefined;
+    if (jira) { if (typeof jira.base_url === 'string') args.push('--jira-base-url', jira.base_url); if (typeof jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', jira.credential_ref); } }
+    if (github && typeof github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', github.credential_ref); }
+    const tracker = c.work_tracker ?? c['work-tracker'];
+    if (tracker === null || c.clear_work_tracker === true || c['clear-work-tracker'] === true) args.push('--clear-work-tracker');
+    else if (tracker !== undefined) { const wtArgs = normalizeWorkTrackerArgs(tracker); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); }
   }
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
@@ -997,7 +1017,11 @@ const handleStartRun = async (req: Request, res: Response, projectId?: string): 
       }
     }
   }
-  if (projectWorkspaceRoot && !path.isAbsolute(filePath)) filePath = path.join(projectWorkspaceRoot, filePath);
+  if (!path.isAbsolute(filePath)) {
+    const controlRelative = path.resolve(WORKSPACE_ROOT, filePath);
+    const projectRelative = projectWorkspaceRoot ? path.resolve(projectWorkspaceRoot, filePath) : controlRelative;
+    filePath = fs.existsSync(controlRelative) ? controlRelative : projectRelative;
+  }
 
   const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json', ...pid, ...runtimeRoots];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);

@@ -40,7 +40,8 @@
             "credential-ref": { "$ref": "credential-ref.schema.json" }
           },
           "additionalProperties": false
-        }
+        },
+        "work-tracker": { "$ref": "work-tracker.schema.json" }
       },
       "additionalProperties": false
     }

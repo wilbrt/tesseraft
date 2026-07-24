@@ -114,6 +114,145 @@
   [s]
   (and (string? s) (re-find credential-ref-re s)))
 
+(def ^:private http-url-schemes #{"http" "https"})
+
+(defn- valid-http-url? [s]
+  (try
+    (let [uri (java.net.URI. s)
+          scheme (some-> (.getScheme uri) str/lower-case)]
+      (and (string? s)
+           (not (str/blank? s))
+           (contains? http-url-schemes scheme)
+           (not (str/blank? (or (.getHost uri) "")))))
+    (catch Throwable _ false)))
+
+(defn- normalize-key [k]
+  (keyword (str/replace (name k) #"_" "-")))
+
+(defn- normalize-keys-shallow [m]
+  (into {} (map (fn [[k v]] [(normalize-key k) v]) m)))
+
+(defn- unsupported-fields [m allowed]
+  (seq (remove allowed (keys m))))
+
+(def ^:private work-tracker-registry
+  (atom
+    {:plane {:required #{:api-base-url :workspace-slug :project-id}
+             :optional #{}
+             :validate (fn [config]
+                         (cond
+                           (not (valid-http-url? (:api-base-url config))) "plane api-base-url must be an http(s) URL"
+                           (str/blank? (str (:workspace-slug config))) "plane workspace-slug is required"
+                           (str/blank? (str (:project-id config))) "plane project-id is required"
+                           :else nil))}
+     :jira {:required #{:base-url :project-key}
+            :optional #{}
+            :validate (fn [config]
+                        (cond
+                          (not (valid-http-url? (:base-url config))) "jira base-url must be an http(s) URL"
+                          (str/blank? (str (:project-key config))) "jira project-key is required"
+                          :else nil))}
+     :github-issues {:required #{:repository}
+                     :optional #{}
+                     :validate (fn [config]
+                                 (if (and (string? (:repository config))
+                                          (re-matches #"[^/\s]+/[^/\s]+" (:repository config)))
+                                   nil
+                                   "github-issues repository must be owner/name"))}}))
+
+(defn register-work-tracker-provider!
+  "Register a non-runnable work-tracker config schema for tests/packages.
+  `schema` is a map with `:required`, optional `:optional`, and optional
+  `:validate` function that returns nil or an error string. Registration only
+  affects contract validation; WT3 never executes adapters."
+  [provider schema]
+  (let [p (normalize-key provider)]
+    (swap! work-tracker-registry assoc p (merge {:required #{} :optional #{} :validate (constantly nil)} schema))
+    p))
+
+(defn- validate-work-tracker-config [provider config]
+  (let [schema (get @work-tracker-registry provider)]
+    (cond
+      (nil? schema) (str "Unsupported work-tracker provider: " (name provider))
+      (not (map? config)) "work-tracker config must be an object"
+      :else
+      (let [config* (normalize-keys-shallow config)
+            required (:required schema)
+            allowed (into (set required) (:optional schema))]
+        (cond
+          (seq (unsupported-fields config* allowed))
+          (str "Unsupported work-tracker config fields: " (str/join ", " (map name (unsupported-fields config* allowed))))
+          (seq (remove #(contains? config* %) required))
+          (str "Missing work-tracker config fields: " (str/join ", " (map name (remove #(contains? config* %) required))))
+          :else
+          (when-let [err ((:validate schema) config*)] err))))))
+
+(defn normalize-work-tracker
+  "Normalize and validate a work-tracker envelope. Returns normalized map or
+  an error-response. nil means no tracker."
+  [raw]
+  (when (some? raw)
+    (cond
+      (not (map? raw)) (error-response 400 "bad_request" "work-tracker must be an object")
+      (contains-raw-secret-key? raw) (error-response 400 "bad_request" "Raw secret payloads are not accepted; provide a credential-ref instead")
+      :else
+      (let [m (normalize-keys-shallow raw)
+            provider (some-> (:provider m) normalize-key)
+            config (when (map? (:config m)) (normalize-keys-shallow (:config m)))
+            version (:schema-version m)]
+        (cond
+          (seq (unsupported-fields m #{:provider :schema-version :credential-ref :config}))
+          (error-response 400 "bad_request" "work-tracker contains unknown fields")
+          (and (some? version) (not= 1 version))
+          (error-response 400 "bad_request" "Unsupported work-tracker schema-version")
+          (nil? provider)
+          (error-response 400 "bad_request" "work-tracker provider is required")
+          (not (credential-ref? (:credential-ref m)))
+          (error-response 400 "bad_request" "Invalid work-tracker credential-ref")
+          (not (map? (:config m)))
+          (error-response 400 "bad_request" "work-tracker config must be an object")
+          :else
+          (if-let [err (validate-work-tracker-config provider config)]
+            (error-response 400 "bad_request" err)
+            {:provider (name provider)
+             :credential-ref (:credential-ref m)
+             :config config}))))))
+
+(defn- normalize-connection-entry [k v]
+  (let [k* (normalize-key k)]
+    (cond
+      (not (map? v)) nil
+      (= :work-tracker k*) (let [n (normalize-work-tracker v)] (when-not (:error n) [k* n]))
+      (#{:jira :github} k*) [k* (normalize-keys-shallow v)]
+      :else nil)))
+
+(defn- validate-connections [conn prefix]
+  (cond
+    (and (some? conn) (not (map? conn))) (str prefix " connections must be an object")
+    (nil? conn) nil
+    :else
+    (let [conn* (normalize-keys-shallow conn)
+          unknown (seq (remove #{:jira :github :work-tracker} (keys conn*)))]
+      (cond
+        unknown (str prefix " connections contains unknown fields")
+        :else
+        (or
+          (some (fn [[k v]]
+                  (cond
+                    (not (map? v)) (str "invalid " prefix " connection: " (name k))
+                    (= :work-tracker k) (let [n (normalize-work-tracker v)] (when (:error n) (get-in n [:error :message])))
+                    (seq (unsupported-fields (normalize-keys-shallow v) (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}))) (str "invalid " prefix " connection: " (name k))
+                    (and (:base-url (normalize-keys-shallow v)) (not (string? (:base-url (normalize-keys-shallow v))))) (str "invalid " prefix " connection: " (name k))
+                    (and (:credential-ref (normalize-keys-shallow v)) (not (credential-ref? (:credential-ref (normalize-keys-shallow v))))) (str "invalid " prefix " connection: " (name k))
+                    :else nil))
+                conn*)
+          nil)))))
+
+(defn- normalize-connections [connections]
+  (if (map? connections)
+    (into {} (keep (fn [[k v]] (normalize-connection-entry k v)) connections))
+    {}))
+
 (defn projects-dir [options]
   (fs/path (:workspace-root (opts options)) ".tesseraft" "projects"))
 
@@ -377,18 +516,8 @@
              (not (or (string? (:tesseraft-home discovery)) (nil? (:tesseraft-home discovery))))) "project descriptor discovery.tesseraft-home must be a string or null"
         (and (some? (:tesseraft_home discovery))
              (not (or (string? (:tesseraft_home discovery)) (nil? (:tesseraft_home discovery))))) "project descriptor discovery.tesseraft_home must be a string or null"
-        (and (some? conn) (not (map? conn))) "project descriptor connections must be an object"
-        (and (map? conn) (some #(not (contains? #{:jira :github} %)) (keys conn))) "project descriptor connections contains unknown fields"
         :else
-        (let [bad-conn (some (fn [[k v]]
-                               (cond
-                                 (not (map? v)) (name k)
-                                 (some #(not (contains? (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}) %)) (keys v)) (name k)
-                                 (and (:base-url v) (not (string? (:base-url v)))) (name k)
-                                 (and (:credential-ref v) (not (credential-ref? (:credential-ref v)))) (name k)
-                                 :else nil))
-                             conn)]
-          (when bad-conn (str "invalid project descriptor connection: " bad-conn)))))))
+        (validate-connections conn "project descriptor")))))
 
 (defn- normalize-project-descriptor [project-root raw]
   (let [discovery (:discovery raw {})
@@ -406,14 +535,7 @@
                  (assoc :tesseraft-home (:tesseraft_home discovery))
                  (contains? discovery :tesseraft-home)
                  (assoc :tesseraft-home (:tesseraft-home discovery))))
-        (assoc :connections
-               (if (map? connections)
-                 (into {} (for [[k v] connections
-                                :let [k* (if (keyword? k) k (keyword k))]
-                                :when (#{:jira :github} k*)
-                                :when (map? v)]
-                            [k* v]))
-                 {})))))
+        (assoc :connections (normalize-connections connections)))))
 
 (defn- nearest-project-descriptor-root [start]
   (loop [dir (fs/normalize (fs/path start))]
@@ -584,11 +706,7 @@
     :else nil))
 
 (defn- norm-connections [raw]
-  (if (or (nil? raw) (not (map? raw))) {}
-    (into {} (for [[k v] raw
-                   :when (#{:jira :github :jira/* :github/* "jira" "github"} k)
-                   :when (map? v)]
-               [(if (keyword? k) k (keyword k)) v]))))
+  (normalize-connections raw))
 
 ;; ---- settings config (source of truth: .tesseraft/settings.json) ----
 ;; Defined early so the default-project synthesizer (below) can resolve these
@@ -873,18 +991,8 @@
                (not (string? (:tesseraft-home discovery))))
           "discovery.tesseraft-home must be a string"
 
-          (and (some? conn) (not (map? conn)))
-          "connections must be an object"
-
           :else
-          (let [bad-conn (some (fn [[_k v]]
-                                 (when (map? v)
-                                   (when-let [r (:credential-ref v)]
-                                     (when-not (credential-ref? r)
-                                       (:credential-ref v)))))
-                               conn)]
-            (when bad-conn
-              (str "Invalid credential-ref: " bad-conn))))))))
+          (validate-connections conn "project"))))))
 
 (defn create-project
   ([options project-id spec] (create-project options project-id spec false))
@@ -947,7 +1055,7 @@
                                            :tesseraft-home (:tesseraft-home (opts options))})}
                           (:source spec) (assoc :source (:source spec))
                           (seq (:settings spec)) (assoc :settings (:settings spec))
-                          (seq (:connections spec)) (assoc :connections (:connections spec)))
+                          (seq (:connections spec)) (assoc :connections (normalize-connections (:connections spec))))
                registration? (= "registration" (:source spec))]
            (if registration?
              (let [target (project-registry-path options)
@@ -1004,7 +1112,8 @@
        (if-let [err (validate-project-spec options project-id spec)]
          (error-response 400 "bad_request" err)
          (let [current (or (read-project-manifest options project-id) {})
-               merged (merge current spec)]
+               spec* (cond-> spec (contains? spec :connections) (update :connections normalize-connections))
+               merged (merge current spec*)]
            (store/write-json! (project-manifest-path options project-id) merged)
            (get-project options project-id)))))))
 
@@ -1213,29 +1322,32 @@
        (error-response 400 "bad_request" "connections update must be an object")
 
        (contains-raw-secret-key? updates)
-       ;; Raw secret payloads are NEVER accepted; only refs + base-url.
+       ;; Raw secret payloads are NEVER accepted; only refs + config.
        (error-response 400 "bad_request"
                       "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
-       (let [resolved (resolve-project options project-id)]
-         (if (:error resolved)
-           resolved
-           (let [bad-ref (some (fn [[_k v]]
-                                 (when (and (map? v) (:credential-ref v))
-                                   (when-not (credential-ref? (:credential-ref v))
-                                     (:credential-ref v))))
-                               updates)]
-             (if bad-ref
-               (error-response 400 "bad_request" (str "Invalid credential-ref: " bad-ref))
+       (let [updates* (normalize-keys-shallow updates)
+             clear-work-tracker? (or (= :clear (:work-tracker updates*))
+                                     (= "clear" (:work-tracker updates*))
+                                     (true? (:clear-work-tracker updates*)))
+             validation-updates (cond-> (dissoc updates* :clear-work-tracker)
+                                  clear-work-tracker? (dissoc :work-tracker))]
+         (if-let [err (validate-connections validation-updates "project")]
+           (error-response 400 "bad_request" err)
+           (let [resolved (resolve-project options project-id)]
+             (if (:error resolved)
+               resolved
                (let [current (or (read-project-manifest options (or project-id "default"))
                                 (-> (synthesize-default-project options)
                                     (dissoc :source)))
-                     merged-conn (merge (:connections current {}) updates)
+                     normalized-updates (normalize-connections validation-updates)
+                     merged-conn (cond-> (merge (:connections current {}) normalized-updates)
+                                   clear-work-tracker? (dissoc :work-tracker))
                      manifest (assoc current :connections merged-conn)
                      target (project-manifest-path options (or project-id "default"))]
                  (fs/create-dirs (fs/parent target))
-                 (store/write-json! target manifest)
+                 (atomic-write-json-owner-only! target manifest)
                  (get-project-connections options project-id))))))))))
 
 (defn discovery-roots
