@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Jira Work Tracker Config",
+  "type": "object",
+  "required": ["base-url", "project-key"],
+  "properties": {
+    "base-url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+    "project-key": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft Work Tracker Connection",
+  "description": "Optional project-owned work tracker envelope. Omit connections.work-tracker when the project has no tracker. Built-in providers are discriminated by provider id; other provider ids require runtime/package registration before persistence.",
+  "type": "object",
+  "required": ["provider", "credential-ref", "config"],
+  "properties": {
+    "provider": { "type": "string", "minLength": 1 },
+    "schema-version": { "const": 1 },
+    "credential-ref": { "$ref": "credential-ref.schema.json" },
+    "config": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "provider": { "const": "plane" } }, "required": ["provider"] },
+      "then": { "properties": { "config": { "$ref": "work-tracker-plane.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "provider": { "const": "jira" } }, "required": ["provider"] },
+      "then": { "properties": { "config": { "$ref": "work-tracker-jira.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "provider": { "const": "github-issues" } }, "required": ["provider"] },
+      "then": { "properties": { "config": { "$ref": "work-tracker-github-issues.schema.json" } } }
+    }
+  ],
+  "additionalProperties": false
+}

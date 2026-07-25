@@ -80,8 +80,9 @@
 (def ^:private raw-secret-key-names #{"token" "apikey" "accesstoken" "password" "secret"})
 
 (defn- raw-secret-key? [k]
-  (contains? raw-secret-key-names
-             (str/replace (str/lower-case (name k)) #"[_-]" "")))
+  (let [normalized (str/replace (str/lower-case (name k)) #"[_-]" "")]
+    (or (contains? raw-secret-key-names normalized)
+        (str/ends-with? normalized "token"))))
 
 (defn- contains-raw-secret-key? [x]
   (cond
@@ -113,6 +114,146 @@
   local resolution is wired only for the selected store."
   [s]
   (and (string? s) (re-find credential-ref-re s)))
+
+(def ^:private http-url-schemes #{"http" "https"})
+
+(defn- valid-http-url? [s]
+  (try
+    (let [uri (java.net.URI. s)
+          scheme (some-> (.getScheme uri) str/lower-case)]
+      (and (string? s)
+           (not (str/blank? s))
+           (contains? http-url-schemes scheme)
+           (not (str/blank? (or (.getHost uri) "")))))
+    (catch Throwable _ false)))
+
+(defn- normalize-key [k]
+  (keyword (str/replace (if (keyword? k) (name k) (str k)) #"_" "-")))
+
+(defn- normalize-keys-shallow [m]
+  (into {} (map (fn [[k v]] [(normalize-key k) v]) m)))
+
+(defn- unsupported-fields [m allowed]
+  (seq (remove allowed (keys m))))
+
+(def ^:private work-tracker-registry
+  (atom
+    {:plane {:required #{:api-base-url :workspace-slug :project-id}
+             :optional #{}
+             :validate (fn [config]
+                         (cond
+                           (not (valid-http-url? (:api-base-url config))) "plane api-base-url must be an http(s) URL"
+                           (not (and (string? (:workspace-slug config)) (not (str/blank? (:workspace-slug config))))) "plane workspace-slug is required"
+                           (not (and (string? (:project-id config)) (not (str/blank? (:project-id config))))) "plane project-id is required"
+                           :else nil))}
+     :jira {:required #{:base-url :project-key}
+            :optional #{}
+            :validate (fn [config]
+                        (cond
+                          (not (valid-http-url? (:base-url config))) "jira base-url must be an http(s) URL"
+                          (not (and (string? (:project-key config)) (not (str/blank? (:project-key config))))) "jira project-key is required"
+                          :else nil))}
+     :github-issues {:required #{:repository}
+                     :optional #{}
+                     :validate (fn [config]
+                                 (if (and (string? (:repository config))
+                                          (re-matches #"[^/\s]+/[^/\s]+" (:repository config)))
+                                   nil
+                                   "github-issues repository must be owner/name"))}}))
+
+(defn register-work-tracker-provider!
+  "Register a non-runnable work-tracker config schema for tests/packages.
+  `schema` is a map with `:required`, optional `:optional`, and optional
+  `:validate` function that returns nil or an error string. Registration only
+  affects contract validation; WT3 never executes adapters."
+  [provider schema]
+  (let [p (normalize-key provider)]
+    (swap! work-tracker-registry assoc p (merge {:required #{} :optional #{} :validate (constantly nil)} schema))
+    p))
+
+(defn- validate-work-tracker-config [provider config]
+  (let [schema (get @work-tracker-registry provider)]
+    (cond
+      (nil? schema) (str "Unsupported work-tracker provider: " (name provider))
+      (not (map? config)) "work-tracker config must be an object"
+      :else
+      (let [config* (normalize-keys-shallow config)
+            required (:required schema)
+            allowed (into (set required) (:optional schema))]
+        (cond
+          (seq (unsupported-fields config* allowed))
+          (str "Unsupported work-tracker config fields: " (str/join ", " (map name (unsupported-fields config* allowed))))
+          (seq (remove #(contains? config* %) required))
+          (str "Missing work-tracker config fields: " (str/join ", " (map name (remove #(contains? config* %) required))))
+          :else
+          (when-let [err ((:validate schema) config*)] err))))))
+
+(defn normalize-work-tracker
+  "Normalize and validate a work-tracker envelope. Returns normalized map or
+  an error-response. nil means no tracker."
+  [raw]
+  (when (some? raw)
+    (cond
+      (not (map? raw)) (error-response 400 "bad_request" "work-tracker must be an object")
+      (contains-raw-secret-key? raw) (error-response 400 "bad_request" "Raw secret payloads are not accepted; provide a credential-ref instead")
+      :else
+      (let [m (normalize-keys-shallow raw)
+            provider-raw (:provider m)
+            provider (when (or (string? provider-raw) (keyword? provider-raw)) (normalize-key provider-raw))
+            config (when (map? (:config m)) (normalize-keys-shallow (:config m)))
+            version (:schema-version m)]
+        (cond
+          (seq (unsupported-fields m #{:provider :schema-version :credential-ref :config}))
+          (error-response 400 "bad_request" "work-tracker contains unknown fields")
+          (and (contains? m :schema-version) (not= 1 version))
+          (error-response 400 "bad_request" "Unsupported work-tracker schema-version")
+          (nil? provider)
+          (error-response 400 "bad_request" "work-tracker provider is required and must be a string")
+          (not (credential-ref? (:credential-ref m)))
+          (error-response 400 "bad_request" "Invalid work-tracker credential-ref")
+          (not (map? (:config m)))
+          (error-response 400 "bad_request" "work-tracker config must be an object")
+          :else
+          (if-let [err (validate-work-tracker-config provider config)]
+            (error-response 400 "bad_request" err)
+            {:provider (name provider)
+             :credential-ref (:credential-ref m)
+             :config config}))))))
+
+(defn- normalize-connection-entry [k v]
+  (let [k* (normalize-key k)]
+    (cond
+      (not (map? v)) nil
+      (= :work-tracker k*) (let [n (normalize-work-tracker v)] (when-not (:error n) [k* n]))
+      (#{:jira :github} k*) [k* (normalize-keys-shallow v)]
+      :else nil)))
+
+(defn- validate-connections [conn prefix]
+  (cond
+    (and (some? conn) (not (map? conn))) (str prefix " connections must be an object")
+    (nil? conn) nil
+    :else
+    (let [conn* (normalize-keys-shallow conn)
+          unknown (seq (remove #{:jira :github :work-tracker} (keys conn*)))]
+      (cond
+        unknown (str prefix " connections contains unknown fields")
+        :else
+        (or
+          (some (fn [[k v]]
+                  (cond
+                    (not (map? v)) (str "invalid " prefix " connection: " (name k))
+                    (= :work-tracker k) (let [n (normalize-work-tracker v)] (when (:error n) (get-in n [:error :message])))
+                    (seq (unsupported-fields (normalize-keys-shallow v) (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}))) (str "invalid " prefix " connection: " (name k))
+                    (and (:base-url (normalize-keys-shallow v)) (not (string? (:base-url (normalize-keys-shallow v))))) (str "invalid " prefix " connection: " (name k))
+                    (and (:credential-ref (normalize-keys-shallow v)) (not (credential-ref? (:credential-ref (normalize-keys-shallow v))))) (str "invalid " prefix " connection: " (name k))
+                    :else nil))
+                conn*)
+          nil)))))
+
+(defn- normalize-connections [connections]
+  (if (map? connections)
+    (into {} (keep (fn [[k v]] (normalize-connection-entry k v)) connections))
+    {}))
 
 (defn projects-dir [options]
   (fs/path (:workspace-root (opts options)) ".tesseraft" "projects"))
@@ -319,7 +460,7 @@
     (when (fs/exists? p)
       (try (store/read-json p) (catch Throwable _ nil)))))
 
-(declare read-project-descriptor-at-root project-scoped-opts)
+(declare read-project-descriptor-at-root project-scoped-opts project-descriptor-path)
 
 (defn- merge-registration-descriptor [registration]
   (if (and (#{"registration" :registration} (:source registration))
@@ -336,6 +477,29 @@
   (if-let [registration (read-project-registration options project-id)]
     (merge-registration-descriptor registration)
     (read-legacy-project-manifest options project-id)))
+
+(defn- portable-descriptor-write-shape [project-id project]
+  (cond-> {:version 1
+           :project_id project-id
+           :name (or (:name project) project-id)
+           :runs_root (or (:runs_root project) "runs")
+           :discovery (or (:discovery project) {})}
+    (seq (:connections project)) (assoc :connections (:connections project))))
+
+(defn- durable-project-write-target [options project-id]
+  (if-let [registration (read-project-registration options project-id)]
+    (let [root (:workspace_root registration)
+          descriptor-path (project-descriptor-path root)
+          descriptor (read-project-descriptor-at-root root
+                                                       "Registered project root has an unreadable .tesseraft/project.json descriptor")]
+      (if (:error descriptor)
+        descriptor
+        {:kind :descriptor
+         :path descriptor-path
+         :current descriptor}))
+    {:kind :manifest
+     :path (project-manifest-path options project-id)
+     :current (or (read-legacy-project-manifest options project-id) {})}))
 
 (defn- read-project-sources [options project-id descriptor]
   (let [registration (read-project-registration options project-id)
@@ -377,18 +541,8 @@
              (not (or (string? (:tesseraft-home discovery)) (nil? (:tesseraft-home discovery))))) "project descriptor discovery.tesseraft-home must be a string or null"
         (and (some? (:tesseraft_home discovery))
              (not (or (string? (:tesseraft_home discovery)) (nil? (:tesseraft_home discovery))))) "project descriptor discovery.tesseraft_home must be a string or null"
-        (and (some? conn) (not (map? conn))) "project descriptor connections must be an object"
-        (and (map? conn) (some #(not (contains? #{:jira :github} %)) (keys conn))) "project descriptor connections contains unknown fields"
         :else
-        (let [bad-conn (some (fn [[k v]]
-                               (cond
-                                 (not (map? v)) (name k)
-                                 (some #(not (contains? (if (= :jira k) #{:base-url :credential-ref} #{:credential-ref}) %)) (keys v)) (name k)
-                                 (and (:base-url v) (not (string? (:base-url v)))) (name k)
-                                 (and (:credential-ref v) (not (credential-ref? (:credential-ref v)))) (name k)
-                                 :else nil))
-                             conn)]
-          (when bad-conn (str "invalid project descriptor connection: " bad-conn)))))))
+        (validate-connections conn "project descriptor")))))
 
 (defn- normalize-project-descriptor [project-root raw]
   (let [discovery (:discovery raw {})
@@ -406,14 +560,7 @@
                  (assoc :tesseraft-home (:tesseraft_home discovery))
                  (contains? discovery :tesseraft-home)
                  (assoc :tesseraft-home (:tesseraft-home discovery))))
-        (assoc :connections
-               (if (map? connections)
-                 (into {} (for [[k v] connections
-                                :let [k* (if (keyword? k) k (keyword k))]
-                                :when (#{:jira :github} k*)
-                                :when (map? v)]
-                            [k* v]))
-                 {})))))
+        (assoc :connections (normalize-connections connections)))))
 
 (defn- nearest-project-descriptor-root [start]
   (loop [dir (fs/normalize (fs/path start))]
@@ -584,11 +731,7 @@
     :else nil))
 
 (defn- norm-connections [raw]
-  (if (or (nil? raw) (not (map? raw))) {}
-    (into {} (for [[k v] raw
-                   :when (#{:jira :github :jira/* :github/* "jira" "github"} k)
-                   :when (map? v)]
-               [(if (keyword? k) k (keyword k)) v]))))
+  (normalize-connections raw))
 
 ;; ---- settings config (source of truth: .tesseraft/settings.json) ----
 ;; Defined early so the default-project synthesizer (below) can resolve these
@@ -873,18 +1016,8 @@
                (not (string? (:tesseraft-home discovery))))
           "discovery.tesseraft-home must be a string"
 
-          (and (some? conn) (not (map? conn)))
-          "connections must be an object"
-
           :else
-          (let [bad-conn (some (fn [[_k v]]
-                                 (when (map? v)
-                                   (when-let [r (:credential-ref v)]
-                                     (when-not (credential-ref? r)
-                                       (:credential-ref v)))))
-                               conn)]
-            (when bad-conn
-              (str "Invalid credential-ref: " bad-conn))))))))
+          (validate-connections conn "project"))))))
 
 (defn create-project
   ([options project-id spec] (create-project options project-id spec false))
@@ -947,7 +1080,7 @@
                                            :tesseraft-home (:tesseraft-home (opts options))})}
                           (:source spec) (assoc :source (:source spec))
                           (seq (:settings spec)) (assoc :settings (:settings spec))
-                          (seq (:connections spec)) (assoc :connections (:connections spec)))
+                          (seq (:connections spec)) (assoc :connections (normalize-connections (:connections spec))))
                registration? (= "registration" (:source spec))]
            (if registration?
              (let [target (project-registry-path options)
@@ -993,7 +1126,8 @@
        (error-response 400 "bad_request" "Invalid project_id"
                        {:project_id project-id :pattern "^[a-z0-9][a-z0-9-]{0,62}$"})
 
-       (not (fs/exists? (project-manifest-path options project-id)))
+       (and (not (read-project-registration options project-id))
+            (not (fs/exists? (project-manifest-path options project-id))))
        (error-response 404 "not_found" "Project not found" {:project_id project-id})
 
        (contains-raw-secret-key? spec)
@@ -1003,10 +1137,20 @@
        :else
        (if-let [err (validate-project-spec options project-id spec)]
          (error-response 400 "bad_request" err)
-         (let [current (or (read-project-manifest options project-id) {})
-               merged (merge current spec)]
-           (store/write-json! (project-manifest-path options project-id) merged)
-           (get-project options project-id)))))))
+         (let [target (durable-project-write-target options project-id)]
+           (if (:error target)
+             target
+             (let [current (:current target)
+                   spec* (cond-> spec (contains? spec :connections) (update :connections normalize-connections))
+                   merged (merge current spec*)
+                   merged (if (contains? spec* :connections)
+                            (assoc merged :connections (merge (:connections current {}) (:connections spec*)))
+                            merged)
+                   writable (if (= :descriptor (:kind target))
+                              (portable-descriptor-write-shape project-id merged)
+                              merged)]
+               (atomic-write-json-owner-only! (:path target) writable)
+               (get-project options project-id)))))))))
 
 (defn migrate-project
   "Write the synthesized default project to `.tesseraft/projects/default.json`,
@@ -1062,6 +1206,23 @@
              canonical (if (fs/exists? candidate) (canonical-file-path candidate) (str (fs/normalize candidate)))]
          (path-prefix? root canonical))))
 
+(defn- rollback-delete-if-exists!
+  "Best-effort delete used only during migration rollback. A path whose
+  parent is not a directory (e.g. a corrupted `--tesseraft-home` registry
+  location) makes `fs/delete-if-exists` throw even though nothing was ever
+  written there; rollback must never itself crash the failed migration
+  attempt with an unstructured error."
+  [path]
+  (try (fs/delete-if-exists path) (catch Throwable _ nil)))
+
+(defn- rollback-restore-registry!
+  [registry-path registry-before]
+  (try
+    (if registry-before
+      (spit (str registry-path) registry-before)
+      (fs/delete-if-exists registry-path))
+    (catch Throwable _ nil)))
+
 (defn migrate-project-portable
   ([options project-id legacy-manifest project-root]
    (let [pid (or project-id "default")]
@@ -1092,97 +1253,83 @@
                      legacy-root-or-error (when-not (:error legacy)
                                             (existing-canonical-file-path (:workspace_root legacy) "invalid_legacy_workspace_root" "legacy_workspace_root"))]
                  (cond
-                   (:error legacy)
-                   legacy
-
+                   (:error legacy) legacy
                    (not (map? legacy))
                    (error-response 400 "invalid_legacy_manifest" "legacy manifest must be a JSON object" {:legacy_manifest (str legacy-path)})
-
                    (not= pid (:project_id legacy))
                    (error-response 400 "project_id_mismatch" "legacy manifest project_id does not match requested project id"
                                    {:project_id pid :legacy_project_id (:project_id legacy)})
-
-                   (:error legacy-root-or-error)
-                   legacy-root-or-error
-
+                   (:error legacy-root-or-error) legacy-root-or-error
                    (not= legacy-root-or-error root)
                    (error-response 400 "project_root_mismatch" "legacy manifest workspace_root does not match requested project_root"
                                    {:project_root root :legacy_workspace_root (:workspace_root legacy)})
-
+                   (contains-raw-secret-key? legacy)
+                   (error-response 400 "bad_request" "Raw secret payloads are not accepted; provide a credential-ref instead")
                    :else
                    (let [runs-root (or (:runs_root legacy) "runs")
                          discovery (if (map? (:discovery legacy)) (:discovery legacy) {})
-                         workflow-roots (or (:workflow-roots discovery) (:workflow_roots discovery) [])]
-                     (cond
-                       (not (project-contained-relative-path? root runs-root))
-                       (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "runs_root" :path runs-root})
-
-                       (some #(not (project-contained-relative-path? root %)) workflow-roots)
-                       (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "workflow_root"})
-
-                       :else
-                       (let [descriptor-path (project-descriptor-path root)
-                             registry-path (project-registry-path options)
-                             descriptor {:version 1
-                                         :project_id pid
-                                         :name (or (:name legacy) pid)
-                                         :runs_root runs-root
-                                         :discovery discovery}
-                             registration {:name (:name descriptor)
-                                           :workspace_root root
-                                           :runs_root runs-root
-                                           :discovery discovery
-                                           :source "registration"}
-                             descriptor-error (validate-project-descriptor descriptor)
-                             descriptor-existed? (fs/exists? descriptor-path)
-                             registry-before (when (fs/exists? registry-path) (slurp (str registry-path)))]
-                         (if descriptor-error
-                           (error-response 400 "invalid_project_descriptor" descriptor-error {:project_id pid})
-                           (try
-                           (when descriptor-existed?
-                             (let [existing (store/read-json descriptor-path)]
-                               (when (not= descriptor existing)
-                                 (throw (ex-info "Destination descriptor already exists for a different project state" {:conflict true})))))
-                           (let [registry (read-project-registry options)
-                                 existing (get-in registry [:projects (keyword pid)])]
-                             (when existing
-                               (when (not= root (canonical-file-path (:workspace_root existing)))
-                                 (throw (ex-info "Registration already exists for a different project root" {:conflict true}))))
-                             (when-not descriptor-existed?
-                               (fs/create-dirs (fs/parent descriptor-path))
-                               (spit (str descriptor-path) (str (json/generate-string descriptor {:pretty true}) "\n")))
-                             (when-not existing
-                               (fs/create-dirs (fs/parent registry-path))
-                               (store/write-json! registry-path (assoc-in registry [:projects (keyword pid)] registration))))
-                           (let [resolved (resolve-project (assoc options :project-root root) pid)]
-                             (if (:error resolved)
-                               (throw (ex-info "Final project resolution failed" {:resolution-error resolved}))
-                               (assoc-in resolved [:diagnostics :migration] {:legacy_manifest (str legacy-path)
-                                                                             :descriptor_path (str descriptor-path)
-                                                                             :registry_path (str registry-path)})))
-                           (catch clojure.lang.ExceptionInfo e
-                             (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
-                             (if registry-before
-                               (spit (str registry-path) registry-before)
-                               (fs/delete-if-exists registry-path))
-                             (cond
-                               (:resolution-error (ex-data e))
-                               (:resolution-error (ex-data e))
-
-                               (:conflict (ex-data e))
-                               (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
-
-                               (= :invalid-project-registry (:code (ex-data e)))
-                               (invalid-project-registry-response e)
-
-                               :else
-                               (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
-                           (catch Throwable t
-                             (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
-                             (if registry-before
-                               (spit (str registry-path) registry-before)
-                               (fs/delete-if-exists registry-path))
-                             (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)})))))))))))))))))
+                         workflow-roots (or (:workflow-roots discovery) (:workflow_roots discovery) [])
+                         connections (normalize-connections (:connections legacy))]
+                     (if-let [conn-err (validate-connections (:connections legacy) "legacy manifest")]
+                       (error-response 400 "invalid_legacy_manifest" conn-err {:legacy_manifest (str legacy-path)})
+                       (cond
+                         (not (project-contained-relative-path? root runs-root))
+                         (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "runs_root" :path runs-root})
+                         (some #(not (project-contained-relative-path? root %)) workflow-roots)
+                         (error-response 400 "project_path_escape" "Project-owned path resolves outside the project boundary" {:field "workflow_root"})
+                         :else
+                         (let [descriptor-path (project-descriptor-path root)
+                               registry-path (project-registry-path options)
+                               descriptor (cond-> {:version 1
+                                                   :project_id pid
+                                                   :name (or (:name legacy) pid)
+                                                   :runs_root runs-root
+                                                   :discovery discovery}
+                                            (seq connections) (assoc :connections connections))
+                               registration {:name (:name descriptor)
+                                             :workspace_root root
+                                             :runs_root runs-root
+                                             :discovery discovery
+                                             :source "registration"}
+                               descriptor-error (validate-project-descriptor descriptor)
+                               descriptor-existed? (fs/exists? descriptor-path)
+                               registry-before (when (fs/exists? registry-path) (slurp (str registry-path)))]
+                           (if descriptor-error
+                             (error-response 400 "invalid_project_descriptor" descriptor-error {:project_id pid})
+                             (try
+                               (when descriptor-existed?
+                                 (let [existing (store/read-json descriptor-path)]
+                                   (when (not= descriptor existing)
+                                     (throw (ex-info "Destination descriptor already exists for a different project state" {:conflict true})))))
+                               (let [registry (read-project-registry options)
+                                     existing (get-in registry [:projects (keyword pid)])]
+                                 (when existing
+                                   (when (not= root (canonical-file-path (:workspace_root existing)))
+                                     (throw (ex-info "Registration already exists for a different project root" {:conflict true}))))
+                                 (when-not descriptor-existed?
+                                   (fs/create-dirs (fs/parent descriptor-path))
+                                   (spit (str descriptor-path) (str (json/generate-string descriptor {:pretty true}) "\n")))
+                                 (when-not existing
+                                   (fs/create-dirs (fs/parent registry-path))
+                                   (store/write-json! registry-path (assoc-in registry [:projects (keyword pid)] registration))))
+                               (let [resolved (resolve-project (assoc options :project-root root) pid)]
+                                 (if (:error resolved)
+                                   (throw (ex-info "Final project resolution failed" {:resolution-error resolved}))
+                                   (assoc-in resolved [:diagnostics :migration] {:legacy_manifest (str legacy-path)
+                                                                                 :descriptor_path (str descriptor-path)
+                                                                                 :registry_path (str registry-path)})))
+                               (catch clojure.lang.ExceptionInfo e
+                                 (when-not descriptor-existed? (rollback-delete-if-exists! descriptor-path))
+                                 (rollback-restore-registry! registry-path registry-before)
+                                 (cond
+                                   (:resolution-error (ex-data e)) (:resolution-error (ex-data e))
+                                   (:conflict (ex-data e)) (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
+                                   (= :invalid-project-registry (:code (ex-data e))) (invalid-project-registry-response e)
+                                   :else (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
+                               (catch Throwable t
+                                 (when-not descriptor-existed? (rollback-delete-if-exists! descriptor-path))
+                                 (rollback-restore-registry! registry-path registry-before)
+                                 (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)}))))))))))))))))))
 
 (defn mask-credential
   "Resolve a credential-ref and return only stable non-secret state."
@@ -1213,30 +1360,39 @@
        (error-response 400 "bad_request" "connections update must be an object")
 
        (contains-raw-secret-key? updates)
-       ;; Raw secret payloads are NEVER accepted; only refs + base-url.
+       ;; Raw secret payloads are NEVER accepted; only refs + config.
        (error-response 400 "bad_request"
                       "Raw secret payloads are not accepted; provide a credential-ref instead")
 
        :else
-       (let [resolved (resolve-project options project-id)]
-         (if (:error resolved)
-           resolved
-           (let [bad-ref (some (fn [[_k v]]
-                                 (when (and (map? v) (:credential-ref v))
-                                   (when-not (credential-ref? (:credential-ref v))
-                                     (:credential-ref v))))
-                               updates)]
-             (if bad-ref
-               (error-response 400 "bad_request" (str "Invalid credential-ref: " bad-ref))
-               (let [current (or (read-project-manifest options (or project-id "default"))
-                                (-> (synthesize-default-project options)
-                                    (dissoc :source)))
-                     merged-conn (merge (:connections current {}) updates)
-                     manifest (assoc current :connections merged-conn)
-                     target (project-manifest-path options (or project-id "default"))]
-                 (fs/create-dirs (fs/parent target))
-                 (store/write-json! target manifest)
-                 (get-project-connections options project-id))))))))))
+       (let [updates* (normalize-keys-shallow updates)
+             clear-work-tracker? (or (= :clear (:work-tracker updates*))
+                                     (= "clear" (:work-tracker updates*))
+                                     (true? (:clear-work-tracker updates*)))
+             validation-updates (cond-> (dissoc updates* :clear-work-tracker)
+                                  clear-work-tracker? (dissoc :work-tracker))]
+         (if-let [err (validate-connections validation-updates "project")]
+           (error-response 400 "bad_request" err)
+           (let [resolved (resolve-project options project-id)]
+             (if (:error resolved)
+               resolved
+               (let [pid (or project-id "default")
+                     target (durable-project-write-target options pid)]
+                 (if (:error target)
+                   target
+                   (let [current (if (seq (:current target))
+                                   (:current target)
+                                   (-> (synthesize-default-project options) (dissoc :source)))
+                         normalized-updates (normalize-connections validation-updates)
+                         merged-conn (cond-> (merge (:connections current {}) normalized-updates)
+                                       clear-work-tracker? (dissoc :work-tracker))
+                         manifest (assoc current :connections merged-conn)
+                         writable (if (= :descriptor (:kind target))
+                                    (portable-descriptor-write-shape pid manifest)
+                                    manifest)]
+                     (fs/create-dirs (fs/parent (:path target)))
+                     (atomic-write-json-owner-only! (:path target) writable)
+                     (get-project-connections options project-id))))))))))))
 
 (defn discovery-roots
   "Discover workflow/package roots with precedence `configured < global <

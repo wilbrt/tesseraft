@@ -1335,6 +1335,99 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
     assert.equal(rawTokenRes.status, 400);
     const rawTokenBody = await rawTokenRes.json();
     assert.match(rawTokenBody.error.message, /credential/i);
+
+    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+    const manifestPath = path.join(projectsDir, 'wt3-http-review.json');
+    const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+    fs.mkdirSync(projectsDir, { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      project_id: 'wt3-http-review',
+      name: 'WT3 HTTP Review',
+      workspace_root: '.',
+      runs_root: '.agent-runs',
+      discovery: { 'workflow-roots': ['examples'] },
+      connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+    }, null, 2));
+    try {
+      const badArray = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify([])
+      });
+      assert.equal(badArray.status, 400, 'HTTP rejects malformed non-object connection bodies');
+
+      const unknownRole = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unexpected_scope: { value: 1 } })
+      });
+      assert.equal(unknownRole.status, 400, 'HTTP rejects unsupported connection roles instead of treating them as no-ops');
+      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
+        project_id: 'wt3-http-review',
+        name: 'WT3 HTTP Review',
+        workspace_root: '.',
+        runs_root: '.agent-runs',
+        discovery: { 'workflow-roots': ['examples'] },
+        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+      }, null, 2), 'malformed HTTP updates leave project bytes unchanged');
+
+      const badVersion = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          work_tracker: {
+            provider: 'jira',
+            schema_version: 99,
+            credential_ref: 'env:WT3_HTTP_JIRA',
+            config: { base_url: 'https://jira.example', project_key: 'WT3' }
+          }
+        })
+      });
+      assert.equal(badVersion.status, 400, 'HTTP rejects unsupported work_tracker schema_version');
+
+      const badLegacyNested = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jira: { base_url: 'https://new.example', unexpected_scope: { x: 1 } } })
+      });
+      assert.equal(badLegacyNested.status, 400, 'HTTP rejects unknown nested legacy Jira fields');
+      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
+        project_id: 'wt3-http-review',
+        name: 'WT3 HTTP Review',
+        workspace_root: '.',
+        runs_root: '.agent-runs',
+        discovery: { 'workflow-roots': ['examples'] },
+        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
+      }, null, 2), 'malformed legacy role update leaves project bytes unchanged');
+
+      const duplicateAlias = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ github: { credential_ref: 'env:ONE', 'credential-ref': 'env:TWO' } })
+      });
+      assert.equal(duplicateAlias.status, 400, 'HTTP rejects duplicate legacy connection aliases');
+
+      const validSnake = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          work_tracker: {
+            provider: 'jira',
+            schema_version: 1,
+            credential_ref: 'env:WT3_HTTP_JIRA',
+            config: { base_url: 'https://jira.example', project_key: 'WT3' }
+          }
+        })
+      });
+      const validBody = await validSnake.json();
+      assert.equal(validSnake.status, 200, `HTTP accepts snake_case tracker aliases; got ${validSnake.status} ${JSON.stringify(validBody)}`);
+      assert.equal(validBody.connections['work-tracker'].provider, 'jira');
+      assert.deepEqual(validBody.connections['work-tracker'].config, { 'base-url': 'https://jira.example', 'project-key': 'WT3' });
+      assert.ok(validBody.connections.github, 'HTTP work-tracker update preserves GitHub connection');
+    } finally {
+      if (previous === null) fs.rmSync(manifestPath, { force: true });
+      else fs.writeFileSync(manifestPath, previous);
+    }
   } finally {
     await close(server);
   }
@@ -2111,6 +2204,103 @@ test('project abstraction: HTTP portable migration returns structured errors for
     assert.equal(fs.existsSync(descriptorPath), false, 'failed validation must not create a descriptor');
     assert.equal(fs.existsSync(registryPath), false, 'failed validation must not create a registry');
     fs.writeFileSync(legacyManifest, legacyBefore);
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP portable migration preserves work-tracker and legacy GitHub/Jira connections', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-migrate-connections',
+    name: 'HTTP Migrate Connections',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    connections: {
+      github: { 'credential-ref': 'env:WT3_HTTP_MIG_GITHUB' },
+      jira: { 'base-url': 'https://legacy-jira.example', 'credential-ref': 'env:WT3_HTTP_MIG_JIRA' },
+      'work-tracker': { provider: 'plane', 'credential-ref': 'env:WT3_HTTP_MIG_PLANE', config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'ws', 'project-id': 'pid' } }
+    }
+  }, null, 2));
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-migrate-connections/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    const body = await res.json();
+    assert.equal(res.status, 200, `HTTP migration should succeed with valid legacy connections; got ${res.status} ${JSON.stringify(body)}`);
+    assert.equal(body.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'HTTP migration preserves legacy GitHub connection');
+    assert.equal(body.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'HTTP migration preserves legacy Jira connection');
+    assert.equal(body.connections?.['work-tracker']?.provider, 'plane', 'HTTP migration preserves work-tracker connection');
+    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
+    assert.equal(descriptor.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'migrated descriptor persists GitHub connection');
+    assert.equal(descriptor.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'migrated descriptor persists Jira connection');
+    assert.equal(descriptor.connections?.['work-tracker']?.provider, 'plane', 'migrated descriptor persists work-tracker connection');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP portable migration rejects secret-bearing work-tracker without descriptor or registry writes', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-migrate-secret',
+    name: 'HTTP Migrate Secret',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    connections: {
+      'work-tracker': {
+        provider: 'jira',
+        'credential-ref': 'env:WT3_HTTP_MIG_SECRET',
+        config: { 'base-url': 'https://jira.example', 'project-key': 'SEC', nested: [{ refresh_token: 'WT3_HTTP_MIGRATE_SECRET_SENTINEL' }] }
+      }
+    }
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-migrate-secret/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    const bodyText = await res.text();
+    assert.equal(res.status, 400, `HTTP migration must reject nested raw secret work-tracker payloads; got ${res.status} ${bodyText}`);
+    assert.doesNotMatch(bodyText, /WT3_HTTP_MIGRATE_SECRET_SENTINEL/, 'rejected HTTP migration must not echo the secret value');
+    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'rejected HTTP migration must preserve legacy source bytes');
+    assert.equal(fs.existsSync(descriptorPath), false, 'rejected HTTP migration must not create a descriptor');
+    assert.equal(fs.existsSync(registryPath), false, 'rejected HTTP migration must not create a registry');
   } finally {
     await close(server);
     if (previousHome === undefined) delete process.env.TESSERAFT_HOME;

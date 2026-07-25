@@ -60,13 +60,14 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
     try {
       const data = await postJson<MutationResult>(projectApiUrl('/api/runs', projectId), { workflow_name: payload.workflow_name, run_id: payload.run_id, inputs: payload.inputs, max_steps: payload.max_steps, ...(payload.git_user ? { git_user: payload.git_user } : {}) });
       setResult(data);
-      await onRefresh(payload.run_id);
       // Surface non-success outcomes (e.g. a guarded start) to the wizard so it
       // stays open and preserves the user's configured inputs instead of closing.
       if (data.status === 'guarded') {
+        await onRefresh(payload.run_id);
         const message = (data.cli && typeof data.cli.stderr === 'string' && data.cli.stderr) || `Run start was guarded (${data.code || 'guarded'}).`;
         throw new Error(message);
       }
+      void onRefresh(payload.run_id).catch((err) => setError(err instanceof Error ? err.message : String(err)));
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

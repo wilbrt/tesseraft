@@ -242,7 +242,8 @@ const hasRawSecretKey = (value: unknown): boolean => {
   if (Array.isArray(value)) return value.some(hasRawSecretKey);
   if (!value || typeof value !== 'object') return false;
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (RAW_SECRET_KEY_NAMES.has(key.toLowerCase().replace(/[_-]/g, ''))) return true;
+    const normalizedKey = key.toLowerCase().replace(/[_-]/g, '');
+    if (RAW_SECRET_KEY_NAMES.has(normalizedKey) || normalizedKey.endsWith('token')) return true;
     if (hasRawSecretKey(nested)) return true;
   }
   return false;
@@ -284,6 +285,62 @@ const readProjectDescriptor = (projectRoot: string): JsonRecord | null => {
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : null;
 };
 
+const normalizeEnvelopeKey = (key: string): string => key.replace(/_/g, '-');
+
+const collectAliasedField = (raw: JsonRecord, role: string, canonical: string, aliases: string[]): unknown | { error: string } => {
+  const present = aliases.filter((key) => Object.prototype.hasOwnProperty.call(raw, key));
+  if (present.length > 1) return { error: `${role} connection contains duplicate aliases for ${canonical}` };
+  return present.length === 1 ? raw[present[0]] : undefined;
+};
+
+const isFieldError = (value: unknown): value is { error: string } => (
+  !!value && typeof value === 'object' && 'error' in value && typeof (value as { error?: unknown }).error === 'string'
+);
+
+const validateLegacyConnection = (role: 'jira' | 'github', raw: unknown): string[] | { error: string } => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: `${role} connection must be an object` };
+  const conn = raw as JsonRecord;
+  const allowed = role === 'jira' ? new Set(['base-url', 'base_url', 'credential-ref', 'credential_ref']) : new Set(['credential-ref', 'credential_ref']);
+  for (const key of Object.keys(conn)) if (!allowed.has(key)) return { error: `Unknown ${role} connection field: ${key}` };
+  const args: string[] = [];
+  if (role === 'jira') {
+    const baseUrl = collectAliasedField(conn, role, 'base-url', ['base-url', 'base_url']);
+    if (isFieldError(baseUrl)) return baseUrl;
+    if (baseUrl !== undefined) {
+      if (typeof baseUrl !== 'string') return { error: 'jira.base_url must be a string' };
+      args.push('--jira-base-url', baseUrl);
+    }
+  }
+  const credentialRef = collectAliasedField(conn, role, 'credential-ref', ['credential-ref', 'credential_ref']);
+  if (isFieldError(credentialRef)) return credentialRef;
+  if (credentialRef !== undefined) {
+    if (typeof credentialRef !== 'string' || !CREDENTIAL_REF_RE.test(credentialRef)) return { error: `Invalid ${role}.credential_ref` };
+    args.push(role === 'jira' ? '--jira-credential-ref' : '--github-credential-ref', credentialRef);
+  }
+  return args;
+};
+
+const normalizeWorkTrackerArgs = (raw: unknown): string[] | { error: string } => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'work_tracker must be an object' };
+  const wt = raw as JsonRecord;
+  for (const key of Object.keys(wt)) {
+    if (!new Set(['provider', 'credential-ref', 'credential_ref', 'schema-version', 'schema_version', 'config']).has(key)) return { error: 'work_tracker contains unknown fields' };
+  }
+  const provider = wt.provider;
+  const credentialRef = wt.credential_ref ?? wt['credential-ref'];
+  const schemaVersion = wt.schema_version ?? wt['schema-version'];
+  const config = wt.config;
+  if (typeof provider !== 'string' || provider.trim() === '') return { error: 'work_tracker.provider is required' };
+  if (schemaVersion !== undefined && schemaVersion !== 1) return { error: 'Unsupported work_tracker.schema_version' };
+  if (typeof credentialRef !== 'string' || !CREDENTIAL_REF_RE.test(credentialRef)) return { error: 'Invalid work_tracker.credential_ref' };
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return { error: 'work_tracker.config must be an object' };
+  const normalizedEnvelope: JsonRecord = {};
+  for (const [key, value] of Object.entries(wt)) normalizedEnvelope[normalizeEnvelopeKey(key)] = value;
+  const args = ['--work-tracker-provider', provider, '--work-tracker-credential-ref', credentialRef, '--work-tracker-config', JSON.stringify(config)];
+  if (Object.prototype.hasOwnProperty.call(normalizedEnvelope, 'schema-version')) args.splice(2, 0, '--work-tracker-schema-version', String(normalizedEnvelope['schema-version']));
+  return args;
+};
+
 const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   const allowed = new Set(['version', 'project_id', 'name', 'runs_root', 'discovery', 'connections']);
   for (const key of Object.keys(descriptor)) if (!allowed.has(key)) return `Unknown project descriptor field: ${key}`;
@@ -305,11 +362,12 @@ const validateProjectDescriptor = (descriptor: JsonRecord): string | null => {
   if (descriptor.connections && typeof descriptor.connections === 'object' && !Array.isArray(descriptor.connections)) {
     const connections = descriptor.connections as JsonRecord;
     for (const [name, raw] of Object.entries(connections)) {
-      if (name !== 'jira' && name !== 'github') return `Unknown project descriptor connection: ${name}`;
+      if (name !== 'jira' && name !== 'github' && name !== 'work-tracker') return `Unknown project descriptor connection: ${name}`;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return `Invalid project descriptor connection: ${name}`;
       const conn = raw as JsonRecord;
-      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : new Set(['credential-ref']);
+      const allowedConn = name === 'jira' ? new Set(['base-url', 'credential-ref']) : name === 'github' ? new Set(['credential-ref']) : new Set(['provider', 'credential-ref', 'config', 'schema-version']);
       for (const key of Object.keys(conn)) if (!allowedConn.has(key)) return `Unknown project descriptor connection field: ${name}.${key}`;
+      if (name === 'work-tracker') continue;
       if (conn['base-url'] !== undefined && typeof conn['base-url'] !== 'string') return `Invalid project descriptor connection: ${name}.base-url`;
       if (conn['credential-ref'] !== undefined && (typeof conn['credential-ref'] !== 'string' || !CREDENTIAL_REF_RE.test(conn['credential-ref']))) return `Invalid project descriptor connection: ${name}.credential-ref`;
     }
@@ -445,6 +503,7 @@ const handleCreateProject = async (req: Request, res: Response, browserAllowedPr
     const c = conns as Record<string, JsonRecord>;
     if (c.jira) { if (typeof c.jira['base-url'] === 'string') args.push('--jira-base-url', c.jira['base-url']); if (typeof c.jira['credential-ref'] === 'string') args.push('--jira-credential-ref', c.jira['credential-ref']); }
     if (c.github && typeof c.github['credential-ref'] === 'string') args.push('--github-credential-ref', c.github['credential-ref']);
+    if (c['work-tracker']) { const wtArgs = normalizeWorkTrackerArgs(c['work-tracker']); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); }
   }
   if (projectRoot) args.push('--source', 'registration');
   const result = await runControlPlane(args);
@@ -504,114 +563,14 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
   if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
 
-  let legacy: JsonRecord;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(legacyManifestPath, 'utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('legacy manifest must be a JSON object');
-    legacy = parsed as JsonRecord;
-  } catch (error) {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_manifest', 'legacy_manifest is not readable JSON', { legacy_manifest: legacyManifestPath, message: error instanceof Error ? error.message : String(error) }));
-  }
-  if (legacy.project_id !== projectId) return jsonResponse(res, 400, errorBody(400, 'project_id_mismatch', 'legacy manifest project_id does not match requested project id', { project_id: projectId, legacy_project_id: legacy.project_id }));
-  if (typeof legacy.workspace_root !== 'string' || legacy.workspace_root.trim() === '') {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
-  }
-  let legacyWorkspaceRoot = '';
-  try {
-    legacyWorkspaceRoot = fs.realpathSync(legacy.workspace_root);
-  } catch (error) {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root, message: error instanceof Error ? error.message : String(error) }));
-  }
-  if (path.normalize(legacyWorkspaceRoot) !== path.normalize(projectRoot)) {
-    return jsonResponse(res, 400, errorBody(400, 'project_root_mismatch', 'legacy manifest workspace_root does not match requested project_root', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
-  }
-
-  const runsRoot = typeof legacy.runs_root === 'string' && legacy.runs_root.trim() !== '' ? legacy.runs_root : 'runs';
-  const discovery = legacy.discovery && typeof legacy.discovery === 'object' && !Array.isArray(legacy.discovery) ? legacy.discovery as JsonRecord : {};
-  const workflowRoots = Array.isArray(discovery['workflow-roots']) ? discovery['workflow-roots'].filter((r): r is string => typeof r === 'string') : [];
-  const escapedRunsRoot = validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot);
-  if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
-  for (const r of workflowRoots) {
-    const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
-    if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
-  }
-
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
-  const descriptor: JsonRecord = {
-    version: 1,
-    project_id: projectId,
-    name: typeof legacy.name === 'string' && legacy.name.trim() !== '' ? legacy.name : projectId,
-    runs_root: runsRoot,
-    discovery
-  };
-  const registration: JsonRecord = { name: descriptor.name, workspace_root: projectRoot, runs_root: runsRoot, discovery, source: 'registration' };
-  const descriptorError = validateProjectDescriptor(descriptor);
-  if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { project_id: projectId }));
-
-  const descriptorPreexisting = fs.existsSync(descriptorPath);
-  let registryBefore: string | null = null;
-  let registrationPreexisting = false;
-  try {
-    if (descriptorPreexisting) {
-      const existingDescriptor = readProjectDescriptor(projectRoot);
-      if (!existingDescriptor || existingDescriptor.project_id !== descriptor.project_id || existingDescriptor.runs_root !== descriptor.runs_root) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
-      }
-    }
-    if (fs.existsSync(registryPath)) registryBefore = fs.readFileSync(registryPath, 'utf8');
-    const registry = readValidatedRegistry(registryPath);
-    const projects = registry.projects as JsonRecord;
-    const existingRegistration = projects[projectId];
-    registrationPreexisting = existingRegistration !== undefined;
-    if (registrationPreexisting) {
-      if (!existingRegistration || typeof existingRegistration !== 'object' || Array.isArray(existingRegistration)) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists with invalid state', { registry_path: registryPath, project_id: projectId }));
-      }
-      const existingRoot = typeof (existingRegistration as JsonRecord).workspace_root === 'string' ? fs.realpathSync((existingRegistration as JsonRecord).workspace_root as string) : '';
-      if (path.normalize(existingRoot) !== path.normalize(projectRoot)) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registry_path: registryPath, project_id: projectId }));
-      }
-    }
-    if (!descriptorPreexisting) {
-      fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
-      fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
-    }
-    if (!registrationPreexisting) {
-      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-      fs.writeFileSync(registryPath, `${JSON.stringify({ ...registry, version: 1, projects: { ...projects, [projectId]: registration } }, null, 2)}\n`);
-    }
-  } catch (error) {
-    if (!registrationPreexisting) {
-      try {
-        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
-        else fs.writeFileSync(registryPath, registryBefore);
-      } catch {}
-    }
-    if (!descriptorPreexisting) {
-      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
-    }
-    if (error instanceof InvalidProjectRegistryError) {
-      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
-    }
-    return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
-  }
-
-  const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
-  if (result.status >= 400) {
-    if (!registrationPreexisting) {
-      try {
-        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
-        else fs.writeFileSync(registryPath, registryBefore);
-      } catch {}
-    }
-    if (!descriptorPreexisting) {
-      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
-    }
-    return jsonResponse(res, result.status, result.body);
-  }
-  const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
-  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registry_path: registryPath } } });
+  // Delegate the actual migration (legacy manifest parsing, connection
+  // validation/normalization, descriptor+registry writes, and rollback on
+  // failure) to the same validated core path used by the CLI. Reimplementing
+  // this here previously dropped `connections` (work-tracker, GitHub, Jira)
+  // from the migrated descriptor because the HTTP handler only copied
+  // identity/runs/discovery fields.
+  const result = await runControlPlane(['project', 'migrate', projectId, '--legacy-manifest', legacyManifestPath, '--project-root', projectRoot]);
+  return jsonResponse(res, result.status, result.body);
 };
 
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {
@@ -628,18 +587,39 @@ const handleGetProjectDoctor = async (res: Response, projectId: string): Promise
 
 const handleUpdateProjectConnections = async (req: Request, res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
-  const body = (req.body || {}) as JsonRecord;
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    return jsonResponse(res, 400, errorBody(400, 'bad_request', 'connections update body must be an object'));
+  }
+  const body = req.body as JsonRecord;
   // NEVER accept raw token payloads; only refs + base-url.
   if (hasRawSecretKey(body)) {
     return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Raw secret payloads are not accepted; provide a credential_ref instead'));
   }
-  const args = ['project', 'connections', projectId];
-  const conns = body;
-  if (conns && typeof conns === 'object' && !Array.isArray(conns)) {
-    const c = conns as Record<string, JsonRecord>;
-    if (c.jira) { if (typeof c.jira.base_url === 'string') args.push('--jira-base-url', c.jira.base_url); if (typeof c.jira.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.jira.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--jira-credential-ref', c.jira.credential_ref); } }
-    if (c.github && typeof c.github.credential_ref === 'string') { if (!CREDENTIAL_REF_RE.test(c.github.credential_ref)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Invalid credential_ref')); args.push('--github-credential-ref', c.github.credential_ref); }
+  const allowedTopLevel = new Set(['jira', 'github', 'work_tracker', 'work-tracker', 'clear_work_tracker', 'clear-work-tracker']);
+  for (const key of Object.keys(body)) {
+    if (!allowedTopLevel.has(key)) return jsonResponse(res, 400, errorBody(400, 'bad_request', `Unknown project connection role: ${key}`));
   }
+  const args = ['project', 'connections', projectId];
+  let hasMutation = false;
+  const c = body;
+  if (c.jira !== undefined) {
+    const jiraArgs = validateLegacyConnection('jira', c.jira);
+    if ('error' in jiraArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', jiraArgs.error));
+    if (jiraArgs.length === 0) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'jira connection update requires at least one field'));
+    args.push(...jiraArgs);
+    hasMutation = true;
+  }
+  if (c.github !== undefined) {
+    const githubArgs = validateLegacyConnection('github', c.github);
+    if ('error' in githubArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', githubArgs.error));
+    if (githubArgs.length === 0) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'github connection update requires at least one field'));
+    args.push(...githubArgs);
+    hasMutation = true;
+  }
+  const tracker = c.work_tracker ?? c['work-tracker'];
+  if (tracker === null || c.clear_work_tracker === true || c['clear-work-tracker'] === true) { args.push('--clear-work-tracker'); hasMutation = true; }
+  else if (tracker !== undefined) { const wtArgs = normalizeWorkTrackerArgs(tracker); if ('error' in wtArgs) return jsonResponse(res, 400, errorBody(400, 'bad_request', wtArgs.error)); args.push(...wtArgs); hasMutation = true; }
+  if (!hasMutation) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'connections update requires at least one supported mutation'));
   const result = await runControlPlane(args);
   return jsonResponse(res, result.status, result.body);
 };
@@ -997,7 +977,11 @@ const handleStartRun = async (req: Request, res: Response, projectId?: string): 
       }
     }
   }
-  if (projectWorkspaceRoot && !path.isAbsolute(filePath)) filePath = path.join(projectWorkspaceRoot, filePath);
+  if (!path.isAbsolute(filePath)) {
+    const controlRelative = path.resolve(WORKSPACE_ROOT, filePath);
+    const projectRelative = projectWorkspaceRoot ? path.resolve(projectWorkspaceRoot, filePath) : controlRelative;
+    filePath = fs.existsSync(controlRelative) ? controlRelative : projectRelative;
+  }
 
   const startArgs = ['start', filePath, '--run-id', runId, '--format', 'json', ...pid, ...runtimeRoots];
   for (const [key, value] of Object.entries(inputs as Record<string, string>)) startArgs.push('--input', `${key}=${value}`);
