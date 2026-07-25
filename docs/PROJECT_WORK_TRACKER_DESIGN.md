@@ -564,7 +564,7 @@ warranted.
 
 **Depends on:** WT2
 
-**Suggested branch:** `feature/project-work-tracker-contract`
+**Suggested branch:** `feature/project-work-tracker-contract-2`
 
 ### Outcome
 

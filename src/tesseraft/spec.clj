@@ -17,7 +17,7 @@
 (def valid-node-types #{:agent :deterministic :process :timer :approval :router :terminal :fragment})
 (def known-effects #{:merge-issues :clear-issues :inc-round :inc-feedback-cycle :set-context :record-pr :fail-run})
 (def base-pi-tools #{:read :bash :edit :write :grep :find :ls})
-(def default-known-executors #{:pi-cli :pi-sdk})
+(def default-known-executors #{:pi-cli :pi-sdk :claude-code})
 (def default-known-handlers
   #{:jira/fetch-ticket :git/ensure-branch :git/ensure-worktree :git/push :git/publish-visual-evidence :github/create-pr :github/fetch-pr-feedback :web/start-test-server :web/stop-test-server :web/capture-ui-evidence :web/validate-ui-review :notify/pinga :noop/succeed})
 (def allowed-template-roots #{"inputs" "defaults" "run" "node" "artifacts" "workflow" "env"})

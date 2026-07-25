@@ -3,6 +3,7 @@
     [tesseraft.adapters.builtin :as adapters]
     [tesseraft.executors.mock :as mock]
     [tesseraft.executors.pi-cli :as pi-cli]
+    [tesseraft.executors.claude-code :as claude-code]
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
     [tesseraft.runtime.store :as store]
@@ -266,9 +267,19 @@
   (= :mock (executor-mode ctx)))
 
 (defn run-agent! [wf ctx state-id node]
-  (if (mock-mode? ctx)
-    (mock/run-agent-node! wf ctx state-id node)
-    (pi-cli/run-agent-node! wf ctx state-id node)))
+  (cond
+    (mock-mode? ctx)        (mock/run-agent-node! wf ctx state-id node)
+    ;; Per-node `:executor` is the source of truth (lint rejects unknown
+    ;; executor names). `:pi-sdk` is declared in the linter registry as a
+    ;; known future executor but is not yet implemented by a real adapter,
+    ;; so it fails fast instead of silently falling back to pi.
+    :else (case (:executor node)
+            :pi-cli       (pi-cli/run-agent-node! wf ctx state-id node)
+            :claude-code (claude-code/run-agent-node! wf ctx state-id node)
+            (throw (ex-info "Unknown or unimplemented agent executor"
+                            {:executor (:executor node)
+                             :state state-id
+                             :error-type "unknown_executor"})))))
 
 (defn json-compatible [x]
   (cond
@@ -367,7 +378,8 @@
                  (fs/exists? status-path)
                  (every? fs/exists? required-paths))
         (let [status (store/read-json status-path)
-              result (merge {:executor "pi-cli"
+              executor-name (or (some-> (:executor node) name) "unknown")
+              result (merge {:executor executor-name
                              :ok true
                              :recovered true
                              :status-file status-path}

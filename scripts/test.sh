@@ -39,6 +39,9 @@ python3 test/canon-validation-runner.test.py
 printf '\nChecking portable project descriptor and registry contracts...\n'
 node --test test/project-contract.test.js
 
+printf '\nChecking claude-code executor (subscription auth + dispatch)...\n'
+node --test test/claude-code-executor.test.js
+
 printf '\nChecking focused TDD workflow contract...\n'
 python3 test/focused-tdd-workflow.test.py
 

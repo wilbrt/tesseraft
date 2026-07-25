@@ -116,6 +116,8 @@ A `:manual-testing-spec` artifact records the design-produced browser testing co
 
 Agent nodes must declare a status artifact. Agent nodes may optionally declare `:provider` and/or `:model` as non-blank strings; the Pi CLI executor passes them as `--provider` and `--model` for that node only, and omission preserves executor defaults. Runtime agent sessions must not modify workflow source files unless the node belongs to a workflow-authoring surface.
 
+Known agent executors are `:pi-cli`, `:pi-sdk` (reserved), and `:claude-code`. The `:claude-code` executor shells out to the Claude Code CLI and authenticates via that CLI's own Claude Pro/Max subscription login; it does **not** use or require `ANTHROPIC_API_KEY`, and actively strips that variable from the subprocess environment so the subscription is used instead of API-key billing. For `:claude-code` nodes, `:model` maps to `--model` and `:provider` is ignored (warn-only) since account selection is the subscription, not an API provider.
+
 ## 8. Deterministic node
 
 ```edn

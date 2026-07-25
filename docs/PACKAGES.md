@@ -16,6 +16,10 @@ Reference execution engine. Depends on spec + linter and loads executor/handler 
 
 Executor package for Pi CLI now and Pi SDK later.
 
+## `tesseraft-claude-code-executor`
+
+Executor package for the Claude Code CLI. Authenticates via the CLI's own subscription login (Claude Pro/Max), not `ANTHROPIC_API_KEY`; the executor strips that env var from the subprocess to guarantee subscription auth.
+
 ## `tesseraft-adapter-*`
 
 Deterministic handlers such as Jira, GitHub, git, notifications, and deployment adapters.
