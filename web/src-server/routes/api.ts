@@ -563,114 +563,14 @@ const handleMigrateProject = async (req: Request, res: Response, projectId: stri
   const rootNotAllowed = disallowedProjectRoot(projectRoot, browserAllowedProjectRoots);
   if (rootNotAllowed) return jsonResponse(res, 400, errorBody(400, 'project_root_not_allowed', 'project_root is outside the configured browser project roots', rootNotAllowed));
 
-  let legacy: JsonRecord;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(legacyManifestPath, 'utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('legacy manifest must be a JSON object');
-    legacy = parsed as JsonRecord;
-  } catch (error) {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_manifest', 'legacy_manifest is not readable JSON', { legacy_manifest: legacyManifestPath, message: error instanceof Error ? error.message : String(error) }));
-  }
-  if (legacy.project_id !== projectId) return jsonResponse(res, 400, errorBody(400, 'project_id_mismatch', 'legacy manifest project_id does not match requested project id', { project_id: projectId, legacy_project_id: legacy.project_id }));
-  if (typeof legacy.workspace_root !== 'string' || legacy.workspace_root.trim() === '') {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
-  }
-  let legacyWorkspaceRoot = '';
-  try {
-    legacyWorkspaceRoot = fs.realpathSync(legacy.workspace_root);
-  } catch (error) {
-    return jsonResponse(res, 400, errorBody(400, 'invalid_legacy_workspace_root', 'legacy manifest workspace_root is not readable', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root, message: error instanceof Error ? error.message : String(error) }));
-  }
-  if (path.normalize(legacyWorkspaceRoot) !== path.normalize(projectRoot)) {
-    return jsonResponse(res, 400, errorBody(400, 'project_root_mismatch', 'legacy manifest workspace_root does not match requested project_root', { project_root: projectRoot, legacy_workspace_root: legacy.workspace_root }));
-  }
-
-  const runsRoot = typeof legacy.runs_root === 'string' && legacy.runs_root.trim() !== '' ? legacy.runs_root : 'runs';
-  const discovery = legacy.discovery && typeof legacy.discovery === 'object' && !Array.isArray(legacy.discovery) ? legacy.discovery as JsonRecord : {};
-  const workflowRoots = Array.isArray(discovery['workflow-roots']) ? discovery['workflow-roots'].filter((r): r is string => typeof r === 'string') : [];
-  const escapedRunsRoot = validateProjectOwnedPath(projectRoot, 'runs_root', runsRoot);
-  if (escapedRunsRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedRunsRoot));
-  for (const r of workflowRoots) {
-    const escapedWorkflowRoot = validateProjectOwnedPath(projectRoot, 'workflow_root', r);
-    if (escapedWorkflowRoot) return jsonResponse(res, 400, errorBody(400, 'project_path_escape', 'Project-owned path resolves outside the project boundary', escapedWorkflowRoot));
-  }
-
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const registryPath = path.join(process.env.TESSERAFT_HOME || path.join(process.env.HOME || '', '.tesseraft'), 'projects', 'registry.json');
-  const descriptor: JsonRecord = {
-    version: 1,
-    project_id: projectId,
-    name: typeof legacy.name === 'string' && legacy.name.trim() !== '' ? legacy.name : projectId,
-    runs_root: runsRoot,
-    discovery
-  };
-  const registration: JsonRecord = { name: descriptor.name, workspace_root: projectRoot, runs_root: runsRoot, discovery, source: 'registration' };
-  const descriptorError = validateProjectDescriptor(descriptor);
-  if (descriptorError) return jsonResponse(res, 400, errorBody(400, 'invalid_project_descriptor', descriptorError, { project_id: projectId }));
-
-  const descriptorPreexisting = fs.existsSync(descriptorPath);
-  let registryBefore: string | null = null;
-  let registrationPreexisting = false;
-  try {
-    if (descriptorPreexisting) {
-      const existingDescriptor = readProjectDescriptor(projectRoot);
-      if (!existingDescriptor || existingDescriptor.project_id !== descriptor.project_id || existingDescriptor.runs_root !== descriptor.runs_root) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Destination descriptor already exists for a different project state', { descriptor_path: descriptorPath, project_id: projectId }));
-      }
-    }
-    if (fs.existsSync(registryPath)) registryBefore = fs.readFileSync(registryPath, 'utf8');
-    const registry = readValidatedRegistry(registryPath);
-    const projects = registry.projects as JsonRecord;
-    const existingRegistration = projects[projectId];
-    registrationPreexisting = existingRegistration !== undefined;
-    if (registrationPreexisting) {
-      if (!existingRegistration || typeof existingRegistration !== 'object' || Array.isArray(existingRegistration)) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists with invalid state', { registry_path: registryPath, project_id: projectId }));
-      }
-      const existingRoot = typeof (existingRegistration as JsonRecord).workspace_root === 'string' ? fs.realpathSync((existingRegistration as JsonRecord).workspace_root as string) : '';
-      if (path.normalize(existingRoot) !== path.normalize(projectRoot)) {
-        return jsonResponse(res, 409, errorBody(409, 'project_identity_conflict', 'Registration already exists for a different project root', { registry_path: registryPath, project_id: projectId }));
-      }
-    }
-    if (!descriptorPreexisting) {
-      fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
-      fs.writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
-    }
-    if (!registrationPreexisting) {
-      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-      fs.writeFileSync(registryPath, `${JSON.stringify({ ...registry, version: 1, projects: { ...projects, [projectId]: registration } }, null, 2)}\n`);
-    }
-  } catch (error) {
-    if (!registrationPreexisting) {
-      try {
-        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
-        else fs.writeFileSync(registryPath, registryBefore);
-      } catch {}
-    }
-    if (!descriptorPreexisting) {
-      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
-    }
-    if (error instanceof InvalidProjectRegistryError) {
-      return jsonResponse(res, 400, errorBody(400, 'invalid_project_registry', error.message, { registry_path: registryPath }));
-    }
-    return jsonResponse(res, 400, errorBody(400, 'migration_failed', 'Project migration could not be completed', { message: error instanceof Error ? error.message : String(error) }));
-  }
-
-  const result = await runControlPlane(['--project-root', projectRoot, 'project', projectId]);
-  if (result.status >= 400) {
-    if (!registrationPreexisting) {
-      try {
-        if (registryBefore === null) fs.rmSync(registryPath, { force: true });
-        else fs.writeFileSync(registryPath, registryBefore);
-      } catch {}
-    }
-    if (!descriptorPreexisting) {
-      try { fs.rmSync(descriptorPath, { force: true }); } catch {}
-    }
-    return jsonResponse(res, result.status, result.body);
-  }
-  const responseBody = result.body && typeof result.body === 'object' && !Array.isArray(result.body) ? result.body as JsonRecord : {};
-  return jsonResponse(res, result.status, { ...responseBody, diagnostics: { ...(responseBody.diagnostics && typeof responseBody.diagnostics === 'object' && !Array.isArray(responseBody.diagnostics) ? responseBody.diagnostics as JsonRecord : {}), migration: { legacy_manifest: legacyManifestPath, descriptor_path: descriptorPath, registry_path: registryPath } } });
+  // Delegate the actual migration (legacy manifest parsing, connection
+  // validation/normalization, descriptor+registry writes, and rollback on
+  // failure) to the same validated core path used by the CLI. Reimplementing
+  // this here previously dropped `connections` (work-tracker, GitHub, Jira)
+  // from the migrated descriptor because the HTTP handler only copied
+  // identity/runs/discovery fields.
+  const result = await runControlPlane(['project', 'migrate', projectId, '--legacy-manifest', legacyManifestPath, '--project-root', projectRoot]);
+  return jsonResponse(res, result.status, result.body);
 };
 
 const handleGetProjectConnections = async (res: Response, projectId: string): Promise<void> => {

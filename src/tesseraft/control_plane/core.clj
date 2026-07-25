@@ -1206,6 +1206,23 @@
              canonical (if (fs/exists? candidate) (canonical-file-path candidate) (str (fs/normalize candidate)))]
          (path-prefix? root canonical))))
 
+(defn- rollback-delete-if-exists!
+  "Best-effort delete used only during migration rollback. A path whose
+  parent is not a directory (e.g. a corrupted `--tesseraft-home` registry
+  location) makes `fs/delete-if-exists` throw even though nothing was ever
+  written there; rollback must never itself crash the failed migration
+  attempt with an unstructured error."
+  [path]
+  (try (fs/delete-if-exists path) (catch Throwable _ nil)))
+
+(defn- rollback-restore-registry!
+  [registry-path registry-before]
+  (try
+    (if registry-before
+      (spit (str registry-path) registry-before)
+      (fs/delete-if-exists registry-path))
+    (catch Throwable _ nil)))
+
 (defn migrate-project-portable
   ([options project-id legacy-manifest project-root]
    (let [pid (or project-id "default")]
@@ -1302,20 +1319,16 @@
                                                                                  :descriptor_path (str descriptor-path)
                                                                                  :registry_path (str registry-path)})))
                                (catch clojure.lang.ExceptionInfo e
-                                 (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
-                                 (if registry-before
-                                   (spit (str registry-path) registry-before)
-                                   (fs/delete-if-exists registry-path))
+                                 (when-not descriptor-existed? (rollback-delete-if-exists! descriptor-path))
+                                 (rollback-restore-registry! registry-path registry-before)
                                  (cond
                                    (:resolution-error (ex-data e)) (:resolution-error (ex-data e))
                                    (:conflict (ex-data e)) (error-response 409 "project_identity_conflict" (.getMessage e) {:project_id pid})
                                    (= :invalid-project-registry (:code (ex-data e))) (invalid-project-registry-response e)
                                    :else (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage e)})))
                                (catch Throwable t
-                                 (when-not descriptor-existed? (fs/delete-if-exists descriptor-path))
-                                 (if registry-before
-                                   (spit (str registry-path) registry-before)
-                                   (fs/delete-if-exists registry-path))
+                                 (when-not descriptor-existed? (rollback-delete-if-exists! descriptor-path))
+                                 (rollback-restore-registry! registry-path registry-before)
                                  (error-response 400 "migration_failed" "Project migration could not be completed" {:message (.getMessage t)}))))))))))))))))))
 
 (defn mask-credential

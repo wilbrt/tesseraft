@@ -2212,3 +2212,100 @@ test('project abstraction: HTTP portable migration returns structured errors for
     fs.rmSync(registryHome, { recursive: true, force: true });
   }
 });
+
+test('project abstraction: HTTP portable migration preserves work-tracker and legacy GitHub/Jira connections', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-migrate-connections',
+    name: 'HTTP Migrate Connections',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
+    connections: {
+      github: { 'credential-ref': 'env:WT3_HTTP_MIG_GITHUB' },
+      jira: { 'base-url': 'https://legacy-jira.example', 'credential-ref': 'env:WT3_HTTP_MIG_JIRA' },
+      'work-tracker': { provider: 'plane', 'credential-ref': 'env:WT3_HTTP_MIG_PLANE', config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'ws', 'project-id': 'pid' } }
+    }
+  }, null, 2));
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-migrate-connections/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    const body = await res.json();
+    assert.equal(res.status, 200, `HTTP migration should succeed with valid legacy connections; got ${res.status} ${JSON.stringify(body)}`);
+    assert.equal(body.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'HTTP migration preserves legacy GitHub connection');
+    assert.equal(body.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'HTTP migration preserves legacy Jira connection');
+    assert.equal(body.connections?.['work-tracker']?.provider, 'plane', 'HTTP migration preserves work-tracker connection');
+    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
+    assert.equal(descriptor.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'migrated descriptor persists GitHub connection');
+    assert.equal(descriptor.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'migrated descriptor persists Jira connection');
+    assert.equal(descriptor.connections?.['work-tracker']?.provider, 'plane', 'migrated descriptor persists work-tracker connection');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
+
+test('project abstraction: HTTP portable migration rejects secret-bearing work-tracker without descriptor or registry writes', async () => {
+  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-allowed-root');
+  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-home');
+  const projectRoot = path.join(allowedRoot, 'portable-project');
+  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
+  const registryPath = path.join(registryHome, 'projects', 'registry.json');
+  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
+  const previousHome = process.env.TESSERAFT_HOME;
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(legacyManifest, JSON.stringify({
+    project_id: 'http-migrate-secret',
+    name: 'HTTP Migrate Secret',
+    workspace_root: projectRoot,
+    runs_root: 'runs',
+    connections: {
+      'work-tracker': {
+        provider: 'jira',
+        'credential-ref': 'env:WT3_HTTP_MIG_SECRET',
+        config: { 'base-url': 'https://jira.example', 'project-key': 'SEC', nested: [{ refresh_token: 'WT3_HTTP_MIGRATE_SECRET_SENTINEL' }] }
+      }
+    }
+  }, null, 2));
+  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
+  process.env.TESSERAFT_HOME = registryHome;
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetch(`${base}/api/projects/http-migrate-secret/migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
+    });
+    const bodyText = await res.text();
+    assert.equal(res.status, 400, `HTTP migration must reject nested raw secret work-tracker payloads; got ${res.status} ${bodyText}`);
+    assert.doesNotMatch(bodyText, /WT3_HTTP_MIGRATE_SECRET_SENTINEL/, 'rejected HTTP migration must not echo the secret value');
+    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'rejected HTTP migration must preserve legacy source bytes');
+    assert.equal(fs.existsSync(descriptorPath), false, 'rejected HTTP migration must not create a descriptor');
+    assert.equal(fs.existsSync(registryPath), false, 'rejected HTTP migration must not create a registry');
+  } finally {
+    await close(server);
+    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
+    else process.env.TESSERAFT_HOME = previousHome;
+    fs.rmSync(allowedRoot, { recursive: true, force: true });
+    fs.rmSync(registryHome, { recursive: true, force: true });
+  }
+});
