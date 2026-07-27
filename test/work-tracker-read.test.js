@@ -104,6 +104,18 @@ test('WT5 Plane request uses project-scoped credentials, X-API-Key, and safe URL
   assert.doesNotMatch(request.url, /ALPHA_SECRET|BETA_TOKEN|BETA_SECRET/);
 });
 
+test('WT5 Plane request clamps oversized timeout overrides', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-timeout-clamp-'));
+  writeProject(root, 'alpha');
+  const script = fetchScript({ root, body: JSON.stringify({ id: REMOTE_ID, name: 'T' }) }).replace(
+    `:inputs {:item-id ${q(REMOTE_ID)}}`,
+    `:inputs {:item-id ${q(REMOTE_ID)} :timeout-ms 600000}`
+  );
+  const out = bbJson(script);
+  const request = out.calls.find((call) => call.request).request;
+  assert.equal(request['timeout-ms'], 10000, 'oversized timeout-ms is clamped to the documented maximum');
+});
+
 test('WT5 mock mode is offline and does not resolve credentials or HTTP', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-mock-'));
   const script = `
@@ -141,6 +153,28 @@ test('WT5 Plane failures are stable, bounded, and redacted', () => {
     const durable = fs.readFileSync(path.join(out['run-dir'], 'work-tracker', 'item.json'), 'utf8');
     assert.doesNotMatch(durable, /SECRET BODY|SERVER SECRET BODY|TOKEN_SENTINEL|access_token/);
   }
+});
+
+test('WT5 Plane rejects invalid timeout overrides without issuing HTTP', () => {
+  const script = `
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.plane :as plane])
+(def calls (atom 0))
+(binding [plane/*http-request* (fn [_] (swap! calls inc) {:status 200 :body "{}"})]
+  (println (json/generate-string {:result (plane/fetch-item {:tracker {:provider "plane"
+                                                                       :config {:api-base-url "https://api.plane.so"
+                                                                                :workspace-slug "ws"
+                                                                                :project-id "pid"}}
+                                                           :api-key "TOKEN_SENTINEL"
+                                                           :item-id ${q(REMOTE_ID)}
+                                                           :timeout-ms "not-a-duration"})
+                                 :calls @calls})))
+`;
+  const out = bbJson(script);
+  assert.equal(out.result.status, 'error');
+  assert.equal(out.result.category, 'invalid_timeout');
+  assert.equal(out.calls, 0, 'invalid timeout-ms is rejected before HTTP');
+  assert.doesNotMatch(JSON.stringify(out), /TOKEN_SENTINEL/);
 });
 
 test('WT5 Plane rejects human identifiers without issuing HTTP', () => {
@@ -204,6 +238,31 @@ test('WT5 Plane timeout becomes a stable redacted failure', () => {
   assert.equal(out.status, 'error');
   assert.equal(out.category, 'timeout');
   assert.doesNotMatch(JSON.stringify(out), /TOKEN_SENTINEL/);
+});
+
+test('WT5 injected transport exceptions become stable redacted durable failures', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-transport-'));
+  writeProject(root, 'alpha');
+  const script = `
+(require '[cheshire.core :as json])
+(require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.runtime.store :as store])
+(require '[tesseraft.work-tracker.plane :as plane])
+(def root ${q(root)})
+(def run-dir (str root "/runs/work-tracker-read"))
+(def ctx {:run {:dir run-dir :project-id "alpha" :workspace-root root}
+          :credential-resolver (fn [_ ref] {:present true :state "present" :credential-ref ref :value "TOKEN_SENTINEL"})})
+(def node {:handler :work-tracker/fetch-item :inputs {:item-id ${q(REMOTE_ID)}} :outputs {:work-item {:path "work-tracker/item.json"}}})
+(binding [plane/*http-request* (fn [_] (throw (ex-info "TOKEN_SENTINEL socket exploded" {:raw "RAW_RESPONSE_SENTINEL"})))]
+  (def result (builtin/run-handler! nil ctx :fetch node {:mock? false})))
+(def artifact (store/read-json (str run-dir "/work-tracker/item.json")))
+(println (json/generate-string {:result result :artifact artifact :run-dir run-dir}))
+`;
+  const out = bbJson(script);
+  assert.equal(out.artifact.status, 'error');
+  assert.equal(out.artifact.category, 'transport');
+  const durable = fs.readFileSync(path.join(out['run-dir'], 'work-tracker', 'item.json'), 'utf8');
+  assert.doesNotMatch(durable, /TOKEN_SENTINEL|RAW_RESPONSE_SENTINEL|socket exploded/);
 });
 
 test('WT5 keeps legacy Jira dispatch separate from provider-neutral work-tracker dispatch', () => {

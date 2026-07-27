@@ -9,6 +9,7 @@
     [java.time Duration]))
 
 (def default-timeout-ms 5000)
+(def max-timeout-ms 10000)
 
 (def ^:dynamic *http-request* nil)
 
@@ -49,27 +50,27 @@
       reset (assoc :reset reset))))
 
 (defn production-http-request [{:keys [method url headers timeout-ms]}]
-  (try
-    (let [timeout (Duration/ofMillis (long (or timeout-ms default-timeout-ms)))
-          client (-> (HttpClient/newBuilder)
-                     (.connectTimeout timeout)
-                     (.build))
-          builder (-> (HttpRequest/newBuilder (URI/create url))
-                      (.timeout timeout)
-                      (.method (or method "GET") (HttpRequest$BodyPublishers/noBody)))]
-      (doseq [[k v] headers]
-        (.header builder (str k) (str v)))
-      (let [response (.send client (.build builder) (HttpResponse$BodyHandlers/ofString))]
-        {:status (.statusCode response)
-         :headers (response-headers-map (.headers response))
-         :body (.body response)}))
-    (catch HttpTimeoutException _
-      {:error :timeout})
-    (catch Throwable t
-      {:error :transport :message (or (.getMessage t) "transport error")})))
+  (let [timeout (Duration/ofMillis (long (or timeout-ms default-timeout-ms)))
+        client (-> (HttpClient/newBuilder)
+                   (.connectTimeout timeout)
+                   (.build))
+        builder (-> (HttpRequest/newBuilder (URI/create url))
+                    (.timeout timeout)
+                    (.method (or method "GET") (HttpRequest$BodyPublishers/noBody))]
+    (doseq [[k v] headers]
+      (.header builder (str k) (str v)))
+    (let [response (.send client (.build builder) (HttpResponse$BodyHandlers/ofString))]
+      {:status (.statusCode response)
+       :headers (response-headers-map (.headers response))
+       :body (.body response)})))
 
 (defn- http-request [request]
-  ((or *http-request* production-http-request) request))
+  (try
+    ((or *http-request* production-http-request) request)
+    (catch HttpTimeoutException _
+      {:error :timeout})
+    (catch Throwable _
+      {:error :transport})))
 
 (defn- response-value [response k]
   (or (get response k)
@@ -84,6 +85,20 @@
            :category category
            :message message}
           details)))
+
+(defn- parse-timeout-ms [v]
+  (try
+    (cond
+      (nil? v) default-timeout-ms
+      (number? v) v
+      (and (string? v) (re-matches #"\d+" (str/trim v))) (Long/parseLong (str/trim v))
+      :else nil)
+    (catch Throwable _ nil)))
+
+(defn- bounded-timeout-ms [v]
+  (when-let [parsed (parse-timeout-ms v)]
+    (when (pos? parsed)
+      (min max-timeout-ms (long parsed)))))
 
 (defn- state-name [issue]
   (or (present-string (get-in issue [:state :name]))
@@ -132,20 +147,24 @@
    :fetched_at (store/now)})
 
 (defn fetch-item [{:keys [tracker api-key item-id timeout-ms]}]
-  (let [{:keys [api-base-url workspace-slug project-id]} (:config tracker)]
+  (let [{:keys [api-base-url workspace-slug project-id]} (:config tracker)
+        request-timeout-ms (bounded-timeout-ms timeout-ms)]
     (cond
       (not (every? present-string [api-base-url workspace-slug project-id item-id api-key]))
       (failure "invalid_request" "Plane fetch requires api-base-url, workspace-slug, project-id, Plane remote issue ID, and API key")
 
+      (not request-timeout-ms)
+      (failure "invalid_timeout" (str "Plane timeout-ms must be a positive duration; values above " max-timeout-ms "ms are clamped"))
+
       (not (plane-remote-issue-id? item-id))
-      (failure "invalid_item_id" "Plane fetch supports only remote issue IDs; human identifiers require an explicit resolver")
+      (failure "invalid_item_id" "Plane fetch supports only documented Plane remote issue IDs; human identifiers require an explicit resolver")
 
       :else
       (let [url (plane-item-url api-base-url workspace-slug project-id item-id)
             response (http-request {:method "GET"
                                     :url url
                                     :headers {"X-API-Key" api-key "Accept" "application/json"}
-                                    :timeout-ms (or timeout-ms default-timeout-ms)})]
+                                    :timeout-ms request-timeout-ms})]
         (let [status (response-value response :status)
               body (response-value response :body)
               headers (response-value response :headers)
