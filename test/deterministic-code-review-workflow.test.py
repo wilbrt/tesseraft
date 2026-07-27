@@ -48,9 +48,9 @@ class DeterministicCodeReviewWorkflowTest(unittest.TestCase):
         self.assertIn('{:when {:status "pass"} :next :review}', workflow)
         # Both gates loop back to :implement on failure (deterministic feedback to the agent).
         self.assertIn('{:when {:status "fail"} :effects [:merge-issues :inc-round] :next :implement}', workflow)
-        # Agents use the claude-code subscription executor, not pi.
-        self.assertIn(':executor :claude-code', workflow)
-        self.assertNotIn(':executor :pi-cli', workflow)
+        # Agents use the standard pi-cli executor; deterministic gates own test execution.
+        self.assertIn(':executor :pi-cli', workflow)
+        self.assertNotIn(':executor :claude-code', workflow)
         # There is no agent node that runs npm/bb tests directly.
         self.assertNotIn(':manual-testing', workflow)
 
