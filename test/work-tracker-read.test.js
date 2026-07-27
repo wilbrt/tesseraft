@@ -121,6 +121,40 @@ test('WT5 Plane request clamps oversized timeout overrides', () => {
   assert.equal(request['timeout-ms'], 10000, 'oversized timeout-ms is clamped to the documented maximum');
 });
 
+test('WT5 prefers non-empty expanded Plane assignee and label details over base ID arrays', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-expanded-details-'));
+  writeProject(root, 'alpha');
+  const planeBody = JSON.stringify({
+    id: REMOTE_ID,
+    identifier: 'ALPHA-8',
+    name: 'Expanded details',
+    assignees: ['base-user-id'],
+    assignee_details: [{ id: 'expanded-user-id', display_name: 'Grace' }],
+    labels: ['base-label-id'],
+    label_details: [{ id: 'expanded-label-id', name: 'feature', color: '#0f0' }]
+  });
+  const out = bbJson(fetchScript({ root, body: planeBody }));
+  assert.equal(out.result.status, 'ok');
+  assert.deepEqual(out.artifact.assignees, [{ id: 'expanded-user-id', display_name: 'Grace' }]);
+  assert.deepEqual(out.artifact.labels, [{ id: 'expanded-label-id', name: 'feature', color: '#0f0' }]);
+});
+
+test('WT5 preserves Plane assignee and label IDs when only relationship arrays are present', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-id-fallbacks-'));
+  writeProject(root, 'alpha');
+  const planeBody = JSON.stringify({
+    id: REMOTE_ID,
+    identifier: 'ALPHA-9',
+    name: 'ID fallbacks',
+    assignees: ['user-id-only'],
+    labels: ['label-id-only']
+  });
+  const out = bbJson(fetchScript({ root, body: planeBody }));
+  assert.equal(out.result.status, 'ok');
+  assert.deepEqual(out.artifact.assignees, [{ id: 'user-id-only' }]);
+  assert.deepEqual(out.artifact.labels, [{ id: 'label-id-only' }]);
+});
+
 test('WT5 mock mode is offline and does not resolve credentials or HTTP', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-mock-'));
   const script = `

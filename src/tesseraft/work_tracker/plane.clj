@@ -109,18 +109,34 @@
   (let [s (some-> p str str/lower-case str/trim)]
     (if (contains? #{"urgent" "high" "medium" "low" "none"} s) s "none")))
 
+(defn- non-empty-coll [v]
+  (when (and (coll? v) (seq v)) v))
+
 (defn- normalize-assignee [a]
-  (cond-> {:id (or (present-string (:id a)) (present-string (:pk a)) (present-string (:member_id a)) "")}
-    (present-string (:display_name a)) (assoc :display_name (present-string (:display_name a)))
-    (present-string (:first_name a)) (assoc :display_name (str/trim (str (:first_name a) " " (:last_name a))))
-    (present-string (:email a)) (assoc :email (present-string (:email a)))))
+  (cond
+    (string? a)
+    (when-let [id (present-string a)] {:id id})
+
+    (map? a)
+    (when-let [id (or (present-string (:id a)) (present-string (:pk a)) (present-string (:member_id a)))]
+      (cond-> {:id id}
+        (present-string (:display_name a)) (assoc :display_name (present-string (:display_name a)))
+        (present-string (:first_name a)) (assoc :display_name (str/trim (str (:first_name a) " " (:last_name a))))
+        (present-string (:email a)) (assoc :email (present-string (:email a)))))))
 
 (defn- normalize-label [l]
   (cond
-    (string? l) {:name l}
-    (map? l) (cond-> {:name (or (present-string (:name l)) (present-string (:id l)) "")}
-               (present-string (:color l)) (assoc :color (present-string (:color l))))
-    :else {:name (str l)}))
+    (string? l)
+    (when-let [id (present-string l)] {:id id})
+
+    (map? l)
+    (let [id (present-string (:id l))
+          name (present-string (:name l))]
+      (when (or id name)
+        (cond-> {}
+          id (assoc :id id)
+          name (assoc :name name)
+          (present-string (:color l)) (assoc :color (present-string (:color l))))))))
 
 (defn normalize-plane-issue [tracker tesseraft-project-id item-id issue]
   (let [identifier (or (present-string (:identifier issue))
@@ -141,8 +157,12 @@
                       "")
      :state {:name (or (state-name issue) "unknown")}
      :priority (normalize-priority (:priority issue))
-     :assignees (mapv normalize-assignee (or (:assignees issue) (:assignee_details issue) []))
-     :labels (mapv normalize-label (or (:labels issue) (:label_details issue) []))
+     :assignees (into [] (keep normalize-assignee) (or (non-empty-coll (:assignee_details issue))
+                                                       (non-empty-coll (:assignees issue))
+                                                       []))
+     :labels (into [] (keep normalize-label) (or (non-empty-coll (:label_details issue))
+                                                 (non-empty-coll (:labels issue))
+                                                 []))
      :url (or (present-string (:url issue)) (present-string (:html_url issue)))
      :fetched_at (store/now)}))
 

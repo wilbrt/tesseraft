@@ -43,7 +43,7 @@
         "type": "object",
         "required": ["id"],
         "properties": {
-          "id": { "type": "string" },
+          "id": { "type": "string", "minLength": 1 },
           "display_name": { "type": "string" },
           "email": { "type": "string" }
         },
@@ -53,18 +53,17 @@
     "labels": {
       "type": "array",
       "items": {
-        "oneOf": [
-          { "type": "string" },
-          {
-            "type": "object",
-            "required": ["name"],
-            "properties": {
-              "name": { "type": "string" },
-              "color": { "type": "string" }
-            },
-            "additionalProperties": false
-          }
-        ]
+        "type": "object",
+        "anyOf": [
+          { "required": ["id"] },
+          { "required": ["name"] }
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "color": { "type": "string" }
+        },
+        "additionalProperties": false
       }
     },
     "url": { "type": ["string", "null"] },

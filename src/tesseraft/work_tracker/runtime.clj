@@ -130,7 +130,7 @@
      :state {:name "Mock"}
      :priority "none"
      :assignees []
-     :labels ["mock"]
+     :labels [{:name "mock"}]
      :url "https://example.invalid/plane/mock"
      :fetched_at (store/now)}))
 
