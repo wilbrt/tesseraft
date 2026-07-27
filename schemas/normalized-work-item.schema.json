@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Normalized Work Item",
+  "type": "object",
+  "required": ["schema_version", "provider", "project", "remote", "identifier", "title", "description", "state", "priority", "assignees", "labels", "fetched_at"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "provider": { "type": "string", "enum": ["plane"] },
+    "project": {
+      "type": "object",
+      "required": ["id", "workspace_slug"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "workspace_slug": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "remote": {
+      "type": "object",
+      "required": ["id", "identifier"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "identifier": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "identifier": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "state": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "priority": { "type": "string", "enum": ["urgent", "high", "medium", "low", "none"] },
+    "assignees": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "display_name": { "type": "string" },
+          "email": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "color": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "url": { "type": ["string", "null"] },
+    "fetched_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

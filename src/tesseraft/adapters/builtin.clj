@@ -3,6 +3,7 @@
     [tesseraft.spec :as spec]
     [tesseraft.runtime.store :as store]
     [tesseraft.control-plane.core :as cp]
+    [tesseraft.work-tracker.runtime :as work-tracker]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]
@@ -654,7 +655,8 @@
     {:status "ok"}))
 
 (def handlers
-  {:jira/fetch-ticket jira-fetch-ticket!
+  {:work-tracker/fetch-item work-tracker/fetch-item!
+   :jira/fetch-ticket jira-fetch-ticket!
    :git/ensure-branch git-ensure-branch!
    :git/ensure-worktree git-ensure-worktree!
    :git/push git-push!
@@ -712,6 +714,9 @@
 
 (defn run-mock-handler! [_wf ctx _state-id node]
   (case (:handler node)
+    :work-tracker/fetch-item
+    (work-tracker/mock-fetch-item! nil ctx nil node)
+
     :jira/fetch-ticket
     (let [ticket (mock-ticket ctx)
           out-path (output-path ctx node :ticket-json "ticket.json")]

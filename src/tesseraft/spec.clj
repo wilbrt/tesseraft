@@ -19,7 +19,7 @@
 (def base-pi-tools #{:read :bash :edit :write :grep :find :ls})
 (def default-known-executors #{:pi-cli :pi-sdk :claude-code})
 (def default-known-handlers
-  #{:jira/fetch-ticket :git/ensure-branch :git/ensure-worktree :git/push :git/publish-visual-evidence :github/create-pr :github/fetch-pr-feedback :web/start-test-server :web/stop-test-server :web/capture-ui-evidence :web/validate-ui-review :notify/pinga :noop/succeed})
+  #{:work-tracker/fetch-item :jira/fetch-ticket :git/ensure-branch :git/ensure-worktree :git/push :git/publish-visual-evidence :github/create-pr :github/fetch-pr-feedback :web/start-test-server :web/stop-test-server :web/capture-ui-evidence :web/validate-ui-review :notify/pinga :noop/succeed})
 (def allowed-template-roots #{"inputs" "defaults" "run" "node" "artifacts" "workflow" "env"})
 (def known-run-vars #{"id" "dir" "state" "round" "attempt" "feedback-cycle" "issues-file" "branch" "worktree-dir"})
 (def resource-groups #{:requires :consumes :produces})
