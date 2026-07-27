@@ -111,7 +111,13 @@ export type ProjectConnection = {
   credential_ref?: CredentialRef;
   credential_state?: MaskedCredential | null;
 };
-export type ProjectConnections = { jira?: ProjectConnection; github?: ProjectConnection };
+export type WorkTrackerConnection = {
+  provider?: string;
+  credential_ref?: CredentialRef;
+  config?: Record<string, unknown>;
+  credential_state?: MaskedCredential | null;
+};
+export type ProjectConnections = { jira?: ProjectConnection; github?: ProjectConnection; 'work-tracker'?: WorkTrackerConnection };
 
 export type ProjectSummary = { project_id: string; name?: string; source?: 'manifest' | 'implicit' };
 export type ProjectDetail = {
