@@ -155,6 +155,22 @@ test('WT5 preserves Plane assignee and label IDs when only relationship arrays a
   assert.deepEqual(out.artifact.labels, [{ id: 'label-id-only' }]);
 });
 
+test('WT5 constructs a human identifier from numeric Plane sequence IDs when no identifier is present', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-sequence-id-'));
+  writeProject(root, 'alpha');
+  const planeBody = JSON.stringify({
+    id: REMOTE_ID,
+    sequence_id: 42,
+    project_detail: { identifier: 'ALPHA' },
+    name: 'Numeric sequence'
+  });
+  const out = bbJson(fetchScript({ root, body: planeBody }));
+  assert.equal(out.result.status, 'ok');
+  assert.equal(out.artifact.identifier, 'ALPHA-42');
+  assert.equal(out.artifact.remote.identifier, 'ALPHA-42');
+  assert.notEqual(out.artifact.identifier, REMOTE_ID);
+});
+
 test('WT5 mock mode is offline and does not resolve credentials or HTTP', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-mock-'));
   const script = `

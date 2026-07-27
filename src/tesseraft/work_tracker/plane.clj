@@ -138,9 +138,26 @@
           name (assoc :name name)
           (present-string (:color l)) (assoc :color (present-string (:color l))))))))
 
+(defn- plane-project-prefix [tracker issue]
+  (or (present-string (get-in issue [:project_detail :identifier]))
+      (present-string (get-in issue [:project :identifier]))
+      (present-string (:project_identifier issue))
+      (present-string (get-in tracker [:config :project-identifier]))
+      (present-string (get-in tracker [:config :project-key]))))
+
+(defn- sequence-identifier [tracker issue]
+  (let [sequence (:sequence_id issue)
+        sequence-text (cond
+                        (number? sequence) (str sequence)
+                        (string? sequence) (present-string sequence))]
+    (when sequence-text
+      (if-let [prefix (plane-project-prefix tracker issue)]
+        (str prefix "-" sequence-text)
+        sequence-text))))
+
 (defn normalize-plane-issue [tracker tesseraft-project-id item-id issue]
   (let [identifier (or (present-string (:identifier issue))
-                       (present-string (:sequence_id issue))
+                       (sequence-identifier tracker issue)
                        (str item-id))]
     {:schema_version 1
      :provider "plane"
