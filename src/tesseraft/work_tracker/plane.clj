@@ -117,7 +117,7 @@
    :title (or (present-string (:name issue)) (present-string (:title issue)) "")
    :description (or (present-string (:description_stripped issue))
                     (present-string (:description_html issue))
-                    (present-string (:description))
+                    (present-string (:description issue))
                     "")
    :state {:name (or (state-name issue) "unknown")}
    :priority (normalize-priority (:priority issue))
