@@ -165,6 +165,8 @@ src/tesseraft/adapters/*      deterministic handler adapters
 <!-- BEGIN STATUS — generated from STATUS.edn by `bb status`. Do not edit by hand. -->
 Implemented:
 
+- **work-tracker-plane-read** (implemented) — Read-only provider-neutral `:work-tracker/fetch-item` boundary for Plane: resolves the selected run project's persisted `connections.work-tracker`, records that selected Tesseraft project separately from Plane workspace/project remote scope, uses only the project-scoped credential ref, accepts only documented Plane remote issue IDs for the direct `/issues/{remote-id}/` lookup, performs an injectable bounded API-key request, and persists a versioned normalized work-item artifact without raw Plane payloads or secrets. Mock mode remains offline.
+  _Evidence:_ src/tesseraft/work_tracker/runtime.clj, src/tesseraft/work_tracker/plane.clj, src/tesseraft/adapters/builtin.clj :work-tracker/fetch-item, schemas/normalized-work-item.schema.json, test/work-tracker-read.test.js, test/fixtures/valid/work-tracker-fetch/workflow.edn, scripts/test.sh WT5 block
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
 - **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.

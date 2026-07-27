@@ -61,24 +61,25 @@
     (when (and (map? project) (= project-id persisted-id)) project)))
 
 (defn- resolved-project-credential-secrets [ctx]
-  (try
-    (let [resolve-project (requiring-resolve 'tesseraft.control-plane.core/resolve-project)
-          project-context-opts (requiring-resolve 'tesseraft.control-plane.core/project-context-opts)
-          project-scoped-opts (requiring-resolve 'tesseraft.control-plane.core/project-scoped-opts)
-          resolve-credential (requiring-resolve 'tesseraft.control-plane.core/resolve-credential)
-          project-id (get-in ctx [:run :project-id])
-          options (runtime-options ctx)
-          persisted-project (persisted-project-context ctx project-id)
-          project (or persisted-project (resolve-project options project-id))
-          scoped (if persisted-project
-                   (project-context-opts options persisted-project)
-                   (when-not (:error project) (project-scoped-opts options project-id)))]
-      (when-not (or (:error project) (:error scoped))
-        (keep (fn [[_ conn]]
-                (when-let [ref (:credential-ref conn)]
-                  (:value (resolve-credential scoped ref))))
-              (:connections project))))
-    (catch Throwable _ nil)))
+  (when-not (:skip-project-credential-redaction? ctx)
+    (try
+      (let [resolve-project (requiring-resolve 'tesseraft.control-plane.core/resolve-project)
+            project-context-opts (requiring-resolve 'tesseraft.control-plane.core/project-context-opts)
+            project-scoped-opts (requiring-resolve 'tesseraft.control-plane.core/project-scoped-opts)
+            resolve-credential (requiring-resolve 'tesseraft.control-plane.core/resolve-credential)
+            project-id (get-in ctx [:run :project-id])
+            options (runtime-options ctx)
+            persisted-project (persisted-project-context ctx project-id)
+            project (or persisted-project (resolve-project options project-id))
+            scoped (if persisted-project
+                     (project-context-opts options persisted-project)
+                     (when-not (:error project) (project-scoped-opts options project-id)))]
+        (when-not (or (:error project) (:error scoped))
+          (keep (fn [[_ conn]]
+                  (when-let [ref (:credential-ref conn)]
+                    (:value (resolve-credential scoped ref))))
+                (:connections project))))
+      (catch Throwable _ nil))))
 
 (defn- credential-secrets [ctx]
   (filter #(and (string? %) (not (str/blank? %)))

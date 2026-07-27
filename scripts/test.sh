@@ -42,6 +42,10 @@ node --test test/project-contract.test.js
 
 printf '\nChecking work-tracker Settings editor and Connections Doctor contracts (WT4)...\n'
 node --test test/work-tracker-settings-doctor.test.js
+
+printf '\nChecking Plane work-item read adapter contracts (WT5)...\n'
+node --test test/work-tracker-read.test.js
+./bin/tesseraft lint test/fixtures/valid/work-tracker-fetch/workflow.edn
 ./bin/tesseraft control-plane project work-tracker-providers >/tmp/tesseraft-cp-work-tracker-providers.json
 python3 - <<'PY'
 import json
