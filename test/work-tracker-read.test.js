@@ -54,7 +54,7 @@ const fetchScript = ({ root, projectId = 'alpha', itemId = 'ISS-7', status = 200
                                  {:status ${status} :headers ${prStr(headers)} :body ${q(body ?? '')}})]
   (def result (builtin/run-handler! nil ctx :fetch node {:mock? ${mock ? 'true' : 'false'}})))
 (def artifact (store/read-json (str run-dir "/work-tracker/item.json")))
-(println (json/generate-string {:result result :artifact artifact :calls @calls :run-dir run-dir})))
+(println (json/generate-string {:result result :artifact artifact :calls @calls :run-dir run-dir}))
 `;
 
 function prStr(value) {
@@ -114,7 +114,7 @@ test('WT5 mock mode is offline and does not resolve credentials or HTTP', () => 
 (def node {:handler :work-tracker/fetch-item :inputs {:item-id "MOCK-42"} :outputs {:work-item {:path "item.json"}}})
 (binding [plane/*http-request* (fn [_] (throw (ex-info "http must not be called" {})))]
   (def result (builtin/run-handler! nil ctx :fetch node {:mock? true})))
-(println (json/generate-string {:result result :artifact (store/read-json (str run-dir "/item.json"))})))
+(println (json/generate-string {:result result :artifact (store/read-json (str run-dir "/item.json"))}))
 `;
   const out = bbJson(script);
   assert.equal(out.result.mock, true);
