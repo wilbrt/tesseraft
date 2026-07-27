@@ -32,7 +32,10 @@ const writeProject = (root, id, tokenRef = `env:${id.toUpperCase()}_PLANE_TOKEN`
   }, null, 2));
 };
 
-const fetchScript = ({ root, projectId = 'alpha', itemId = 'ISS-7', status = 200, body, headers = {}, token = 'TOKEN_SENTINEL', mock = false }) => `
+const REMOTE_ID = '123e4567-e89b-12d3-a456-426614174000';
+const OTHER_REMOTE_ID = '123e4567-e89b-12d3-a456-426614174001';
+
+const fetchScript = ({ root, projectId = 'alpha', itemId = REMOTE_ID, status = 200, body, headers = {}, token = 'TOKEN_SENTINEL', mock = false }) => `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
 (require '[tesseraft.runtime.store :as store])
@@ -69,7 +72,7 @@ test('WT5 normalizes a Plane item and persists only the allowlisted artifact', (
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-normalize-'));
   writeProject(root, 'alpha');
   const planeBody = JSON.stringify({
-    id: 'plane-uuid-7', identifier: 'ALPHA-7', name: 'Fix WT5', description_stripped: 'Safe description',
+    id: REMOTE_ID, identifier: 'ALPHA-7', name: 'Fix WT5', description_stripped: 'Safe description',
     state: { name: 'In Progress', SECRET_PRIVATE_FIELD: 'RAW_RESPONSE_SENTINEL' }, priority: 'high',
     assignee_details: [{ id: 'user-1', display_name: 'Ada' }], label_details: [{ name: 'bug', color: '#f00' }],
     url: 'https://app.plane.so/alpha/ALPHA-7', access_token: 'RAW_RESPONSE_SENTINEL'
@@ -91,13 +94,13 @@ test('WT5 Plane request uses project-scoped credentials, X-API-Key, and safe URL
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-isolation-'));
   writeProject(root, 'alpha', 'env:ALPHA_TOKEN', 'https://plane.self.hosted/custom/');
   writeProject(root, 'beta', 'env:BETA_TOKEN', 'https://plane.self.hosted/other');
-  const out = bbJson(fetchScript({ root, projectId: 'alpha', body: JSON.stringify({ id: 'i', name: 'T' }), token: 'ALPHA_SECRET' }));
+  const out = bbJson(fetchScript({ root, projectId: 'alpha', itemId: OTHER_REMOTE_ID, body: JSON.stringify({ id: OTHER_REMOTE_ID, name: 'T' }), token: 'ALPHA_SECRET' }));
   const request = out.calls.find((call) => call.request).request;
   const resolverCall = out.calls.find((call) => call.ref);
   assert.equal(resolverCall.ref, 'env:ALPHA_TOKEN');
   assert.equal(request.headers['X-API-Key'], 'ALPHA_SECRET');
   assert.equal(request['timeout-ms'], 5000, 'Plane HTTP requests are bounded by the default timeout');
-  assert.match(request.url, /^https:\/\/plane\.self\.hosted\/custom\/api\/v1\/workspaces\/alpha-ws\/projects\/alpha-project\/issues\/ISS-7\/$/);
+  assert.match(request.url, new RegExp(`^https:\\/\\/plane\\.self\\.hosted\\/custom\\/api\\/v1\\/workspaces\\/alpha-ws\\/projects\\/alpha-project\\/issues\\/${OTHER_REMOTE_ID}\\/$`));
   assert.doesNotMatch(request.url, /ALPHA_SECRET|BETA_TOKEN|BETA_SECRET/);
 });
 
@@ -140,6 +143,50 @@ test('WT5 Plane failures are stable, bounded, and redacted', () => {
   }
 });
 
+test('WT5 Plane rejects human identifiers without issuing HTTP', () => {
+  const script = `
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.plane :as plane])
+(def calls (atom 0))
+(binding [plane/*http-request* (fn [_] (swap! calls inc) {:status 200 :body "{}"})]
+  (println (json/generate-string {:result (plane/fetch-item {:tracker {:provider "plane"
+                                                                       :config {:api-base-url "https://api.plane.so"
+                                                                                :workspace-slug "ws"
+                                                                                :project-id "pid"}}
+                                                           :api-key "TOKEN_SENTINEL"
+                                                           :item-id "ISS-1"
+                                                           :timeout-ms 10})
+                                 :calls @calls})))
+`;
+  const out = bbJson(script);
+  assert.equal(out.result.status, 'error');
+  assert.equal(out.result.category, 'invalid_item_id');
+  assert.equal(out.calls, 0, 'human identifiers are not sent to the direct /issues/{remote-id}/ endpoint');
+  assert.doesNotMatch(JSON.stringify(out), /TOKEN_SENTINEL/);
+});
+
+test('WT5 runtime ignores legacy ticket/identifier aliases instead of treating them as Plane remote IDs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-aliases-'));
+  writeProject(root, 'alpha');
+  const script = `
+(require '[cheshire.core :as json])
+(require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.runtime.store :as store])
+(require '[tesseraft.work-tracker.plane :as plane])
+(def run-dir (str ${q(root)} "/runs/work-tracker-read"))
+(def ctx {:run {:dir run-dir :project-id "alpha" :workspace-root ${q(root)}}
+          :inputs {:ticket "ALPHA-7"}
+          :credential-resolver (fn [_ ref] {:present true :state "present" :credential-ref ref :value "TOKEN_SENTINEL"})})
+(def node {:handler :work-tracker/fetch-item :inputs {:identifier "ALPHA-7"} :outputs {:work-item {:path "work-tracker/item.json"}}})
+(binding [plane/*http-request* (fn [_] (throw (ex-info "http must not be called" {})))]
+  (def result (builtin/run-handler! nil ctx :fetch node {:mock? false})))
+(println (json/generate-string {:result result :artifact (store/read-json (str run-dir "/work-tracker/item.json"))}))
+`;
+  const out = bbJson(script);
+  assert.equal(out.artifact.category, 'missing_item');
+  assert.doesNotMatch(JSON.stringify(out), /TOKEN_SENTINEL/);
+});
+
 test('WT5 Plane timeout becomes a stable redacted failure', () => {
   const script = `
 (require '[cheshire.core :as json])
@@ -150,7 +197,7 @@ test('WT5 Plane timeout becomes a stable redacted failure', () => {
                                                                        :workspace-slug "ws"
                                                                        :project-id "pid"}}
                                                   :api-key "TOKEN_SENTINEL"
-                                                  :item-id "ISS-1"
+                                                  :item-id ${q(REMOTE_ID)}
                                                   :timeout-ms 10}))))
 `;
   const out = bbJson(script);

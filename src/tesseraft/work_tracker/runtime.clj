@@ -40,11 +40,7 @@
 
 (defn- item-id [ctx node]
   (or (present-string (get-in node [:inputs :item-id]))
-      (present-string (get-in node [:inputs :identifier]))
-      (present-string (get-in node [:inputs :work-item]))
-      (present-string (get-in ctx [:inputs :work-item]))
-      (present-string (get-in ctx [:inputs :item-id]))
-      (present-string (get-in ctx [:inputs :ticket]))))
+      (present-string (get-in ctx [:inputs :item-id]))))
 
 (defn- artifact-path [ctx p]
   (let [rendered (spec/render-template-string p ctx)]
@@ -75,7 +71,7 @@
   (let [out-path (output-path ctx node)
         id (item-id ctx node)]
     (if-not id
-      (let [result (failure "missing_item" "work-tracker/fetch-item requires an item-id input")]
+      (let [result (failure "missing_item" "work-tracker/fetch-item requires an item-id input containing the Plane remote issue ID")]
         (write-result! ctx out-path result)
         (assoc result :item_file out-path))
       (let [{:keys [project options error]} (selected-project-and-options ctx)]

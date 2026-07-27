@@ -31,7 +31,7 @@
   :design
   {:type :agent
    :title "Design"
-   :executor :claude-code
+   :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.6-sol"
    :thinking "medium"
@@ -58,7 +58,7 @@
   :implement
   {:type :agent
    :title "Implement in worktree"
-   :executor :claude-code
+   :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.5"
    :thinking "medium"
@@ -111,7 +111,7 @@
   :review
   {:type :agent
    :title "Code review"
-   :executor :claude-code
+   :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.6-sol"
    :thinking "medium"
@@ -129,7 +129,7 @@
   :pr-draft
   {:type :agent
    :title "Draft PR metadata"
-   :executor :claude-code
+   :executor :pi-cli
    :provider "openai-codex"
    :model "gpt-5.6-sol"
    :thinking "medium"

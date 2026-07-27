@@ -27,6 +27,11 @@
                   "/issues/" (encode-segment item-id) "/")]
     (str base path)))
 
+(defn plane-remote-issue-id? [s]
+  (boolean
+    (when-let [id (present-string s)]
+      (re-matches #"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}" id))))
+
 (defn- response-headers-map [headers]
   (cond
     (map? headers) headers
@@ -128,8 +133,14 @@
 
 (defn fetch-item [{:keys [tracker api-key item-id timeout-ms]}]
   (let [{:keys [api-base-url workspace-slug project-id]} (:config tracker)]
-    (if-not (every? present-string [api-base-url workspace-slug project-id item-id api-key])
-      (failure "invalid_request" "Plane fetch requires api-base-url, workspace-slug, project-id, item id, and API key")
+    (cond
+      (not (every? present-string [api-base-url workspace-slug project-id item-id api-key]))
+      (failure "invalid_request" "Plane fetch requires api-base-url, workspace-slug, project-id, Plane remote issue ID, and API key")
+
+      (not (plane-remote-issue-id? item-id))
+      (failure "invalid_item_id" "Plane fetch supports only remote issue IDs; human identifiers require an explicit resolver")
+
+      :else
       (let [url (plane-item-url api-base-url workspace-slug project-id item-id)
             response (http-request {:method "GET"
                                     :url url
