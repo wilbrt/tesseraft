@@ -39,6 +39,17 @@ python3 test/canon-validation-runner.test.py
 printf '\nChecking portable project descriptor and registry contracts...\n'
 node --test test/project-contract.test.js
 
+printf '\nChecking work-tracker Settings editor and Connections Doctor contracts (WT4)...\n'
+node --test test/work-tracker-settings-doctor.test.js
+./bin/tesseraft control-plane project work-tracker-providers >/tmp/tesseraft-cp-work-tracker-providers.json
+python3 - <<'PY'
+import json
+x = json.load(open('/tmp/tesseraft-cp-work-tracker-providers.json'))
+assert [p['provider'] for p in x['providers']] == ['github-issues', 'jira', 'plane'], x
+assert 'SECRET_SENTINEL' not in json.dumps(x)
+PY
+rm -f /tmp/tesseraft-cp-work-tracker-providers.json
+
 printf '\nChecking claude-code executor (subscription auth + dispatch)...\n'
 node --test test/claude-code-executor.test.js
 
@@ -765,8 +776,9 @@ import json
 x=json.load(open('/tmp/tesseraft-cp-doctor.json'))
 assert x['project_id'] == 'default', x
 assert sorted(x['summary'].keys()) == sorted(['ready', 'not-configured', 'unreachable', 'invalid']), x
-assert [c['id'] for c in x['checks']] == ['github-credential', 'github-auth', 'jira-base-url', 'jira-credential', 'pi-provider-model', 'git-author', 'repository-root', 'pinga', 'workflow-discovery', 'runs-root'], x
+assert [c['id'] for c in x['checks']] == ['github-credential', 'github-auth', 'jira-base-url', 'jira-credential', 'pi-provider-model', 'git-author', 'repository-root', 'pinga', 'workflow-discovery', 'runs-root', 'work-tracker-config', 'work-tracker-credential'], x
 assert all(c['status'] in ['ready', 'not-configured', 'unreachable', 'invalid'] for c in x['checks']), x
+assert x['work_tracker']['state'] == 'absent', x
 assert 'SECRET_SENTINEL' not in json.dumps(x)
 PY
 bb -e '(require (quote [tesseraft.adapters.builtin :as b])

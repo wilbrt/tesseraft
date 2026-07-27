@@ -331,10 +331,27 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   assert.equal(doctorResponse.status, 200);
   const doctor = await doctorResponse.json();
   assert.equal(doctor.project_id, 'default');
-  assert.equal(doctor.checks.length, 10);
+  assert.equal(doctor.checks.length, 12, 'WT4 appends work-tracker-config and work-tracker-credential checks');
   assert.deepEqual(Object.keys(doctor.summary).sort(), ['invalid', 'not-configured', 'ready', 'unreachable'].sort());
   assert.ok(doctor.checks.every((check) => ['ready', 'not-configured', 'unreachable', 'invalid'].includes(check.status)));
   assert.doesNotMatch(JSON.stringify(doctor), /SECRET_SENTINEL|stdout|stderr|GH_TOKEN_VALUE/);
+  const trackerConfigCheck = doctor.checks.find((check) => check.id === 'work-tracker-config');
+  const trackerCredentialCheck = doctor.checks.find((check) => check.id === 'work-tracker-credential');
+  assert.ok(trackerConfigCheck && trackerCredentialCheck, 'work-tracker doctor checks are present');
+  assert.equal(trackerConfigCheck.mode, 'static');
+  assert.equal(trackerCredentialCheck.mode, 'static');
+  assert.equal(trackerConfigCheck.state, 'absent', 'the default project has no work tracker configured');
+  assert.equal(trackerConfigCheck.status, 'not-configured', 'absent is a non-failure state');
+  assert.ok(doctor.work_tracker, 'doctor report exposes a report-level work_tracker verdict');
+  assert.equal(doctor.work_tracker.state, 'absent');
+  assert.equal(doctor.work_tracker.provider, null);
+
+  const providersResponse = await fetch(`${base}/api/work-tracker-providers`);
+  assert.equal(providersResponse.status, 200);
+  const providers = await providersResponse.json();
+  assert.deepEqual(providers.providers.map((p) => p.provider), ['github-issues', 'jira', 'plane']);
+  assert.ok(providers.providers.every((p) => Array.isArray(p.fields) && p.fields.length > 0));
+  assert.doesNotMatch(JSON.stringify(providers), /credential.?value/i);
 
   const workflowsResponse = await fetch(`${base}/api/workflows`);
   assert.equal(workflowsResponse.status, 200);
@@ -1429,6 +1446,114 @@ test('project abstraction: routeApi + read-only HTTP + masked connections (desig
       else fs.writeFileSync(manifestPath, previous);
     }
   } finally {
+    await close(server);
+  }
+});
+
+test('WT4 HTTP work-tracker editor round trip: set, inspect, switch provider, clear, idempotent clear', async () => {
+  const server = createServer(createFakePiSessionAdapter());
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
+  const manifestPath = path.join(projectsDir, 'wt4-http-editor.json');
+  const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    project_id: 'wt4-http-editor',
+    name: 'WT4 HTTP Editor',
+    workspace_root: '.',
+    runs_root: '.agent-runs',
+    discovery: { 'workflow-roots': ['examples'] },
+    connections: {}
+  }, null, 2));
+  try {
+    // Reject a raw-token payload before it ever reaches the control plane.
+    const rawToken = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ work_tracker: { provider: 'plane', token: 'raw-secret-value' } })
+    });
+    assert.equal(rawToken.status, 400);
+
+    // Reject an unknown top-level connection role.
+    const unknownRole = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ not_a_real_role: {} })
+    });
+    assert.equal(unknownRole.status, 400);
+
+    // Set a Plane tracker.
+    const setPlane = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        work_tracker: {
+          provider: 'plane',
+          credential_ref: 'env:WT4_HTTP_PLANE',
+          config: { api_base_url: 'https://plane.example', workspace_slug: 'ws', project_id: 'pid' }
+        }
+      })
+    });
+    assert.equal(setPlane.status, 200);
+    const setPlaneBody = await setPlane.json();
+    assert.equal(setPlaneBody.connections['work-tracker'].provider, 'plane');
+
+    // Inspect.
+    const inspect = await fetch(`${base}/api/projects/wt4-http-editor/connections`);
+    assert.equal(inspect.status, 200);
+    const inspected = await inspect.json();
+    assert.equal(inspected.connections['work-tracker'].provider, 'plane');
+    assert.equal(inspected.connections['work-tracker']['credential-state'].present, false, 'the referenced env var is not set in this test process');
+
+    // Switch to github-issues.
+    const switchProvider = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        work_tracker: {
+          provider: 'github-issues',
+          credential_ref: 'env:WT4_HTTP_GH_ISSUES',
+          config: { repository: 'owner/repo' }
+        }
+      })
+    });
+    assert.equal(switchProvider.status, 200);
+    const switched = await switchProvider.json();
+    assert.equal(switched.connections['work-tracker'].provider, 'github-issues');
+
+    // Doctor now reports an unresolved (statically-valid-but-uncredentialed) tracker.
+    const doctorAfterSet = await fetch(`${base}/api/projects/wt4-http-editor/doctor`);
+    const doctorAfterSetBody = await doctorAfterSet.json();
+    assert.equal(doctorAfterSetBody.work_tracker.state, 'unresolved');
+    assert.equal(doctorAfterSetBody.work_tracker.provider, 'github-issues');
+
+    // Clear.
+    const clear = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clear_work_tracker: true })
+    });
+    assert.equal(clear.status, 200);
+    const cleared = await clear.json();
+    assert.equal(cleared.connections['work-tracker'], undefined);
+
+    // Clearing again is idempotent, not an error.
+    const clearAgain = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clear_work_tracker: true })
+    });
+    assert.equal(clearAgain.status, 200);
+    const clearedAgain = await clearAgain.json();
+    assert.equal(clearedAgain.connections['work-tracker'], undefined);
+
+    const doctorAfterClear = await fetch(`${base}/api/projects/wt4-http-editor/doctor`);
+    const doctorAfterClearBody = await doctorAfterClear.json();
+    assert.equal(doctorAfterClearBody.work_tracker.state, 'absent');
+  } finally {
+    if (previous === null) fs.rmSync(manifestPath, { force: true });
+    else fs.writeFileSync(manifestPath, previous);
     await close(server);
   }
 });

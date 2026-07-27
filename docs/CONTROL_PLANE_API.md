@@ -134,6 +134,7 @@ locally).
 | GET | `/api/projects/{id}/connections` | `project connections {id}` | Connection metadata + masked state; no raw tokens. |
 | PUT | `/api/projects/{id}/connections` | `project connections {id} …` | Update legacy Jira/GitHub refs or set/clear `work_tracker`; **never** accepts raw token payloads. |
 | GET | `/api/projects/{id}/doctor` | `--project-id {id} doctor` | Local-first readiness report with `ready`, `not-configured`, `unreachable`, and `invalid` checks. Static/read-only only; no raw secrets or subprocess output. |
+| GET | `/api/work-tracker-providers` | `project work-tracker-providers` | Process-global, unscoped provider field metadata (Plane/Jira/GitHub Issues plus any package-registered providers) for the schema-driven Settings tracker editor. No credential values. |
 
 `PUT /api/projects/{id}/connections` accepts either `work_tracker` or
 `work-tracker`; nested `credential_ref`/`credential-ref` and snake/kebab config
@@ -210,7 +211,59 @@ command environments, and raw stdout/stderr are not returned.
 
 Current check ids, in order: `github-credential`, `github-auth`,
 `jira-base-url`, `jira-credential`, `pi-provider-model`, `git-author`,
-`repository-root`, `pinga`, `workflow-discovery`, and `runs-root`.
+`repository-root`, `pinga`, `workflow-discovery`, `runs-root`,
+`work-tracker-config`, and `work-tracker-credential`.
+
+### Work-tracker diagnosis (WT4)
+
+`work-tracker-config` and `work-tracker-credential` are both `static` checks
+that classify the project's raw durable `connections.work-tracker` source (the
+registered `.tesseraft/project.json` descriptor, or the legacy
+`.tesseraft/projects/<id>.json` manifest — never `resolve-project` output, so a
+malformed tracker inside an otherwise-valid manifest can still be diagnosed
+rather than only reported as absent), but they classify **different
+concerns** and are not clones of each other:
+
+- `work-tracker-config` classifies only the provider/config portion:
+  is a provider set and registered, and does its config satisfy that
+  provider's required fields? It never depends on whether the credential
+  reference is present, well-formed, or resolves.
+- `work-tracker-credential` classifies only the credential-reference portion:
+  is a `credential-ref` set, syntactically valid, and does it resolve
+  locally? It never depends on whether the provider/config is valid.
+
+Each carries the classification as a `state` field in addition to the
+existing four-value `status`:
+
+| `state` | `status` | Meaning |
+| --- | --- | --- |
+| `absent` | `not-configured` | No `connections.work-tracker` key. A valid, intentional no-tracker project. Reported identically by both checks (there is nothing to classify). |
+| `incomplete` | `invalid` | `work-tracker-config`: missing `provider` or a required provider config field. `work-tracker-credential`: missing `credential-ref`. |
+| `invalid` | `invalid` | `work-tracker-config`: unregistered provider, malformed config value, or an envelope-level problem (unknown fields, unsupported `schema-version`, a raw secret key). `work-tracker-credential`: malformed `credential-ref` syntax, or the same envelope-level problem. The durable source being unreadable JSON (not merely absent) is also `invalid` on both checks. |
+| `unresolved` | `not-configured` | `work-tracker-credential` only: the credential reference is statically valid but does not resolve locally (e.g. an unset `env:` var, or a `github-actions:` ref owned by CI). Not a failure: the reference is owned by the project, the value is owned by the user/machine/CI. |
+| `ready` | `ready` | `work-tracker-config`: provider and config are statically valid. `work-tracker-credential`: the reference additionally resolves (`present`). "Statically ready" — the provider is never contacted. |
+
+The doctor report also carries a report-level `work_tracker` block giving a
+single combined verdict (first match wins, in the order
+absent → incomplete/invalid → unresolved → ready across both concerns) for
+consumers that want one authoritative state rather than two:
+
+```json
+{
+  "project_id": "default",
+  "summary": {"ready": 2, "not-configured": 8, "unreachable": 0, "invalid": 2},
+  "checks": [
+    {"id": "work-tracker-config", "label": "Work tracker provider and configuration", "status": "ready", "state": "ready", "mode": "static", "summary": "Work tracker provider and configuration are statically valid.", "remediation": null, "duration_ms": 1},
+    {"id": "work-tracker-credential", "label": "Work tracker credential reference", "status": "ready", "state": "ready", "mode": "static", "summary": "Work tracker configuration is statically ready.", "remediation": null, "duration_ms": 1}
+  ],
+  "work_tracker": {"state": "ready", "provider": "plane", "credential_ref": "env:PLANE_API_KEY", "source": "manifest"}
+}
+```
+
+The resolved tracker credential value (if any) is added to the doctor's
+existing secret-scrub list, so it is redacted from JSON like any other
+credential the doctor resolves. No Plane/Jira/GitHub API call is ever made by
+these checks.
 
 ## Common conventions
 

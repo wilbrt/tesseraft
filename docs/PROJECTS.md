@@ -50,6 +50,33 @@ The portable descriptor must not contain `workspace_root`, raw credentials, runs
 or other machine-local state. Local registration maps that descriptor identity to
 a canonical workspace root in `$TESSERAFT_HOME/projects/registry.json`.
 
+## Project resolution: nearest ancestor and self-project
+
+Command/HTTP resolution for a project id walks from the starting directory
+(normally the current working directory, or an explicit `--workspace-root`)
+upward through ancestor directories for the nearest `.tesseraft/project.json`.
+It never scans sibling repositories or an entire home directory. A repository
+describes itself: Tesseraft's own checkout resolves through exactly this same
+contract — there is no special case for Tesseraft developing Tesseraft. When
+no descriptor is found, resolution falls back to a persisted legacy manifest
+and finally to the synthesized implicit `default` project (see "Default
+project and migration" below).
+
+## Credential ownership
+
+| Concern | Owner | Durable location |
+| --- | --- | --- |
+| Provider/config and the credential *reference* | Project | `.tesseraft/project.json` (or the legacy manifest) |
+| The credential *value* (local) | User/machine | `env:` process environment, or `$TESSERAFT_HOME/credentials.json` |
+| The credential *value* (CI) | CI administrator | CI secret store (e.g. GitHub Actions secrets) |
+| Resolution and use | One runtime effect | Process memory only; never persisted or echoed back |
+
+In short: **the project owns the credential reference; the user, machine, or
+CI owns the referenced value.** A `credential-ref` such as `env:PLANE_API_KEY`
+is safe to commit — it names a store and key, not a secret. Public APIs return
+only masked credential state (`present`/`absent`/`unresolved`/`invalid`), never
+a value or a preview.
+
 ## Credential references (not raw tokens)
 
 Raw credentials are kept **out of repositories** behind **credential
@@ -109,6 +136,30 @@ kebab-case. Raw secret-looking keys are rejected recursively; use
 `credential-ref`. Clearing `work-tracker` is idempotent and leaves GitHub/Jira
 connections unchanged.
 
+### Settings editor and diagnosis (WT4)
+
+The Settings UI's "Projects and connections" card includes a schema-driven
+work-tracker editor (`WorkTrackerPanel`). The provider `<select>` includes an
+explicit "No tracker" option; its fields are rendered from
+`GET /api/work-tracker-providers` (Plane/Jira/GitHub Issues, plus any
+package-registered provider) rather than a hard-coded Plane-only field set.
+Saving posts `PUT /api/projects/{id}/connections` with
+`{work_tracker: {provider, credential_ref, config}}`; clearing posts
+`{clear_work_tracker: true}` and is idempotent when already absent. The editor
+never renders a credential value or preview — only the masked
+`credential-state` and, via the Connections Doctor below, the five-state
+diagnosis.
+
+The Connections Doctor (`GET /api/projects/{id}/doctor`,
+[CONTROL_PLANE_API.md](CONTROL_PLANE_API.md#work-tracker-diagnosis-wt4))
+distinguishes five states for the selected project's tracker: `absent`
+(no tracker — a valid, intentional state), `incomplete` (missing
+provider/credential-ref/required config), `invalid` (rejected config or
+malformed reference), `unresolved` (statically valid, but the credential
+value doesn't resolve locally — an expected state when a reference is owned
+by CI), and `ready` (statically valid and the reference resolves). All tracker
+checks are static: no Plane/Jira/GitHub API call is made.
+
 ## Control-plane commands
 
 ```
@@ -118,6 +169,7 @@ tesseraft control-plane project create <project-id> [--name <name>] [--workspace
 tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]
 tesseraft control-plane project migrate [<project-id>]
 tesseraft control-plane project connections <project-id> [--work-tracker-provider <plane|jira|github-issues> --work-tracker-credential-ref <ref> --work-tracker-config '<json>'] [--clear-work-tracker]
+tesseraft control-plane project work-tracker-providers
 tesseraft control-plane --project-id <project-id> doctor
 ```
 
@@ -134,8 +186,10 @@ doctor` run the local-first Connections Doctor for the selected project. The
 report checks GitHub credential-ref resolution and `gh auth status`, Jira base
 URL/credential-ref configuration, Pi provider/model local catalog availability,
 effective Git author identity, repository-root Git/read/write readiness, Pinga
-executable configuration, workflow discovery, and runs-root accessibility. Checks
-are static or read-only with bounded timeouts; Jira/Pinga are not contacted and
+executable configuration, workflow discovery, runs-root accessibility, and
+work-tracker provider/config and credential-reference classification (see
+"Settings editor and diagnosis" above). Checks are static or read-only with
+bounded timeouts; Jira/Pinga/work-tracker providers are not contacted and
 Pinga is not executed.
 
 ## Run-state persistence

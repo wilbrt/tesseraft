@@ -229,6 +229,16 @@ test('Settings UI source exposes a config tab reading and writing settings plus 
   assert.match(doctor, /Static configuration/);
   assert.match(doctor, /Read-only check/);
   assert.doesNotMatch(doctor, /preview|stdout|stderr|GH_TOKEN|GITHUB_TOKEN|JIRA_TOKEN/);
+  // WT4: the doctor renders a second state pill for the tracker checks plus a
+  // report-level work_tracker verdict, using all five diagnosis state labels.
+  assert.match(doctor, /check\.state/);
+  assert.match(doctor, /tracker-state/);
+  assert.match(doctor, /work_tracker/);
+  assert.match(doctor, /absent: 'No tracker'/);
+  assert.match(doctor, /incomplete: 'Incomplete'/);
+  assert.match(doctor, /invalid: 'Invalid config'/);
+  assert.match(doctor, /unresolved: 'Unresolved credential'/);
+  assert.match(doctor, /ready: 'Statically ready'/);
   assert.match(panel, /\/api\/git-user/);
   // GitUserPanel is still present and unchanged (git-user.json contract preserved).
   assert.match(gitUserPanel, /Git user settings/);
@@ -464,6 +474,44 @@ test('Settings UI source exposes Projects list and Connections editor with maske
   assert.match(panel, /aria-label="Projects and connections"/);
   assert.match(panel, /aria-label="Projects list"/);
   assert.match(panel, /aria-label="Project metadata"/);
+});
+
+test('Settings UI mounts a schema-driven WorkTrackerPanel editor (WT4)', () => {
+  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
+  const tracker = fs.readFileSync('web/src/components/WorkTrackerPanel.tsx', 'utf8');
+  assert.match(panel, /import \{ WorkTrackerPanel/);
+  assert.match(panel, /<WorkTrackerPanel/);
+  assert.match(panel, /tracker=\{connections\?\.\['work-tracker'\]\}/);
+
+  // Schema-driven: fields render from the fetched provider metadata, not a
+  // hard-coded Plane-only field set.
+  assert.match(tracker, /\/api\/work-tracker-providers/);
+  assert.match(tracker, /activeFields\.map/);
+  assert.doesNotMatch(tracker, /api-base-url.*workspace-slug.*project-id/s, 'Plane fields must not be hard-coded literals');
+
+  // No-tracker option and explicit clear action.
+  assert.match(tracker, /<option value="">No tracker<\/option>/);
+  assert.match(tracker, /clear_work_tracker: true/);
+  assert.match(tracker, /Clear tracker/);
+  assert.match(tracker, /Save tracker/);
+  assert.match(tracker, /work_tracker:\s*\{\s*provider:\s*selectedProvider,\s*credential_ref:\s*credentialRef\.trim\(\)/s);
+
+  // Resolution/self-project/ownership explanatory copy.
+  assert.match(tracker, /nearest ancestor/);
+  assert.match(tracker, /Tesseraft develops itself/);
+  assert.match(tracker, /the project owns the credential/);
+  assert.match(tracker, /the user, machine, or CI owns/);
+
+  // Never renders a raw value or a preview; only masked state.
+  assert.doesNotMatch(tracker, /preview/);
+  assert.match(tracker, /Credential state/);
+  assert.match(tracker, /credentialStateLabel/);
+
+  // The save/clear confirmation message must survive the prop-sync effect
+  // that fires when `onSaved` gives the panel a new `tracker` object: the
+  // message-reset effect is keyed on `projectId` alone, not on `tracker`
+  // identity, so it does not fire (and wipe `info`) on every successful save.
+  assert.match(tracker, /useEffect\(\(\) => \{\s*setError\(null\);\s*setInfo\(null\);\s*\}, \[projectId\]\);/);
 });
 
 test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
