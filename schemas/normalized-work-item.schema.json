@@ -5,7 +5,7 @@
   "required": ["schema_version", "provider", "project", "remote", "identifier", "title", "description", "state", "priority", "assignees", "labels", "fetched_at"],
   "properties": {
     "schema_version": { "const": 1 },
-    "provider": { "type": "string", "enum": ["plane"] },
+    "provider": { "type": "string", "enum": ["plane", "jira", "github-issues"] },
     "project": {
       "type": "object",
       "required": ["id"],
@@ -16,13 +16,20 @@
     },
     "remote": {
       "type": "object",
-      "required": ["id", "identifier", "workspace_slug", "project_id"],
+      "required": ["id", "identifier"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "identifier": { "type": "string", "minLength": 1 },
         "workspace_slug": { "type": "string", "minLength": 1 },
-        "project_id": { "type": "string", "minLength": 1 }
+        "project_id": { "type": "string", "minLength": 1 },
+        "project_key": { "type": "string", "minLength": 1 },
+        "repository": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" }
       },
+      "oneOf": [
+        { "required": ["workspace_slug", "project_id"], "not": { "anyOf": [{ "required": ["project_key"] }, { "required": ["repository"] }] } },
+        { "required": ["project_key"], "not": { "anyOf": [{ "required": ["workspace_slug"] }, { "required": ["project_id"] }, { "required": ["repository"] }] } },
+        { "required": ["repository"], "not": { "anyOf": [{ "required": ["workspace_slug"] }, { "required": ["project_id"] }, { "required": ["project_key"] }] } }
+      ],
       "additionalProperties": false
     },
     "identifier": { "type": "string", "minLength": 1 },
