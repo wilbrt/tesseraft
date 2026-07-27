@@ -8,19 +8,20 @@
     "provider": { "type": "string", "enum": ["plane"] },
     "project": {
       "type": "object",
-      "required": ["id", "workspace_slug"],
+      "required": ["id"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "workspace_slug": { "type": "string", "minLength": 1 }
+        "id": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
     "remote": {
       "type": "object",
-      "required": ["id", "identifier"],
+      "required": ["id", "identifier", "workspace_slug", "project_id"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "identifier": { "type": "string", "minLength": 1 }
+        "identifier": { "type": "string", "minLength": 1 },
+        "workspace_slug": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },

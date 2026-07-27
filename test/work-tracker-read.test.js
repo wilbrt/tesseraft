@@ -81,6 +81,8 @@ test('WT5 normalizes a Plane item and persists only the allowlisted artifact', (
   assert.equal(out.result.status, 'ok');
   assert.equal(out.artifact.schema_version, 1);
   assert.equal(out.artifact.provider, 'plane');
+  assert.deepEqual(out.artifact.project, { id: 'alpha' });
+  assert.deepEqual(out.artifact.remote, { id: REMOTE_ID, identifier: 'ALPHA-7', workspace_slug: 'alpha-ws', project_id: 'alpha-project' });
   assert.equal(out.artifact.identifier, 'ALPHA-7');
   assert.equal(out.artifact.title, 'Fix WT5');
   assert.equal(out.artifact.state.name, 'In Progress');
@@ -101,6 +103,9 @@ test('WT5 Plane request uses project-scoped credentials, X-API-Key, and safe URL
   assert.equal(request.headers['X-API-Key'], 'ALPHA_SECRET');
   assert.equal(request['timeout-ms'], 5000, 'Plane HTTP requests are bounded by the default timeout');
   assert.match(request.url, new RegExp(`^https:\\/\\/plane\\.self\\.hosted\\/custom\\/api\\/v1\\/workspaces\\/alpha-ws\\/projects\\/alpha-project\\/issues\\/${OTHER_REMOTE_ID}\\/$`));
+  assert.equal(out.artifact.project.id, 'alpha');
+  assert.equal(out.artifact.remote.project_id, 'alpha-project');
+  assert.equal(out.artifact.remote.workspace_slug, 'alpha-ws');
   assert.doesNotMatch(request.url, /ALPHA_SECRET|BETA_TOKEN|BETA_SECRET/);
 });
 

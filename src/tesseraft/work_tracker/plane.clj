@@ -122,31 +122,31 @@
                (present-string (:color l)) (assoc :color (present-string (:color l))))
     :else {:name (str l)}))
 
-(defn normalize-plane-issue [tracker item-id issue]
-  {:schema_version 1
-   :provider "plane"
-   :project {:id (get-in tracker [:config :project-id])
-             :workspace_slug (get-in tracker [:config :workspace-slug])}
-   :remote {:id (or (present-string (:id issue)) (str item-id))
-            :identifier (or (present-string (:identifier issue))
-                            (present-string (:sequence_id issue))
-                            (str item-id))}
-   :identifier (or (present-string (:identifier issue))
-                   (present-string (:sequence_id issue))
-                   (str item-id))
-   :title (or (present-string (:name issue)) (present-string (:title issue)) "")
-   :description (or (present-string (:description_stripped issue))
-                    (present-string (:description_html issue))
-                    (present-string (:description issue))
-                    "")
-   :state {:name (or (state-name issue) "unknown")}
-   :priority (normalize-priority (:priority issue))
-   :assignees (mapv normalize-assignee (or (:assignees issue) (:assignee_details issue) []))
-   :labels (mapv normalize-label (or (:labels issue) (:label_details issue) []))
-   :url (or (present-string (:url issue)) (present-string (:html_url issue)))
-   :fetched_at (store/now)})
+(defn normalize-plane-issue [tracker tesseraft-project-id item-id issue]
+  (let [identifier (or (present-string (:identifier issue))
+                       (present-string (:sequence_id issue))
+                       (str item-id))]
+    {:schema_version 1
+     :provider "plane"
+     :project {:id (str tesseraft-project-id)}
+     :remote {:id (or (present-string (:id issue)) (str item-id))
+              :identifier identifier
+              :workspace_slug (get-in tracker [:config :workspace-slug])
+              :project_id (get-in tracker [:config :project-id])}
+     :identifier identifier
+     :title (or (present-string (:name issue)) (present-string (:title issue)) "")
+     :description (or (present-string (:description_stripped issue))
+                      (present-string (:description_html issue))
+                      (present-string (:description issue))
+                      "")
+     :state {:name (or (state-name issue) "unknown")}
+     :priority (normalize-priority (:priority issue))
+     :assignees (mapv normalize-assignee (or (:assignees issue) (:assignee_details issue) []))
+     :labels (mapv normalize-label (or (:labels issue) (:label_details issue) []))
+     :url (or (present-string (:url issue)) (present-string (:html_url issue)))
+     :fetched_at (store/now)}))
 
-(defn fetch-item [{:keys [tracker api-key item-id timeout-ms]}]
+(defn fetch-item [{:keys [tracker api-key item-id timeout-ms tesseraft-project-id]}]
   (let [{:keys [api-base-url workspace-slug project-id]} (:config tracker)
         request-timeout-ms (bounded-timeout-ms timeout-ms)]
     (cond
@@ -174,7 +174,7 @@
             error (failure "transport" "Plane transport failed")
             (= 200 status)
             (try
-              {:ok true :status "ok" :item (normalize-plane-issue tracker item-id (json/parse-string (or body "") true))}
+              {:ok true :status "ok" :item (normalize-plane-issue tracker tesseraft-project-id item-id (json/parse-string (or body "") true))}
               (catch Throwable _
                 (failure "malformed_json" "Plane returned malformed JSON" {:http_status 200})))
             (= 429 status)

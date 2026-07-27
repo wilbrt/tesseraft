@@ -98,7 +98,9 @@
                                         {:credential_state (:state credential)})]
                     (write-result! ctx out-path result)
                     (assoc result :item_file out-path))
-                  (let [fetched (plane/fetch-item {:tracker tracker
+                  (let [selected-project-id (or (:project_id project) (:project-id project))
+                        fetched (plane/fetch-item {:tracker tracker
+                                                   :tesseraft-project-id selected-project-id
                                                    :api-key (:value credential)
                                                    :item-id id
                                                    :timeout-ms (or (get-in node [:inputs :timeout-ms])
@@ -120,8 +122,8 @@
   (let [id (or (item-id ctx node) "MOCK-1")]
     {:schema_version 1
      :provider "plane"
-     :project {:id "mock-project" :workspace_slug "mock-workspace"}
-     :remote {:id id :identifier id}
+     :project {:id (or (get-in ctx [:run :project-id]) "mock-project")}
+     :remote {:id id :identifier id :workspace_slug "mock-workspace" :project_id "mock-plane-project"}
      :identifier id
      :title "Mock Plane work item"
      :description "Mock dry-run work item"
