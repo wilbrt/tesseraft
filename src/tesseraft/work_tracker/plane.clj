@@ -56,7 +56,7 @@
                    (.build))
         builder (-> (HttpRequest/newBuilder (URI/create url))
                     (.timeout timeout)
-                    (.method (or method "GET") (HttpRequest$BodyPublishers/noBody))]
+                    (.method (or method "GET") (HttpRequest$BodyPublishers/noBody)))]
     (doseq [[k v] headers]
       (.header builder (str k) (str v)))
     (let [response (.send client (.build builder) (HttpResponse$BodyHandlers/ofString))]
