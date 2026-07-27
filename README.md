@@ -49,7 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then runs Chromium coverage for workflow inspection and isolated
@@ -91,6 +91,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/worktree-to-pr/workflow.edn` — prompt-to-PR variant that creates a deterministic Git worktree and runs execute/review/PR steps from that isolated checkout.
 - `examples/code-review-loop/workflow.edn` — design, isolated implementation, regression testing, code-review retry loop, and PR creation.
 - `examples/playwright-code-review-loop/workflow.edn` — code-review-loop variant that replaces agentic regression testing with a deterministic `npm run web:e2e` gate in the implementation worktree.
+- `examples/deterministic-code-review-loop/workflow.edn` — strict deterministic-first variant: agents design/implement/review only and **run no tests**; two deterministic `:process` gates (`bb test`, then Playwright) enforce pass before code review, using the `pi-cli` executor with OpenAI Codex models (`gpt-5.6-sol` for design/review, `gpt-5.5` for implementation).
 - `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
 - `examples/focused-tdd-to-pr/workflow.edn` — lightweight focused TDD inside one coherent implementation state, followed by deterministic repository validation, independent whole-diff review, direct current-only correction cycles, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.

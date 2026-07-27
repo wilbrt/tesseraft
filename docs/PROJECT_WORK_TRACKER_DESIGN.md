@@ -4,7 +4,7 @@ Status: Planned
 
 Delivery workflow for all phases:
 
-- [`playwright-code-review-loop`](../examples/playwright-code-review-loop/workflow.edn)
+- [`deterministic-code-review-loop`](../examples/deterministic-code-review-loop/workflow.edn)
 
 Related current contracts:
 
@@ -25,7 +25,7 @@ another GitHub Issues, a custom adapter, or no tracker. GitHub code hosting and
 pull requests are also distinct from choosing GitHub Issues as the work tracker.
 
 This document defines the target contract and decomposes it into focused,
-dependency-ordered increments. Every phase uses `playwright-code-review-loop`
+dependency-ordered increments. Every phase uses `deterministic-code-review-loop`
 so implementation, deterministic browser regression testing, and independent
 review follow one delivery path. It does not claim that any target behavior is
 implemented.
@@ -393,14 +393,14 @@ silently delete remote work items.
 ## Dependency graph
 
 ```text
-WT1 Project identity, discovery, registry, and migration          [Playwright review]
- └── WT2 Credential stores + recursive secret safety             [Playwright review]
-      └── WT3 Optional primary work-tracker contract             [Playwright review]
-           └── WT4 Settings UI + Connections Doctor              [Playwright review]
-                └── WT5 Normalized read boundary + Plane          [Playwright review]
-                     ├── WT6 Jira + GitHub Issues read adapters    [Playwright review]
-                     │    └── WT6I Generic intake integration      [Playwright review]
-                     └── WT7 Plane bootstrap/sync                  [Playwright review]
+WT1 Project identity, discovery, registry, and migration          [Deterministic review]
+ └── WT2 Credential stores + recursive secret safety             [Deterministic review]
+      └── WT3 Optional primary work-tracker contract             [Deterministic review]
+           └── WT4 Settings UI + Connections Doctor              [Deterministic review]
+                └── WT5 Normalized read boundary + Plane          [Deterministic review]
+                     ├── WT6 Jira + GitHub Issues read adapters    [Deterministic review]
+                     │    └── WT6I Generic intake integration      [Deterministic review]
+                     └── WT7 Plane bootstrap/sync                  [Deterministic review]
 ```
 
 Merge every accepted PR before starting a dependent increment. Re-read current
@@ -409,15 +409,15 @@ behavior, not proof that dependencies have landed.
 
 ## Running an increment
 
-Every increment uses `playwright-code-review-loop`. Start from a clean base
+Every increment uses `deterministic-code-review-loop`. Start from a clean base
 branch containing all dependencies.
 
 ```bash
-./bin/tesseraft run start examples/playwright-code-review-loop/workflow.edn \
+./bin/tesseraft run start examples/deterministic-code-review-loop/workflow.edn \
   --run-id <id> \
   --input repo-root=. \
   --input base-branch=main \
-  --input prompt='<paste one Playwright code-review-loop prompt below>' \
+  --input prompt='<paste one deterministic-code-review-loop prompt below>' \
   --format json
 ```
 
@@ -431,7 +431,7 @@ push/PR side effect. See [`WORKFLOW_RUNS.md`](WORKFLOW_RUNS.md).
 
 ## WT1 — Project identity, discovery, registry, and migration
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** Current project abstraction baseline
 
@@ -478,11 +478,11 @@ Tesseraft's own checkout follows exactly the same contract as any repository.
 No credential-store redesign, tracker configuration, provider API calls,
 Settings UI, or automatic deletion of legacy manifests.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
 Implement WT1 from docs/PROJECT_WORK_TRACKER_DESIGN.md with
-playwright-code-review-loop.
+deterministic-code-review-loop.
 Add the canonical versioned `.tesseraft/project.json` descriptor, bounded
 nearest-project discovery, explicit user-local registration, conflict-safe
 project selection, and transactional non-destructive legacy manifest migration.
@@ -500,7 +500,7 @@ test; update STATUS.edn/README only if capability truth changes.
 
 ## WT2 — Credential stores, ownership, and recursive secret safety
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT1
 
@@ -539,10 +539,10 @@ a value.
 No work-tracker selection, provider HTTP calls, OS keychain implementation,
 OAuth flow, hosted vault, or UI redesign beyond removing previews.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT2 from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT2 from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT1. Create one project-scoped credential resolver used by control plane,
 doctor, and adapters; make env:, tesseraft:, and validated github-actions:
 references select explicit stores; version the local credential file; and
@@ -560,7 +560,7 @@ warranted.
 
 ## WT3 — Optional primary work-tracker configuration contract
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT2
 
@@ -597,10 +597,10 @@ or no primary tracker without changing code-host behavior.
 No Settings UI, network doctor probe, work-item fetch, mutations, sync, or
 provider credentials in tests.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT3 from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT3 from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT2. Add an optional primary `connections.work-tracker` role with a common
 provider/credential-ref/config envelope and registered schemas for Plane, Jira,
 and GitHub Issues; omission means no tracker. Build focused, non-overlapping
@@ -617,7 +617,7 @@ lands a new capability.
 
 ## WT4 — Work-tracker Settings UI and Connections Doctor
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT3
 
@@ -658,11 +658,11 @@ default.
 No real authentication probe, work-item list, Plane mutation, workflow handler,
 or broad Settings redesign.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
 Implement WT4 from docs/PROJECT_WORK_TRACKER_DESIGN.md with
-playwright-code-review-loop after WT3. Add a schema-driven primary work-tracker
+deterministic-code-review-loop after WT3. Add a schema-driven primary work-tracker
 editor and static Connections Doctor checks
 for the selected Tesseraft project. Explain nearest-project/self-project
 resolution and that projects own credential references while users/machines/CI
@@ -678,7 +678,7 @@ bb test; update status docs only for implemented truth.
 
 ## WT5 — Provider-neutral read boundary and Plane adapter
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT4
 
@@ -716,10 +716,10 @@ receive a stable normalized artifact with durable, redacted failure evidence.
 No create/update/sync, OAuth, Jira/GitHub Issues implementation, replacing the
 Jira example, or UI backlog browser.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT5 from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT5 from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT4. Define a versioned normalized work-item artifact and provider-neutral
 `:work-tracker/fetch-item` handler, then add the smallest read-only Plane API-key
 adapter for cloud/self-hosted scope. Build focused, non-overlapping scenarios for
@@ -735,7 +735,7 @@ schema tests and bb test; update capability status if warranted.
 
 ## WT6 — Jira and GitHub Issues normalized read adapters
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT5
 
@@ -774,10 +774,10 @@ or GitHub code-host/PR behavior.
 No generic intake example, provider mutation, OAuth UI, webhooks, code-host
 refactor, or legacy adapter removal.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT6 from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT6 from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT5. Add read-only Jira and GitHub Issues adapters behind the normalized
 `:work-tracker/fetch-item` boundary while preserving legacy jira-to-pr and
 GitHub code-host/PR behavior. Add focused behavioral tests covering equivalent
@@ -794,7 +794,7 @@ status only for implemented truth.
 
 ## WT6I — Generic work-item intake integration
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT6
 
@@ -829,10 +829,10 @@ runnable.
 No new provider behavior, mutation/synchronization, provider browser, webhooks,
 OAuth, or legacy example deletion.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT6I from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT6I from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT6. Add a generic work-item-to-PR example that consumes only the
 normalized WT5 artifact and works with local mock Plane, Jira, and GitHub Issues
 fixtures through one graph. Keep provider-specific/private fields out of
@@ -848,7 +848,7 @@ STATUS.edn/README only for actual capability truth.
 
 ## WT7 — Plane bootstrap and idempotent one-way synchronization
 
-**Delivery workflow:** `playwright-code-review-loop`
+**Delivery workflow:** `deterministic-code-review-loop`
 
 **Depends on:** WT5; WT6I optional
 
@@ -888,10 +888,10 @@ unreported mutation.
 No bidirectional sync, remote deletion, webhook daemon, automatic state changes
 from every run event, Jira/GitHub mutation, or bulk import of stale roadmap docs.
 
-### Playwright code-review-loop prompt
+### Deterministic code-review-loop prompt
 
 ```text
-Implement WT7 from docs/PROJECT_WORK_TRACKER_DESIGN.md with playwright-code-review-loop
+Implement WT7 from docs/PROJECT_WORK_TRACKER_DESIGN.md with deterministic-code-review-loop
 after WT5. Add a versioned repository work-plan format and Plane bootstrap
 command that is read-only/dry-run by default and mutates only with explicit
 --apply. Build focused, non-overlapping scenarios for deterministic dry-run,
