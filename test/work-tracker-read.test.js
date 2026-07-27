@@ -173,22 +173,34 @@ test('WT5 constructs a human identifier from numeric Plane sequence IDs when no 
 
 test('WT5 mock mode is offline and does not resolve credentials or HTTP', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt5-mock-'));
+  writeProject(root, 'alpha');
   const script = `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
 (require '[tesseraft.runtime.store :as store])
 (require '[tesseraft.work-tracker.plane :as plane])
 (def run-dir (str ${q(root)} "/run"))
-(def ctx {:run {:dir run-dir :project-id "missing" :workspace-root ${q(root)}}
-          :credential-resolver (fn [& _] (throw (ex-info "resolver must not be called" {})))})
+(def resolver-calls (atom 0))
+(def http-calls (atom 0))
+(def ctx {:run {:dir run-dir :project-id "alpha" :workspace-root ${q(root)}}
+          :credential-resolver (fn [& _]
+                                 (swap! resolver-calls inc)
+                                 (throw (ex-info "resolver must not be called" {})))})
 (def node {:handler :work-tracker/fetch-item :inputs {:item-id "MOCK-42"} :outputs {:work-item {:path "item.json"}}})
-(binding [plane/*http-request* (fn [_] (throw (ex-info "http must not be called" {})))]
+(binding [plane/*http-request* (fn [_]
+                                 (swap! http-calls inc)
+                                 (throw (ex-info "http must not be called" {})))]
   (def result (builtin/run-handler! nil ctx :fetch node {:mock? true})))
-(println (json/generate-string {:result result :artifact (store/read-json (str run-dir "/item.json"))}))
+(println (json/generate-string {:result result
+                                :artifact (store/read-json (str run-dir "/item.json"))
+                                :resolver-calls @resolver-calls
+                                :http-calls @http-calls}))
 `;
   const out = bbJson(script);
   assert.equal(out.result.mock, true);
   assert.equal(out.artifact.identifier, 'MOCK-42');
+  assert.equal(out['resolver-calls'], 0);
+  assert.equal(out['http-calls'], 0);
 });
 
 test('WT5 Plane failures are stable, bounded, and redacted', () => {

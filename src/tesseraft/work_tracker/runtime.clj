@@ -137,5 +137,5 @@
 (defn mock-fetch-item! [_wf ctx _state-id node]
   (let [item (mock-item ctx node)
         out-path (output-path ctx node)]
-    (write-result! ctx out-path item)
+    (write-result! (assoc ctx :skip-project-credential-redaction? true) out-path item)
     {:status "ok" :mock true :provider "plane" :identifier (:identifier item) :item_file out-path}))
