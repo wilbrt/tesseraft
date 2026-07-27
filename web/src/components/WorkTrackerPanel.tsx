@@ -119,7 +119,10 @@ export const WorkTrackerPanel = ({
       return;
     }
     const config: Record<string, string> = {};
-    for (const field of activeFields) config[field.name] = (configValues[field.name] || '').trim();
+    for (const field of activeFields) {
+      const value = (configValues[field.name] || '').trim();
+      if (field.required || value !== '') config[field.name] = value;
+    }
     setBusy(true);
     try {
       const result = await putJson<{ connections?: RuntimeProjectConnections }>(

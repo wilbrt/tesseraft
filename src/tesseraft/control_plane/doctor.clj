@@ -208,10 +208,13 @@
              ;; root): `cp/project-connection-source` locates the legacy
              ;; manifest at `<control workspace-root>/.tesseraft/projects/<id>.json`,
              ;; and `work-tracker-diagnosis` derives its own project-scoped
-             ;; options internally for credential resolution.
-             work-tracker-diagnosis (cp/work-tracker-diagnosis options (:project_id project))
-             work-tracker-config-diagnosis (cp/work-tracker-config-diagnosis options (:project_id project))
-             work-tracker-credential-diagnosis (cp/work-tracker-credential-diagnosis options (:project_id project))
+             ;; options internally for credential resolution. Read once and
+             ;; share it across all three diagnosis calls below so a single
+             ;; report always classifies identical raw bytes.
+             work-tracker-source (cp/project-connection-source options (:project_id project))
+             work-tracker-diagnosis (cp/work-tracker-diagnosis options (:project_id project) work-tracker-source)
+             work-tracker-config-diagnosis (cp/work-tracker-config-diagnosis options (:project_id project) work-tracker-source)
+             work-tracker-credential-diagnosis (cp/work-tracker-credential-diagnosis options (:project_id project) work-tracker-source)
              work-tracker-secret (resolved-token sopts (:credential-ref work-tracker-diagnosis))
              secrets (remove blank? [github-secret jira-secret work-tracker-secret])
              checks [(check "github-credential" "GitHub credential reference" "static" #(credential-check sopts project :github))

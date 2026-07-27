@@ -121,6 +121,7 @@ declare -A FIXTURES=(
   [wt4-doctor-invalid]='{"project_id":"wt4-doctor-invalid","name":"WT4 Invalid","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"acme-unregistered","credential-ref":"env:WT4_MANUAL_ACME","config":{}}}}'
   [wt4-doctor-unresolved]='{"project_id":"wt4-doctor-unresolved","name":"WT4 Unresolved","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"github-issues","credential-ref":"env:WT4_MANUAL_UNSET_TOKEN","config":{"repository":"owner/repo"}}}}'
   [wt4-doctor-ready]='{"project_id":"wt4-doctor-ready","name":"WT4 Ready","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"github-issues","credential-ref":"env:WT4_MANUAL_READY_TOKEN","config":{"repository":"owner/repo"}}}}'
+  [wt4-doctor-credential-invalid]='{"project_id":"wt4-doctor-credential-invalid","name":"WT4 Credential Invalid","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"github-issues","credential-ref":"not-a-valid-ref","config":{"repository":"owner/repo"}}}}'
 )
 cleanup_fixtures() {
   for id in "${!FIXTURES[@]}"; do rm -f "$PROJECTS_DIR/$id.json"; done
@@ -142,15 +143,22 @@ BASE=http://127.0.0.1:5050
 python3 - <<'PY'
 import json, os, urllib.request
 # work-tracker-config classifies provider/config only; work-tracker-credential
-# classifies the credential-ref only. They agree everywhere except
-# wt4-doctor-unresolved, where the config is statically valid (ready) but the
-# credential-ref does not resolve locally (unresolved) -- proving the two
-# checks are not clones of each other (see docs/CONTROL_PLANE_API.md WT4).
+# classifies the credential-ref only, independent of provider/config. The two
+# checks agree only when both concerns are in the same state (absent, or both
+# statically ready) -- they diverge whenever exactly one concern is
+# defective: wt4-doctor-incomplete and wt4-doctor-invalid both use a
+# syntactically valid but unset env: ref, so the credential check reports
+# "unresolved" even though the config check reports "incomplete"/"invalid";
+# wt4-doctor-unresolved has a fully valid config but an unset ref (config
+# ready, credential unresolved); wt4-doctor-credential-invalid mirrors that
+# with a fully valid config but a malformed ref (config ready, credential
+# invalid). See docs/CONTROL_PLANE_API.md WT4 for the authoritative rule.
 expected = {
   "wt4-doctor-absent": {"combined": "absent", "config": "absent", "credential": "absent"},
-  "wt4-doctor-incomplete": {"combined": "incomplete", "config": "incomplete", "credential": "incomplete"},
-  "wt4-doctor-invalid": {"combined": "invalid", "config": "invalid", "credential": "invalid"},
+  "wt4-doctor-incomplete": {"combined": "incomplete", "config": "incomplete", "credential": "unresolved"},
+  "wt4-doctor-invalid": {"combined": "invalid", "config": "invalid", "credential": "unresolved"},
   "wt4-doctor-unresolved": {"combined": "unresolved", "config": "ready", "credential": "unresolved"},
+  "wt4-doctor-credential-invalid": {"combined": "invalid", "config": "ready", "credential": "invalid"},
   "wt4-doctor-ready": {"combined": "ready", "config": "ready", "credential": "ready"},
 }
 for project_id, want in expected.items():
@@ -191,11 +199,18 @@ Browser check:
    running) and confirm the Connections Doctor shows a second state pill on
    the two work-tracker checks (`No tracker` / `Incomplete` / `Invalid config`
    / `Unresolved credential` / `Statically ready`) and a report-level "Work
-   tracker verdict" line. For `wt4-doctor-unresolved`, confirm the two check
-   pills *differ*: `work-tracker-config` shows `Statically ready` (the
-   provider/config alone is valid) while `work-tracker-credential` shows
-   `Unresolved credential`, and the report-level verdict matches the
-   credential check. For every other fixture, both check pills match the
+   tracker verdict" line. For `wt4-doctor-incomplete` and `wt4-doctor-invalid`,
+   confirm the two check pills *differ*: `work-tracker-config` shows
+   `Incomplete`/`Invalid config` while `work-tracker-credential` shows
+   `Unresolved credential` (the seeded `env:` ref is well-formed but unset, so
+   the credential check classifies independently of the config defect). For
+   `wt4-doctor-unresolved`, confirm `work-tracker-config` shows
+   `Statically ready` while `work-tracker-credential` shows
+   `Unresolved credential`. For `wt4-doctor-credential-invalid`, confirm the
+   mirror case: `work-tracker-config` shows `Statically ready` while
+   `work-tracker-credential` shows `Invalid config`. In every diverging case
+   the report-level verdict matches whichever check is not `ready`. Only
+   `wt4-doctor-absent` and `wt4-doctor-ready` have both check pills match the
    seeded state.
 
 Pass criteria:
@@ -206,9 +221,10 @@ Pass criteria:
   never contact Plane/Jira/GitHub.
 - `work-tracker-config` and `work-tracker-credential` classify different
   concerns (provider/config vs. credential-ref) and are not clones of each
-  other: they agree except when the config is valid but the credential-ref
-  does not resolve, where `work-tracker-config` reports `ready` and
-  `work-tracker-credential` reports `unresolved`. The report-level
+  other: they agree only when both concerns share the same state (absent, or
+  both statically ready) and diverge whenever exactly one concern is
+  defective -- an invalid/incomplete config with a well-formed ref, or a
+  valid config with a missing/malformed/unresolved ref. The report-level
   `work_tracker` block gives the single combined verdict. All five states —
   `absent`, `incomplete`, `invalid`, `unresolved`, `ready` — are correctly
   distinguished.
