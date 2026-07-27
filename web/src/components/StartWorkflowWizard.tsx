@@ -212,9 +212,11 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
     if (!selectedWorkflow || !canStart) return;
     setBusy(true);
     setSubmitError(null);
+    const gitUser = buildGitUser();
+    const payload = { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps, ...(gitUser ? { git_user: gitUser } : {}) };
+    onClose();
     try {
-      await onStart({ workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps, ...(buildGitUser() ? { git_user: buildGitUser() } : {}) });
-      onClose();
+      await onStart(payload);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
