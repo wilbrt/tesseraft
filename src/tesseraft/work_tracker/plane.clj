@@ -66,6 +66,10 @@
 (defn- http-request [request]
   ((or *http-request* production-http-request) request))
 
+(defn- response-value [response k]
+  (or (get response k)
+      (get response (name k))))
+
 (defn- failure
   ([category message] (failure category message {}))
   ([category message details]
@@ -131,19 +135,23 @@
                                     :url url
                                     :headers {"X-API-Key" api-key "Accept" "application/json"}
                                     :timeout-ms (or timeout-ms default-timeout-ms)})]
-        (cond
-          (= :timeout (:error response)) (failure "timeout" "Plane request timed out")
-          (:error response) (failure "transport" "Plane transport failed")
-          (= 200 (:status response))
-          (try
-            {:ok true :status "ok" :item (normalize-plane-issue tracker item-id (json/parse-string (or (:body response) "") true))}
-            (catch Throwable _
-              (failure "malformed_json" "Plane returned malformed JSON" {:http_status 200})))
-          (= 429 (:status response))
-          (failure "rate_limited" "Plane rate limit exceeded"
-                   {:http_status 429 :rate_limit (safe-rate-limit-metadata (:headers response))})
-          (= 401 (:status response)) (failure "unauthorized" "Plane credential was rejected" {:http_status 401})
-          (= 404 (:status response)) (failure "not_found" "Plane item was not found" {:http_status 404})
-          (<= 400 (:status response) 499) (failure "client_error" "Plane request failed" {:http_status (:status response)})
-          (<= 500 (:status response) 599) (failure "server_error" "Plane service failed" {:http_status (:status response)})
-          :else (failure "unexpected_status" "Plane returned an unexpected status" {:http_status (:status response)}))))))
+        (let [status (response-value response :status)
+              body (response-value response :body)
+              headers (response-value response :headers)
+              error (response-value response :error)]
+          (cond
+            (= :timeout error) (failure "timeout" "Plane request timed out")
+            error (failure "transport" "Plane transport failed")
+            (= 200 status)
+            (try
+              {:ok true :status "ok" :item (normalize-plane-issue tracker item-id (json/parse-string (or body "") true))}
+              (catch Throwable _
+                (failure "malformed_json" "Plane returned malformed JSON" {:http_status 200})))
+            (= 429 status)
+            (failure "rate_limited" "Plane rate limit exceeded"
+                     {:http_status 429 :rate_limit (safe-rate-limit-metadata headers)})
+            (= 401 status) (failure "unauthorized" "Plane credential was rejected" {:http_status 401})
+            (= 404 status) (failure "not_found" "Plane item was not found" {:http_status 404})
+            (<= 400 status 499) (failure "client_error" "Plane request failed" {:http_status status})
+            (<= 500 status 599) (failure "server_error" "Plane service failed" {:http_status status})
+            :else (failure "unexpected_status" "Plane returned an unexpected status" {:http_status status})))))))
