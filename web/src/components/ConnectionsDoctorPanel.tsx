@@ -4,6 +4,7 @@ import { useProject } from '../lib/project';
 
 export type DoctorStatus = 'ready' | 'not-configured' | 'unreachable' | 'invalid';
 export type DoctorMode = 'static' | 'read-only';
+export type WorkTrackerState = 'absent' | 'incomplete' | 'invalid' | 'unresolved' | 'ready';
 export type DoctorCheck = {
   id: string;
   label: string;
@@ -12,11 +13,19 @@ export type DoctorCheck = {
   summary: string;
   remediation: string | null;
   duration_ms: number;
+  state?: WorkTrackerState;
+};
+export type WorkTrackerVerdict = {
+  state: WorkTrackerState;
+  provider: string | null;
+  credential_ref: string | null;
+  source: 'descriptor' | 'manifest';
 };
 export type DoctorReport = {
   project_id: string;
   summary: Record<DoctorStatus, number>;
   checks: DoctorCheck[];
+  work_tracker?: WorkTrackerVerdict;
 };
 
 const statusLabel: Record<DoctorStatus, string> = {
@@ -29,6 +38,14 @@ const statusLabel: Record<DoctorStatus, string> = {
 const modeLabel: Record<DoctorMode, string> = {
   static: 'Static configuration',
   'read-only': 'Read-only check'
+};
+
+const trackerStateLabel: Record<WorkTrackerState, string> = {
+  absent: 'No tracker',
+  incomplete: 'Incomplete',
+  invalid: 'Invalid config',
+  unresolved: 'Unresolved credential',
+  ready: 'Statically ready'
 };
 
 export const ConnectionsDoctorPanel = () => {
@@ -79,6 +96,7 @@ export const ConnectionsDoctorPanel = () => {
                 <div className="doctor-check-title">
                   <strong>{check.label}</strong>
                   <span className={`status-pill doctor-status ${check.status}`}>{statusLabel[check.status]}</span>
+                  {check.state && <span className={`status-pill tracker-state ${check.state}`}>{trackerStateLabel[check.state]}</span>}
                   <span className="status-pill mode-pill">{modeLabel[check.mode]}</span>
                 </div>
                 <p>{check.summary}</p>
@@ -87,6 +105,15 @@ export const ConnectionsDoctorPanel = () => {
               </li>
             ))}
           </ul>
+          {report.work_tracker && (
+            <div className="doctor-work-tracker" aria-label="Work tracker verdict">
+              <strong>Work tracker verdict:</strong>{' '}
+              <span className={`status-pill tracker-state ${report.work_tracker.state}`}>{trackerStateLabel[report.work_tracker.state]}</span>
+              {report.work_tracker.provider && <span className="muted"> provider: <code>{report.work_tracker.provider}</code></span>}
+              {report.work_tracker.credential_ref && <span className="muted"> ref: <code>{report.work_tracker.credential_ref}</code></span>}
+              <span className="muted"> source: {report.work_tracker.source}</span>
+            </div>
+          )}
         </>
       )}
     </div>

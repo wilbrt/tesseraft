@@ -59,6 +59,7 @@
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
     (println "  tesseraft control-plane project migrate [<project-id>] [--legacy-manifest <file> --project-root <dir>]")
     (println "  tesseraft control-plane project connections <project-id>")
+    (println "  tesseraft control-plane project work-tracker-providers")
     (println "  tesseraft control-plane credentials migrate --legacy-file <file>")
     (println "  tesseraft control-plane doctor")
     (println)
@@ -273,6 +274,7 @@
                           (control-plane/get-project-connections options project-id)
                           (control-plane/update-project-connections options project-id
                             (parse-project-connections-args more)))))
+      "work-tracker-providers" (control-plane/list-work-tracker-providers options)
       ;; The aggregate list/detail also accepts ``projects`` form below; here
       ;; ``project`` without a sub or with an id is a detail.
       (if (some #(#{"-h" "--help" "help" "list" "ls"} %) [sub])

@@ -69,7 +69,7 @@ import json, os
 expected = [
   "github-credential", "github-auth", "jira-base-url", "jira-credential",
   "pi-provider-model", "git-author", "repository-root", "pinga",
-  "workflow-discovery", "runs-root"
+  "workflow-discovery", "runs-root", "work-tracker-config", "work-tracker-credential"
 ]
 allowed_status = {"ready", "not-configured", "unreachable", "invalid"}
 allowed_mode = {"static", "read-only"}
@@ -97,11 +97,75 @@ explicit_checks = checks(bodies["doctor-explicit"])
 assert explicit_checks["workflow-discovery"]["status"] == "ready"
 assert explicit_checks["runs-root"]["status"] == "ready"
 assert explicit_checks["repository-root"]["status"] == "invalid"
+assert explicit_checks["work-tracker-config"]["state"] == "absent", explicit_checks["work-tracker-config"]
+assert bodies["doctor-explicit"]["work_tracker"]["state"] == "absent"
 assert bodies["default"] != bodies["doctor-explicit"], "explicit project must have distinct doctor output"
 assert "manual-connections-doctor-explicit-ws" not in json.dumps(bodies["default"]), "default response must not mention explicit workspace"
 PY
 
 curl -sS -o /tmp/doctor-missing.json -w '%{http_code}\n' "$BASE/api/projects/doctor-missing/doctor" | grep -qx '404'
+```
+
+### Work-tracker diagnosis states (WT4)
+
+Seed five disposable fixture projects — one per diagnosis state — using only
+fake local manifests and non-existent credential-ref names (never real
+secrets), then confirm the doctor classifies each correctly:
+
+```sh
+set -euo pipefail
+PROJECTS_DIR=.tesseraft/projects
+declare -A FIXTURES=(
+  [wt4-doctor-absent]='{"project_id":"wt4-doctor-absent","name":"WT4 Absent","workspace_root":".","runs_root":".agent-runs","connections":{}}'
+  [wt4-doctor-incomplete]='{"project_id":"wt4-doctor-incomplete","name":"WT4 Incomplete","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"plane","credential-ref":"env:WT4_MANUAL_PLANE","config":{"api-base-url":"https://plane.example"}}}}'
+  [wt4-doctor-invalid]='{"project_id":"wt4-doctor-invalid","name":"WT4 Invalid","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"acme-unregistered","credential-ref":"env:WT4_MANUAL_ACME","config":{}}}}'
+  [wt4-doctor-unresolved]='{"project_id":"wt4-doctor-unresolved","name":"WT4 Unresolved","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"github-issues","credential-ref":"env:WT4_MANUAL_UNSET_TOKEN","config":{"repository":"owner/repo"}}}}'
+  [wt4-doctor-ready]='{"project_id":"wt4-doctor-ready","name":"WT4 Ready","workspace_root":".","runs_root":".agent-runs","connections":{"work-tracker":{"provider":"github-issues","credential-ref":"env:WT4_MANUAL_READY_TOKEN","config":{"repository":"owner/repo"}}}}'
+)
+cleanup_fixtures() {
+  for id in "${!FIXTURES[@]}"; do rm -f "$PROJECTS_DIR/$id.json"; done
+}
+trap cleanup_fixtures EXIT INT TERM
+mkdir -p "$PROJECTS_DIR"
+for id in "${!FIXTURES[@]}"; do printf '%s' "${FIXTURES[$id]}" > "$PROJECTS_DIR/$id.json"; done
+
+# The `ready` fixture needs its referenced env var to actually resolve; export
+# a throwaway, non-secret placeholder value for this local-only demonstration.
+export WT4_MANUAL_READY_TOKEN=manual-demo-not-a-real-secret
+
+npm run web:build
+node web/dist-server/server.js --host 127.0.0.1 --port 5050 &
+SERVER_PID=$!
+sleep 1
+
+BASE=http://127.0.0.1:5050
+python3 - <<'PY'
+import json, os, urllib.request
+# work-tracker-config classifies provider/config only; work-tracker-credential
+# classifies the credential-ref only. They agree everywhere except
+# wt4-doctor-unresolved, where the config is statically valid (ready) but the
+# credential-ref does not resolve locally (unresolved) -- proving the two
+# checks are not clones of each other (see docs/CONTROL_PLANE_API.md WT4).
+expected = {
+  "wt4-doctor-absent": {"combined": "absent", "config": "absent", "credential": "absent"},
+  "wt4-doctor-incomplete": {"combined": "incomplete", "config": "incomplete", "credential": "incomplete"},
+  "wt4-doctor-invalid": {"combined": "invalid", "config": "invalid", "credential": "invalid"},
+  "wt4-doctor-unresolved": {"combined": "unresolved", "config": "ready", "credential": "unresolved"},
+  "wt4-doctor-ready": {"combined": "ready", "config": "ready", "credential": "ready"},
+}
+for project_id, want in expected.items():
+    body = json.loads(urllib.request.urlopen(f"http://127.0.0.1:5050/api/projects/{project_id}/doctor").read())
+    got_combined = body["work_tracker"]["state"]
+    config_check = next(c for c in body["checks"] if c["id"] == "work-tracker-config")
+    credential_check = next(c for c in body["checks"] if c["id"] == "work-tracker-credential")
+    assert got_combined == want["combined"], f"{project_id}: expected {want['combined']}, got {got_combined} ({body['work_tracker']})"
+    assert config_check["state"] == want["config"], config_check
+    assert credential_check["state"] == want["credential"], credential_check
+    print(f"{project_id}: work_tracker={got_combined} config={config_check['state']} credential={credential_check['state']} OK")
+PY
+
+kill "$SERVER_PID"
+wait "$SERVER_PID" 2>/dev/null || true
 ```
 
 Browser check:
@@ -115,11 +179,38 @@ Browser check:
 5. Switch projects from the header selector if another project exists and confirm
    the request path is `/api/projects/<project-id>/doctor` and no statuses or
    paths from the previous project are shown.
+6. In the "Projects and connections" card, confirm the **Work tracker** editor:
+   the provider `<select>` includes a **No tracker** option; choosing a
+   provider (e.g. `plane`) renders that provider's fields (fetched from
+   `/api/work-tracker-providers`, not a fixed Plane-only list) plus a
+   credential-reference field; **Save tracker** persists it and **Clear
+   tracker** removes it (clicking Clear again is a no-op, not an error).
+   Confirm no credential value or preview is ever rendered — only the masked
+   credential-state pill.
+7. Re-select one of the `wt4-doctor-*` fixture projects from step above (still
+   running) and confirm the Connections Doctor shows a second state pill on
+   the two work-tracker checks (`No tracker` / `Incomplete` / `Invalid config`
+   / `Unresolved credential` / `Statically ready`) and a report-level "Work
+   tracker verdict" line. For `wt4-doctor-unresolved`, confirm the two check
+   pills *differ*: `work-tracker-config` shows `Statically ready` (the
+   provider/config alone is valid) while `work-tracker-credential` shows
+   `Unresolved credential`, and the report-level verdict matches the
+   credential check. For every other fixture, both check pills match the
+   seeded state.
 
 Pass criteria:
 
 - Only statuses `ready`, `not-configured`, `unreachable`, or `invalid` appear.
 - Jira/Pinga checks are described as static/non-executing; Pi is local catalog
-  only; GitHub/Git checks are read-only.
+  only; GitHub/Git checks are read-only; work-tracker checks are static and
+  never contact Plane/Jira/GitHub.
+- `work-tracker-config` and `work-tracker-credential` classify different
+  concerns (provider/config vs. credential-ref) and are not clones of each
+  other: they agree except when the config is valid but the credential-ref
+  does not resolve, where `work-tracker-config` reports `ready` and
+  `work-tracker-credential` reports `unresolved`. The report-level
+  `work_tracker` block gives the single combined verdict. All five states —
+  `absent`, `incomplete`, `invalid`, `unresolved`, `ready` — are correctly
+  distinguished.
 - No raw token, token preview, subprocess stdout/stderr, or environment dump is
   visible in API output, browser UI, terminal logs, or screenshots.

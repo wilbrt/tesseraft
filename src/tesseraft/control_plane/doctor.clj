@@ -7,7 +7,25 @@
   (:import [java.util.concurrent TimeUnit TimeoutException]))
 
 (def statuses ["ready" "not-configured" "unreachable" "invalid"])
-(def check-order ["github-credential" "github-auth" "jira-base-url" "jira-credential" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root"])
+(def check-order ["github-credential" "github-auth" "jira-base-url" "jira-credential" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root" "work-tracker-config" "work-tracker-credential"])
+
+;; WT4: work-tracker checks derive from one authoritative raw-source diagnosis
+;; (`cp/work-tracker-diagnosis`), not from `resolve-project` output, so a
+;; malformed tracker can be classified even where legacy manifests silently
+;; drop it. Both checks share the same status/state mapping; `absent` and
+;; `unresolved` are explicit non-failure states.
+(def ^:private work-tracker-status
+  {"absent" "not-configured"
+   "incomplete" "invalid"
+   "invalid" "invalid"
+   "unresolved" "not-configured"
+   "ready" "ready"})
+
+(defn- work-tracker-doctor-check [diagnosis]
+  {:status (get work-tracker-status (:state diagnosis) "invalid")
+   :state (:state diagnosis)
+   :summary (:message diagnosis)
+   :remediation (:remediation diagnosis)})
 
 (defn- now-ms [] (System/currentTimeMillis))
 (defn- blank? [v] (or (nil? v) (str/blank? (str v))))
@@ -185,7 +203,17 @@
        (let [sopts (cp/project-scoped-opts options project-id)
              github-secret (resolved-token sopts (conn-val (conn project :github) :credential-ref))
              jira-secret (resolved-token sopts (conn-val (conn project :jira) :credential-ref))
-             secrets (remove blank? [github-secret jira-secret])
+             ;; The raw-source diagnosis is scoped by `options` (the *control*
+             ;; workspace root), not `sopts` (the project's own workspace
+             ;; root): `cp/project-connection-source` locates the legacy
+             ;; manifest at `<control workspace-root>/.tesseraft/projects/<id>.json`,
+             ;; and `work-tracker-diagnosis` derives its own project-scoped
+             ;; options internally for credential resolution.
+             work-tracker-diagnosis (cp/work-tracker-diagnosis options (:project_id project))
+             work-tracker-config-diagnosis (cp/work-tracker-config-diagnosis options (:project_id project))
+             work-tracker-credential-diagnosis (cp/work-tracker-credential-diagnosis options (:project_id project))
+             work-tracker-secret (resolved-token sopts (:credential-ref work-tracker-diagnosis))
+             secrets (remove blank? [github-secret jira-secret work-tracker-secret])
              checks [(check "github-credential" "GitHub credential reference" "static" #(credential-check sopts project :github))
                      (check "github-auth" "GitHub authentication" "read-only" #(github-auth-check sopts project))
                      (check "jira-base-url" "Jira base URL" "static" #(jira-base-url-check project))
@@ -195,11 +223,17 @@
                      (check "repository-root" "Repository root" "read-only" #(repository-check options project))
                      (check "pinga" "Pinga executable and configuration" "static" #(pinga-check))
                      (check "workflow-discovery" "Workflow discovery" "read-only" #(workflow-check options project))
-                     (check "runs-root" "Runs root" "static" #(runs-root-check options project))]
+                     (check "runs-root" "Runs root" "static" #(runs-root-check options project))
+                     (check "work-tracker-config" "Work tracker provider and configuration" "static" #(work-tracker-doctor-check work-tracker-config-diagnosis))
+                     (check "work-tracker-credential" "Work tracker credential reference" "static" #(work-tracker-doctor-check work-tracker-credential-diagnosis))]
              summary (into {} (for [s statuses] [s (count (filter #(= s (:status %)) checks))]))]
          (scrub (cp/api-value {:project_id (:project_id project)
                                :summary summary
-                               :checks (sort-by #(.indexOf check-order (:id %)) checks)})
+                               :checks (sort-by #(.indexOf check-order (:id %)) checks)
+                               :work_tracker {:state (:state work-tracker-diagnosis)
+                                              :provider (:provider work-tracker-diagnosis)
+                                              :credential_ref (:credential-ref work-tracker-diagnosis)
+                                              :source (:source work-tracker-diagnosis)}})
                 secrets))))))
 
 (defn json-safe? [report]

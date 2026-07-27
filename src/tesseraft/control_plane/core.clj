@@ -136,57 +136,85 @@
 (defn- unsupported-fields [m allowed]
   (seq (remove allowed (keys m))))
 
-(def ^:private work-tracker-registry
-  (atom
-    {:plane {:required #{:api-base-url :workspace-slug :project-id}
-             :optional #{}
-             :validate (fn [config]
-                         (cond
-                           (not (valid-http-url? (:api-base-url config))) "plane api-base-url must be an http(s) URL"
-                           (not (and (string? (:workspace-slug config)) (not (str/blank? (:workspace-slug config))))) "plane workspace-slug is required"
-                           (not (and (string? (:project-id config)) (not (str/blank? (:project-id config))))) "plane project-id is required"
-                           :else nil))}
-     :jira {:required #{:base-url :project-key}
-            :optional #{}
-            :validate (fn [config]
-                        (cond
-                          (not (valid-http-url? (:base-url config))) "jira base-url must be an http(s) URL"
-                          (not (and (string? (:project-key config)) (not (str/blank? (:project-key config))))) "jira project-key is required"
-                          :else nil))}
-     :github-issues {:required #{:repository}
-                     :optional #{}
-                     :validate (fn [config]
-                                 (if (and (string? (:repository config))
-                                          (re-matches #"[^/\s]+/[^/\s]+" (:repository config)))
-                                   nil
-                                   "github-issues repository must be owner/name"))}}))
+(def ^:private work-tracker-registry (atom {}))
+
+(defn- field-label [k]
+  (-> (name k) (str/replace #"-" " ") (str/capitalize)))
+
+(defn- synthesize-fields [required optional]
+  (vec (concat
+         (for [f (sort (map name required))] {:name (keyword f) :label (field-label f) :type "text" :required true})
+         (for [f (sort (map name optional))] {:name (keyword f) :label (field-label f) :type "text" :required false}))))
 
 (defn register-work-tracker-provider!
   "Register a non-runnable work-tracker config schema for tests/packages.
-  `schema` is a map with `:required`, optional `:optional`, and optional
-  `:validate` function that returns nil or an error string. Registration only
-  affects contract validation; WT3 never executes adapters."
+  `schema` is a map with either an ordered `:fields` vector
+  (`{:name :label :type :required [:placeholder]}`) or legacy `:required`/
+  `:optional` sets, plus an optional `:validate` function that returns nil or
+  an error string. `:required`/`:optional` are always derived from `:fields`
+  so there is exactly one source of truth. Registration only affects contract
+  validation; WT3/WT4 never execute adapters."
   [provider schema]
-  (let [p (normalize-key provider)]
-    (swap! work-tracker-registry assoc p (merge {:required #{} :optional #{} :validate (constantly nil)} schema))
+  (let [p (normalize-key provider)
+        fields (:fields schema)
+        required (if fields (set (map :name (filter :required fields))) (set (:required schema)))
+        optional (if fields (set (map :name (remove :required fields))) (set (:optional schema)))
+        fields* (or fields (synthesize-fields required optional))]
+    (swap! work-tracker-registry assoc p
+           (merge {:validate (constantly nil)} schema
+                  {:required required :optional optional :fields fields*}))
     p))
 
-(defn- validate-work-tracker-config [provider config]
+(register-work-tracker-provider! :plane
+  {:fields [{:name :api-base-url :label "API base URL" :type "url" :required true :placeholder "https://api.plane.so"}
+            {:name :workspace-slug :label "Workspace slug" :type "text" :required true :placeholder "example-workspace"}
+            {:name :project-id :label "Project ID" :type "text" :required true :placeholder "plane-project-uuid"}]
+   :validate (fn [config]
+               (cond
+                 (not (valid-http-url? (:api-base-url config))) "plane api-base-url must be an http(s) URL"
+                 (not (and (string? (:workspace-slug config)) (not (str/blank? (:workspace-slug config))))) "plane workspace-slug is required"
+                 (not (and (string? (:project-id config)) (not (str/blank? (:project-id config))))) "plane project-id is required"
+                 :else nil))})
+
+(register-work-tracker-provider! :jira
+  {:fields [{:name :base-url :label "Base URL" :type "url" :required true :placeholder "https://your-domain.atlassian.net"}
+            {:name :project-key :label "Project key" :type "text" :required true :placeholder "TES"}]
+   :validate (fn [config]
+               (cond
+                 (not (valid-http-url? (:base-url config))) "jira base-url must be an http(s) URL"
+                 (not (and (string? (:project-key config)) (not (str/blank? (:project-key config))))) "jira project-key is required"
+                 :else nil))})
+
+(register-work-tracker-provider! :github-issues
+  {:fields [{:name :repository :label "Repository (owner/name)" :type "text" :required true :placeholder "owner/name"}]
+   :validate (fn [config]
+               (if (and (string? (:repository config))
+                        (re-matches #"[^/\s]+/[^/\s]+" (:repository config)))
+                 nil
+                 "github-issues repository must be owner/name"))})
+
+(defn- validate-work-tracker-config
+  "Returns nil when `config` satisfies `provider`'s registered schema, else a
+  structured `{:kind :missing-fields|:unsupported-provider|:unsupported-fields|:invalid-value
+  :message \"<string>\"}`. `:message` text is a stable public contract (WT3
+  assertions depend on it byte-for-byte)."
+  [provider config]
   (let [schema (get @work-tracker-registry provider)]
     (cond
-      (nil? schema) (str "Unsupported work-tracker provider: " (name provider))
-      (not (map? config)) "work-tracker config must be an object"
+      (nil? schema) {:kind :unsupported-provider :message (str "Unsupported work-tracker provider: " (name provider))}
+      (not (map? config)) {:kind :invalid-value :message "work-tracker config must be an object"}
       :else
       (let [config* (normalize-keys-shallow config)
             required (:required schema)
             allowed (into (set required) (:optional schema))]
         (cond
           (seq (unsupported-fields config* allowed))
-          (str "Unsupported work-tracker config fields: " (str/join ", " (map name (unsupported-fields config* allowed))))
+          {:kind :unsupported-fields :message (str "Unsupported work-tracker config fields: " (str/join ", " (map name (unsupported-fields config* allowed))))}
           (seq (remove #(contains? config* %) required))
-          (str "Missing work-tracker config fields: " (str/join ", " (map name (remove #(contains? config* %) required))))
+          {:kind :missing-fields :message (str "Missing work-tracker config fields: " (str/join ", " (map name (remove #(contains? config* %) required))))}
           :else
-          (when-let [err ((:validate schema) config*)] err))))))
+          (when-let [err ((:validate schema) config*)]
+            {:kind :invalid-value :message err}))))))
 
 (defn normalize-work-tracker
   "Normalize and validate a work-tracker envelope. Returns normalized map or
@@ -215,10 +243,22 @@
           (error-response 400 "bad_request" "work-tracker config must be an object")
           :else
           (if-let [err (validate-work-tracker-config provider config)]
-            (error-response 400 "bad_request" err)
+            (error-response 400 "bad_request" (:message err))
             {:provider (name provider)
              :credential-ref (:credential-ref m)
              :config config}))))))
+
+(defn list-work-tracker-providers
+  "Read-only, process-global provider field metadata for the schema-driven
+  Settings editor. Never includes credential values; `credential-ref` is
+  always required at the envelope level regardless of provider."
+  ([] (list-work-tracker-providers {}))
+  ([_options]
+   {:providers
+    (vec (for [[provider schema] (sort-by (comp name key) @work-tracker-registry)]
+           {:provider (name provider)
+            :fields (mapv api-value (:fields schema))
+            :credential_ref {:required true}}))}))
 
 (defn- normalize-connection-entry [k v]
   (let [k* (normalize-key k)]
@@ -486,20 +526,61 @@
            :discovery (or (:discovery project) {})}
     (seq (:connections project)) (assoc :connections (:connections project))))
 
+(defn- raw-connections-at-path
+  "Returns `{:connections <raw map or nil> :unreadable? <bool>}`. A missing
+  file is `{:connections nil :unreadable? false}` (a valid \"nothing here\"
+  state); a file that exists but is not readable/parseable JSON is
+  `{:connections nil :unreadable? true}` so callers can distinguish an
+  intentionally absent tracker from a corrupt durable source."
+  [p]
+  (if-not (fs/exists? p)
+    {:connections nil :unreadable? false}
+    (try
+      (let [raw (store/read-json p)]
+        {:connections (when (map? raw) (:connections raw)) :unreadable? false})
+      (catch Throwable _
+        {:connections nil :unreadable? true}))))
+
+(defn project-connection-source
+  "Read-only: the raw durable source backing `project-id`'s connections, using
+  the same registered-descriptor-then-legacy-manifest precedence as writes
+  (`durable-project-write-target`). Returns
+  `{:kind :descriptor|:manifest :path <path> :connections <raw map or nil>
+    :unreadable? <bool>}`. Connections are read directly from JSON without
+  descriptor/schema validation, so a malformed tracker inside an otherwise-
+  invalid descriptor can still be diagnosed instead of only surfacing as
+  whole-project resolution failure. An optional third `registration` arg lets
+  callers that already read the project registry avoid re-reading it."
+  ([options project-id] (project-connection-source options project-id (read-project-registration options project-id)))
+  ([options project-id registration]
+   (if registration
+     (let [descriptor-path (project-descriptor-path (:workspace_root registration))
+           raw (raw-connections-at-path descriptor-path)]
+       {:kind :descriptor
+        :path descriptor-path
+        :connections (:connections raw)
+        :unreadable? (:unreadable? raw)})
+     (let [manifest-path (project-manifest-path options project-id)
+           raw (raw-connections-at-path manifest-path)]
+       {:kind :manifest
+        :path manifest-path
+        :connections (:connections raw)
+        :unreadable? (:unreadable? raw)}))))
+
 (defn- durable-project-write-target [options project-id]
-  (if-let [registration (read-project-registration options project-id)]
-    (let [root (:workspace_root registration)
-          descriptor-path (project-descriptor-path root)
-          descriptor (read-project-descriptor-at-root root
-                                                       "Registered project root has an unreadable .tesseraft/project.json descriptor")]
-      (if (:error descriptor)
-        descriptor
-        {:kind :descriptor
-         :path descriptor-path
-         :current descriptor}))
-    {:kind :manifest
-     :path (project-manifest-path options project-id)
-     :current (or (read-legacy-project-manifest options project-id) {})}))
+  (let [registration (read-project-registration options project-id)
+        source (project-connection-source options project-id registration)]
+    (if (= :descriptor (:kind source))
+      (let [descriptor (read-project-descriptor-at-root (:workspace_root registration)
+                                                         "Registered project root has an unreadable .tesseraft/project.json descriptor")]
+        (if (:error descriptor)
+          descriptor
+          {:kind :descriptor
+           :path (:path source)
+           :current descriptor}))
+      {:kind :manifest
+       :path (:path source)
+       :current (or (read-legacy-project-manifest options project-id) {})})))
 
 (defn- read-project-sources [options project-id descriptor]
   (let [registration (read-project-registration options project-id)
@@ -1350,6 +1431,258 @@
                    (let [ref (:credential-ref v)
                          masked (mask-credential sopts ref)]
                      [k (api-value (merge v {:credential-state masked}))])))}))))
+
+(defn- work-tracker-diagnosis-result
+  [state source-label & {:keys [provider credential-ref credential-state message remediation]}]
+  {:state state
+   :provider provider
+   :credential-ref credential-ref
+   :credential-state credential-state
+   :source source-label
+   :message message
+   :remediation remediation})
+
+(defn- work-tracker-raw-source
+  "Shared read of the raw durable source for `project-id`'s work-tracker
+  diagnosis. Isolates the `project-connection-source` call + raw-tracker
+  extraction so `work-tracker-diagnosis` and its config-only/credential-only
+  siblings classify identical raw bytes."
+  [options project-id]
+  (let [source (project-connection-source options project-id)
+        raw-conn (when (map? (:connections source)) (normalize-keys-shallow (:connections source)))]
+    {:source-label (name (:kind source))
+     :path (:path source)
+     :unreadable? (boolean (:unreadable? source))
+     :raw-tracker (:work-tracker raw-conn)}))
+
+(defn- work-tracker-envelope-issue
+  "Envelope-level problems shared by both the config and credential concern:
+  a malformed envelope, a raw secret, unknown fields, or an unsupported
+  schema-version. Returns nil or `{:message :remediation}`."
+  [raw-tracker]
+  (cond
+    (not (map? raw-tracker))
+    {:message "work-tracker must be an object"
+     :remediation "Fix the work-tracker envelope in the project descriptor or manifest."}
+
+    (contains-raw-secret-key? raw-tracker)
+    {:message "Raw secret payloads are not accepted; provide a credential-ref instead"
+     :remediation "Replace the raw secret with a credential-ref such as env:NAME."}
+
+    :else
+    (let [m (normalize-keys-shallow raw-tracker)]
+      (cond
+        (seq (unsupported-fields m #{:provider :schema-version :credential-ref :config}))
+        {:message "work-tracker contains unknown fields"
+         :remediation "Remove unsupported fields from the work-tracker envelope."}
+
+        (and (contains? m :schema-version) (not= 1 (:schema-version m)))
+        {:message "Unsupported work-tracker schema-version"
+         :remediation "Use schema-version 1, or omit schema-version."}
+
+        :else nil))))
+
+(defn work-tracker-diagnosis
+  "Non-secret diagnosis of the *raw durable source* backing `project-id`'s
+  `connections.work-tracker`, independent of whether the project as a whole
+  resolves cleanly. Never returns a config value or credential value/preview.
+  States: absent, incomplete, invalid, unresolved, ready (see
+  docs/PROJECT_WORK_TRACKER_DESIGN.md WT4 D1)."
+  [options project-id]
+  (let [{:keys [source-label unreadable? raw-tracker path]} (work-tracker-raw-source options project-id)]
+    (cond
+      unreadable?
+      (work-tracker-diagnosis-result "invalid" source-label
+        :message "Project connection source is not readable JSON"
+        :remediation (str "Fix or remove the malformed file at " path "."))
+
+      (nil? raw-tracker)
+      (work-tracker-diagnosis-result "absent" source-label
+        :message "No primary work tracker is configured for this project; this is a valid project state."
+        :remediation nil)
+
+      :else
+      (if-let [issue (work-tracker-envelope-issue raw-tracker)]
+        (work-tracker-diagnosis-result "invalid" source-label
+          :message (:message issue) :remediation (:remediation issue))
+        (let [m (normalize-keys-shallow raw-tracker)
+              provider-raw (:provider m)
+              provider (when (or (string? provider-raw) (keyword? provider-raw)) (normalize-key provider-raw))
+              provider-name (some-> provider name)
+              ref (:credential-ref m)
+              ref-str (when (string? ref) ref)
+              config (:config m)]
+          (cond
+            (nil? provider)
+            (work-tracker-diagnosis-result "incomplete" source-label
+              :credential-ref ref-str
+              :message "work-tracker provider is required and must be a string"
+              :remediation "Set a provider such as plane, jira, or github-issues.")
+
+            (nil? (get @work-tracker-registry provider))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name :credential-ref ref-str
+              :message (str "Unsupported work-tracker provider: " provider-name)
+              :remediation "Register the provider, or choose a supported provider.")
+
+            (nil? ref)
+            (work-tracker-diagnosis-result "incomplete" source-label
+              :provider provider-name
+              :message "work-tracker credential-ref is required"
+              :remediation "Set a credential-ref such as env:NAME.")
+
+            (not (credential-ref? ref))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name :credential-ref ref-str
+              :message "Invalid work-tracker credential-ref"
+              :remediation "Use env:NAME, tesseraft:NAME, or github-actions:NAME.")
+
+            (not (map? config))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name :credential-ref ref-str
+              :message "work-tracker config must be an object"
+              :remediation "Provide config as a JSON object.")
+
+            :else
+            (let [config-err (validate-work-tracker-config provider (normalize-keys-shallow config))]
+              (if config-err
+                (let [incomplete? (= :missing-fields (:kind config-err))]
+                  (work-tracker-diagnosis-result (if incomplete? "incomplete" "invalid") source-label
+                    :provider provider-name :credential-ref ref-str
+                    :message (:message config-err)
+                    :remediation (if incomplete?
+                                   "Set the missing provider configuration fields."
+                                   "Fix the invalid provider configuration.")))
+                (let [sopts* (project-scoped-opts options project-id)
+                      sopts (if (:error sopts*) options sopts*)
+                      credential-state (:state (mask-credential sopts ref))]
+                  (if (= "present" credential-state)
+                    (work-tracker-diagnosis-result "ready" source-label
+                      :provider provider-name :credential-ref ref-str :credential-state credential-state
+                      :message "Work tracker configuration is statically ready."
+                      :remediation nil)
+                    (work-tracker-diagnosis-result "unresolved" source-label
+                      :provider provider-name :credential-ref ref-str :credential-state credential-state
+                      :message "The reference is owned by this project; the value is owned by your user, machine, or CI."
+                      :remediation "Set the referenced credential locally, or in CI.")))))))))))
+
+(defn work-tracker-config-diagnosis
+  "Non-secret diagnosis of only the provider/config portion of the raw
+  work-tracker envelope backing `project-id`, independent of whether the
+  credential-ref is present, well-formed, or resolves. Backs the doctor's
+  `work-tracker-config` check; see `work-tracker-diagnosis` for the combined,
+  credential-aware verdict used for the report-level `work_tracker` block."
+  [options project-id]
+  (let [{:keys [source-label unreadable? raw-tracker path]} (work-tracker-raw-source options project-id)]
+    (cond
+      unreadable?
+      (work-tracker-diagnosis-result "invalid" source-label
+        :message "Project connection source is not readable JSON"
+        :remediation (str "Fix or remove the malformed file at " path "."))
+
+      (nil? raw-tracker)
+      (work-tracker-diagnosis-result "absent" source-label
+        :message "No primary work tracker is configured for this project; this is a valid project state."
+        :remediation nil)
+
+      :else
+      (if-let [issue (work-tracker-envelope-issue raw-tracker)]
+        (work-tracker-diagnosis-result "invalid" source-label
+          :message (:message issue) :remediation (:remediation issue))
+        (let [m (normalize-keys-shallow raw-tracker)
+              provider-raw (:provider m)
+              provider (when (or (string? provider-raw) (keyword? provider-raw)) (normalize-key provider-raw))
+              provider-name (some-> provider name)
+              config (:config m)]
+          (cond
+            (nil? provider)
+            (work-tracker-diagnosis-result "incomplete" source-label
+              :message "work-tracker provider is required and must be a string"
+              :remediation "Set a provider such as plane, jira, or github-issues.")
+
+            (nil? (get @work-tracker-registry provider))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name
+              :message (str "Unsupported work-tracker provider: " provider-name)
+              :remediation "Register the provider, or choose a supported provider.")
+
+            (not (map? config))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name
+              :message "work-tracker config must be an object"
+              :remediation "Provide config as a JSON object.")
+
+            :else
+            (let [config-err (validate-work-tracker-config provider (normalize-keys-shallow config))]
+              (if config-err
+                (let [incomplete? (= :missing-fields (:kind config-err))]
+                  (work-tracker-diagnosis-result (if incomplete? "incomplete" "invalid") source-label
+                    :provider provider-name
+                    :message (:message config-err)
+                    :remediation (if incomplete?
+                                   "Set the missing provider configuration fields."
+                                   "Fix the invalid provider configuration.")))
+                (work-tracker-diagnosis-result "ready" source-label
+                  :provider provider-name
+                  :message "Work tracker provider and configuration are statically valid."
+                  :remediation nil)))))))))
+
+(defn work-tracker-credential-diagnosis
+  "Non-secret diagnosis of only the credential-reference portion of the raw
+  work-tracker envelope backing `project-id`, independent of whether the
+  provider/config is registered or valid. Backs the doctor's
+  `work-tracker-credential` check; see `work-tracker-diagnosis` for the
+  combined, config-aware verdict used for the report-level `work_tracker`
+  block."
+  [options project-id]
+  (let [{:keys [source-label unreadable? raw-tracker path]} (work-tracker-raw-source options project-id)]
+    (cond
+      unreadable?
+      (work-tracker-diagnosis-result "invalid" source-label
+        :message "Project connection source is not readable JSON"
+        :remediation (str "Fix or remove the malformed file at " path "."))
+
+      (nil? raw-tracker)
+      (work-tracker-diagnosis-result "absent" source-label
+        :message "No primary work tracker is configured for this project; this is a valid project state."
+        :remediation nil)
+
+      :else
+      (if-let [issue (work-tracker-envelope-issue raw-tracker)]
+        (work-tracker-diagnosis-result "invalid" source-label
+          :message (:message issue) :remediation (:remediation issue))
+        (let [m (normalize-keys-shallow raw-tracker)
+              provider-raw (:provider m)
+              provider (when (or (string? provider-raw) (keyword? provider-raw)) (normalize-key provider-raw))
+              provider-name (some-> provider name)
+              ref (:credential-ref m)
+              ref-str (when (string? ref) ref)]
+          (cond
+            (nil? ref)
+            (work-tracker-diagnosis-result "incomplete" source-label
+              :provider provider-name
+              :message "work-tracker credential-ref is required"
+              :remediation "Set a credential-ref such as env:NAME.")
+
+            (not (credential-ref? ref))
+            (work-tracker-diagnosis-result "invalid" source-label
+              :provider provider-name :credential-ref ref-str
+              :message "Invalid work-tracker credential-ref"
+              :remediation "Use env:NAME, tesseraft:NAME, or github-actions:NAME.")
+
+            :else
+            (let [sopts* (project-scoped-opts options project-id)
+                  sopts (if (:error sopts*) options sopts*)
+                  credential-state (:state (mask-credential sopts ref))]
+              (if (= "present" credential-state)
+                (work-tracker-diagnosis-result "ready" source-label
+                  :provider provider-name :credential-ref ref-str :credential-state credential-state
+                  :message "Work tracker configuration is statically ready."
+                  :remediation nil)
+                (work-tracker-diagnosis-result "unresolved" source-label
+                  :provider provider-name :credential-ref ref-str :credential-state credential-state
+                  :message "The reference is owned by this project; the value is owned by your user, machine, or CI."
+                  :remediation "Set the referenced credential locally, or in CI.")))))))))
 
 (defn update-project-connections
   ([] (update-project-connections {} nil nil))

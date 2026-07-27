@@ -38,6 +38,7 @@ export const routeApi = (pathname: string, searchParams: URLSearchParams = new U
   }
   if (parts.length === 2 && parts[1] === 'git-user') return ['git-user'];
   if (parts.length === 2 && parts[1] === 'settings') return ['settings'];
+  if (parts.length === 2 && parts[1] === 'work-tracker-providers') return ['work-tracker-providers'];
   if (parts.length === 2 && parts[1] === 'runs') return ['runs'];
   if (parts.length === 3 && parts[1] === 'runs') {
     const runId = safeDecode(parts[2]);
@@ -582,6 +583,13 @@ const handleGetProjectConnections = async (res: Response, projectId: string): Pr
 const handleGetProjectDoctor = async (res: Response, projectId: string): Promise<void> => {
   if (!PROJECT_NAME_RE.test(projectId)) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'Malformed project id'));
   const result = await runControlPlane(['--project-id', projectId, 'doctor'], { timeout: 12000 });
+  return jsonResponse(res, result.status, result.body);
+};
+
+// Work-tracker provider field metadata (WT4). The registry is process-global
+// and unscoped by project, so this route takes no project id.
+const handleGetWorkTrackerProviders = async (res: Response): Promise<void> => {
+  const result = await runControlPlane(['project', 'work-tracker-providers']);
   return jsonResponse(res, result.status, result.body);
 };
 
@@ -1252,6 +1260,7 @@ export const createApiRouter = (options: ApiRouterOptions = {}): Router => {
   router.get('/git-user', (_req, res, next) => { void handleGetGitUser(res).catch(next); });
   router.put('/git-user', (req, res, next) => { void handleSetGitUser(req, res).catch(next); });
   router.get('/settings', (_req, res, next) => { void handleGetSettings(res).catch(next); });
+  router.get('/work-tracker-providers', (_req, res, next) => { void handleGetWorkTrackerProviders(res).catch(next); });
   router.put('/settings', (req, res, next) => { void handleSetSettings(req, res).catch(next); });
 
   // ---- Project abstraction routes (design §4.6) ----

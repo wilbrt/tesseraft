@@ -51,7 +51,7 @@ either:
 | 6 | Settings: read/write, masked tokens | ✅ `test/web-server.test.js` settings read/write + masked tokens | — skip: HTTP behavior is auto-covered |
 | 7 | git-user: read/write | ✅ `test/web-server.test.js` git-user read and write | — skip: HTTP behavior is auto-covered |
 | 8 | Pi sessions: list/create/detail/prompts/events/stream; settings→model resolution + typed errors | ✅ `test/web-server.test.js` fake Pi session routes; `test/web-pi-session.test.js` resolveSettingsModel/createSessionWithModel; `test/web-server.test.js` POST resolution-failure 400 | `run-streaming.md` (Pi-session live stream only) |
-| 9 | Connections Doctor: project-scoped local readiness checks without secret leakage | ✅ `test/web-server.test.js` endpoint contract; `test/web-ui.test.js` Settings panel structure; `scripts/test.sh` CLI smoke | `connections-doctor.md` (copy-paste API/browser verification) |
+| 9 | Connections Doctor + work-tracker Settings editor: project-scoped local readiness checks (incl. 5-state work-tracker diagnosis) and schema-driven tracker editor, without secret leakage | ✅ `test/web-server.test.js` endpoint contract; `test/work-tracker-settings-doctor.test.js` diagnosis/doctor/providers; `test/web-ui.test.js` Settings panel + WorkTrackerPanel structure; `scripts/test.sh` CLI smoke | `connections-doctor.md` (copy-paste API/browser verification, incl. all 5 work-tracker states) |
 
 **Conclusion:** Every named surface has automated HTTP/structural coverage.
 The real gaps are **browser/DOM-only behaviors** that
@@ -72,7 +72,10 @@ Those are covered by the four focused scripts below.
   save/lint and asset/path-traversal refusal messages surfaced visibly in the
   UI (HTTP behavior is auto-covered; this is the visible-error UX).
 - [`connections-doctor.md`](connections-doctor.md) — project-scoped doctor API
-  and Settings-panel verification, including no-secret-leak pass criteria.
+  and Settings-panel verification, including no-secret-leak pass criteria and
+  (WT4) the work-tracker Settings editor plus all five work-tracker diagnosis
+  states (absent/incomplete/invalid/unresolved/ready) using fake local
+  project fixtures.
 
 Each script is copy-paste runnable, starts a fresh server, states the
 ground-truth command/file to compare against, and lists explicit pass/fail

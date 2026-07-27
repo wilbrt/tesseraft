@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getJson, putJson } from '../lib/api';
 import { useProject, projectApiUrl } from '../lib/project';
 import { ConnectionsDoctorPanel } from './ConnectionsDoctorPanel';
+import { WorkTrackerPanel, type RuntimeWorkTrackerConnection } from './WorkTrackerPanel';
 
 type TokenMask = { present: boolean; preview?: string };
 type ColorScheme = 'classic' | 'matrix';
@@ -50,6 +51,7 @@ type RuntimeProjectConnection = {
 type RuntimeProjectConnections = {
   jira?: RuntimeProjectConnection;
   github?: RuntimeProjectConnection;
+  'work-tracker'?: RuntimeWorkTrackerConnection;
 };
 type ProjectConnectionsResponse = { connections: RuntimeProjectConnections };
 
@@ -462,6 +464,18 @@ export const SettingsPanel = ({ onColorSchemeChange }: { onColorSchemeChange: (s
           <button type="button" disabled={projectBusy} onClick={() => void saveConnections()}>Save connections</button>
           <button type="button" disabled={projectBusy} onClick={() => void loadProjects()}>Refresh project</button>
         </div>
+
+        <WorkTrackerPanel
+          projectId={selectedProjectId}
+          tracker={connections?.['work-tracker']}
+          onSaved={(nextConnections) => {
+            const c = nextConnections as RuntimeProjectConnections;
+            setConnections(c);
+            setJiraBaseUrl(c.jira?.base_url || '');
+            setJiraCredRef(readCredRef(c.jira));
+            setGithubCredRef(readCredRef(c.github));
+          }}
+        />
       </div>
       <ConnectionsDoctorPanel />
       </div>

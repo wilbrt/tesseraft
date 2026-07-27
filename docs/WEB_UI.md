@@ -53,13 +53,31 @@ Known semantic gaps remain:
 - Catalog-as-lens, cross-scope shadowing visibility, and fragment packages are
   next-step UX/product work over existing package discovery concepts.
 
-The Settings surface embeds a project-scoped Connections Doctor. It calls
+The Settings surface's "Projects and connections" card embeds a schema-driven
+work-tracker editor (`WorkTrackerPanel`, WT4). It loads
+`GET /api/work-tracker-providers` for provider field metadata (Plane/Jira/
+GitHub Issues, plus any package-registered provider — never a hard-coded
+Plane-only field set) and the project's `GET /api/projects/{id}/connections`
+payload. A `<select>` includes an explicit "No tracker" option. Saving posts
+`PUT /api/projects/{id}/connections` with `{work_tracker: {...}}`; clearing
+posts `{clear_work_tracker: true}` and is idempotent. The panel only ever
+renders the provider, credential reference, and masked credential state — it
+never renders a credential value or a preview. It also explains nearest-
+ancestor project resolution (Tesseraft's own checkout resolves the same way
+any repository does) and credential ownership: the project owns the
+credential *reference*; the user, machine, or CI owns the referenced *value*.
+
+The Settings surface also embeds a project-scoped Connections Doctor. It calls
 `GET /api/projects/{projectId}/doctor` for bounded static/read-only local checks
 of GitHub/Jira credential references, `gh` authentication, Pi provider/model
 local catalog availability, Git author identity, repository/runs roots, Pinga
-configuration, and workflow discovery. The panel shows status, check mode,
-summary, and remediation only; it must not render raw secrets, token previews,
-command output, or environment data.
+configuration, workflow discovery, and (WT4) the work-tracker's provider/config
+and credential-reference. The panel shows status, check mode, summary, and
+remediation only; it must not render raw secrets, token previews, command
+output, or environment data. The two work-tracker checks additionally render a
+`state` pill (`absent`/`incomplete`/`invalid`/`unresolved`/`ready`), and the
+report's single-verdict `work_tracker` block is rendered once alongside the
+per-check list.
 
 ## v3.2 phase-1 product frame
 
