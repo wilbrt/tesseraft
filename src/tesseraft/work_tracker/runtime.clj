@@ -118,7 +118,7 @@
                          :item_file out-path})
                       (let [result (assoc fetched :error_type "work_tracker_fetch_failed")]
                         (write-result! ctx out-path result)
-                        (assoc result :item_file out-path))))))))))))
+                        (assoc result :item_file out-path)))))))))))))
 
 (defn mock-item [ctx node]
   (let [id (or (item-id ctx node) "MOCK-1")]
