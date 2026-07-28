@@ -532,23 +532,23 @@
                    (fragment-candidate :examples (fs/path d "examples" "fragments") name)))))))
 
 (defn resolve-fragment-package [wf node]
-  (when-let [name (:fragment node)]
-    (let [explicit? (contains? node :scope)
-          scope (normalize-fragment-scope (:scope node))]
-      (cond
-        (not (safe-fragment-package-name? name))
-        {:error :invalid-name :name name :explicit-scope? explicit?}
+  (let [name (:fragment node)
+        explicit? (contains? node :scope)
+        scope (normalize-fragment-scope (:scope node))]
+    (cond
+      (not (safe-fragment-package-name? name))
+      {:error :invalid-name :name name :explicit-scope? explicit?}
 
-        (and explicit? (nil? scope))
-        {:error :invalid-scope}
+      (and explicit? (nil? scope))
+      {:error :invalid-scope}
 
-        :else
-        (let [candidates (cond->> (fragment-package-candidates wf name)
-                           scope (filter #(= scope (:scope %))))
-              found (first (filter #(fs/exists? (:path %)) candidates))]
-          (if found
-            (assoc found :name name :explicit-scope? explicit?)
-            {:error :not-found :name name :scope scope :explicit-scope? explicit?}))))))
+      :else
+      (let [candidates (cond->> (fragment-package-candidates wf name)
+                         scope (filter #(= scope (:scope %))))
+            found (first (filter #(fs/exists? (:path %)) candidates))]
+        (if found
+          (assoc found :name name :explicit-scope? explicit?)
+          {:error :not-found :name name :scope scope :explicit-scope? explicit?})))))
 
 (defn find-fragment-package-file [wf node]
   (let [res (resolve-fragment-package wf node)]

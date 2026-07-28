@@ -32,10 +32,21 @@ FRAGMENT = '''{:api-version "tesseraft.fragment/v1"
 '''
 
 
-def write_project(tmp: Path, package_text=FRAGMENT, workflow_node=None, global_package=False):
-    package_root = (tmp / ("global-home/fragments/contract-fragment" if global_package else ".tesseraft/fragments/contract-fragment"))
+def write_fragment_package(tmp: Path, scope="project", package_text=FRAGMENT, name="contract-fragment"):
+    roots = {
+        "project": tmp / ".tesseraft/fragments",
+        "global": tmp / "global-home/fragments",
+        "examples": tmp / "examples/fragments",
+    }
+    package_root = roots[scope] / name
     package_root.mkdir(parents=True, exist_ok=True)
     (package_root / "fragment.edn").write_text(package_text)
+    return package_root / "fragment.edn"
+
+
+def write_project(tmp: Path, package_text=FRAGMENT, workflow_node=None, global_package=False, write_package=True):
+    if write_package:
+        write_fragment_package(tmp, "global" if global_package else "project", package_text)
     node = workflow_node or ''':run
   {:type :fragment
    :fragment "contract-fragment"
@@ -123,6 +134,97 @@ def test_explicit_project_scope_does_not_fall_back_to_global():
         status, payload = lint(wf, home)
         assert status != 0
         assert "fragment-unknown-package" in codes(payload), payload
+    with_tmp(run)
+
+
+def test_missing_and_nil_fragment_identity_are_invalid_names_not_unknown_packages():
+    def run(tmp):
+        home = tmp / "global-home"
+        for fragment_form in ["", ":fragment nil"]:
+            node = f''':run
+  {{:type :fragment
+   {fragment_form}
+   :inputs {{:repo-root "."}}
+   :parameters {{:retries 1}}
+   :transitions [{{:when {{:fragment/outcome "pass"}} :next :done}}
+                 {{:when {{:fragment/outcome "fail"}} :next :fail}}]}}'''
+            wf = write_project(tmp, workflow_node=node)
+            status, payload = lint(wf, home)
+            got = codes(payload)
+            assert status != 0, payload
+            assert "fragment-invalid-name" in got, payload
+            assert "fragment-unknown-package" not in got, payload
+    with_tmp(run)
+
+
+def test_default_resolution_prefers_project_then_global_then_examples():
+    def run(tmp):
+        home = tmp / "global-home"
+        write_fragment_package(tmp, "examples")
+        write_fragment_package(tmp, "global")
+        write_fragment_package(tmp, "project")
+        wf = write_project(tmp, write_package=False, workflow_node=''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:repo-root "."}
+   :parameters {:retries 1}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}''')
+        status, payload = lint(wf, home)
+        assert status == 0, payload
+        inclusion = payload["fragment-inclusions"]["run"]
+        assert inclusion["scope"] == "project", inclusion
+        assert inclusion["package-path"].endswith(".tesseraft/fragments/contract-fragment/fragment.edn"), inclusion
+
+        shutil.rmtree(tmp / ".tesseraft")
+        status, payload = lint(wf, home)
+        assert status == 0, payload
+        inclusion = payload["fragment-inclusions"]["run"]
+        assert inclusion["scope"] == "global", inclusion
+        assert inclusion["package-path"].endswith("global-home/fragments/contract-fragment/fragment.edn"), inclusion
+
+        shutil.rmtree(tmp / "global-home/fragments")
+        status, payload = lint(wf, home)
+        assert status == 0, payload
+        inclusion = payload["fragment-inclusions"]["run"]
+        assert inclusion["scope"] == "examples", inclusion
+        assert inclusion["package-path"].endswith("examples/fragments/contract-fragment/fragment.edn"), inclusion
+    with_tmp(run)
+
+
+def test_explicit_scope_values_and_aliases_select_canonical_scope():
+    def run(tmp):
+        home = tmp / "global-home"
+        cases = [
+            (':project', "project", ".tesseraft/fragments/contract-fragment/fragment.edn"),
+            ('"project"', "project", ".tesseraft/fragments/contract-fragment/fragment.edn"),
+            (':global', "global", "global-home/fragments/contract-fragment/fragment.edn"),
+            ('"global"', "global", "global-home/fragments/contract-fragment/fragment.edn"),
+            (':examples', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            ('"examples"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            (':example', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            ('"example"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            (':configured', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            ('"configured"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+        ]
+        write_fragment_package(tmp, "project")
+        write_fragment_package(tmp, "global")
+        write_fragment_package(tmp, "examples")
+        for scope_form, expected_scope, expected_suffix in cases:
+            node = f''':run
+  {{:type :fragment
+   :fragment "contract-fragment"
+   :scope {scope_form}
+   :inputs {{:repo-root "."}}
+   :parameters {{:retries 1}}
+   :transitions [{{:when {{:fragment/outcome "pass"}} :next :done}}
+                 {{:when {{:fragment/outcome "fail"}} :next :fail}}]}}'''
+            wf = write_project(tmp, workflow_node=node, write_package=False)
+            status, payload = lint(wf, home)
+            assert status == 0, (scope_form, payload)
+            inclusion = payload["fragment-inclusions"]["run"]
+            assert inclusion["scope"] == expected_scope, (scope_form, inclusion)
+            assert inclusion["package-path"].endswith(expected_suffix), (scope_form, inclusion)
     with_tmp(run)
 
 
@@ -347,6 +449,9 @@ def test_import_allows_authoring_stub_with_required_parameter_pending():
 if __name__ == "__main__":
     test_effective_inclusion_contract_is_inspectable_and_defaults_are_merged()
     test_explicit_project_scope_does_not_fall_back_to_global()
+    test_missing_and_nil_fragment_identity_are_invalid_names_not_unknown_packages()
+    test_default_resolution_prefers_project_then_global_then_examples()
+    test_explicit_scope_values_and_aliases_select_canonical_scope()
     test_version_binding_type_name_and_prefix_diagnostics_are_distinct()
     test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coercion()
     test_missing_scalar_types_are_rejected_before_effective_inclusion_data()
