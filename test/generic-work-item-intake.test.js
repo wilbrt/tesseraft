@@ -40,7 +40,7 @@ function startMockRun({ provider, fixtureName, itemId }) {
   const projectContext = fixture(fixtureName);
   fs.rmSync(runDir(runId), { recursive: true, force: true });
   runCli([
-    'start', workflow,
+    'run', 'start', workflow,
     '--executor', 'mock',
     '--run-id', runId,
     '--project-id', projectContext.project_id,
@@ -57,7 +57,7 @@ function step(runDirPath, allowFailure = false) {
   try {
     return {
       ok: true,
-      out: runCli(['step', '--run-dir', runDirPath, '--format', 'json'], { allowFailure })
+      out: runCli(['run', 'step', '--run-dir', runDirPath, '--format', 'json'], { allowFailure })
     };
   } catch (error) {
     if (!allowFailure) throw error;
@@ -120,7 +120,7 @@ test('missing tracker fails at the real fetch preflight before branch, agent, pu
   const projectContext = fixture('no-tracker-project.json');
   fs.rmSync(runDir(runId), { recursive: true, force: true });
   runCli([
-    'start', workflow,
+    'run', 'start', workflow,
     '--run-id', runId,
     '--project-id', projectContext.project_id,
     '--project-context', JSON.stringify(projectContext),
