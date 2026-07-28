@@ -12,6 +12,7 @@
    :fragment "test-fix-loop"
    :inputs {:repo-root "{{inputs.repo-root}}"
             :test-cmd "{{inputs.test-cmd}}"}
+   :parameters {:max-rounds 3 :base-branch "main"}
    ;; "maybe" is not a declared interface outcome -> error.
    :transitions [{:when {:fragment/outcome "pass"} :next :done}
                  {:when {:fragment/outcome "maybe"} :next :abort}]}

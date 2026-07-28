@@ -17,6 +17,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | EDN fragment package parsing | Implemented |
 | Package and internal-subgraph lint | Implemented |
 | Inclusion input/outcome diagnostics | Implemented |
+| Inclusion scope/version/binding/prefix contract and inspectable effective data | Implemented for workflow lint |
 | Asset validation and collision-safe copying | Implemented |
 | Project/global/example discovery helpers | Implemented |
 | `tesseraft fragment lint` | Implemented |
@@ -25,7 +26,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | JSON-compatible normalized projection | Implemented (`portable-fragment-package-data`) |
 | JSON Schema enforcement | Not wired into the linter; descriptive contract only |
 | Required outcome/exit enforcement when omitted | Implemented |
-| Parameter, version, and prefix semantics | Incomplete or not implemented |
+| Parameter, version, and prefix semantics | Implemented for static workflow lint; no runtime writes/execution |
 | Boundary resource projection into workflow lint | Not implemented |
 | Runtime fragment execution | Not implemented |
 | Public fragment control-plane API / Studio catalog | Not implemented |
@@ -97,19 +98,15 @@ For consumers that need JSON data, `portable-fragment-package-data` returns a de
 
 ### Inputs
 
-`:interface :inputs` describes values supplied by an importing workflow. Inclusion lint currently verifies that inputs whose contracts are considered required are present in the inclusion node's `:inputs` map.
+`:interface :inputs` describes values supplied by an importing workflow. Inclusion lint normalizes declared and bound names to keyword identity, rejects normalization collisions, rejects unknown bindings, requires every input unless `:required false`, treats `nil` as missing for required inputs, and validates known scalar literals without coercion. Input declaration `:default` values do not satisfy required inputs and are not synthesized into effective inclusion inputs; successful input data reflects authored bindings only.
 
-Current limitations:
-
-- unknown input bindings are not rejected;
-- binding value types are not checked;
-- bindings are not made available to runtime because fragment execution is absent.
+Supported scalar types are `:string`, `:integer`, `:number`, and `:boolean`. Unsupported declared types are lint errors. Templated strings remain strings; lint does not evaluate templates or coerce string values into numbers/booleans. Authored bindings are exposed as derived lint data only because fragment execution is absent.
 
 ### Parameters
 
 `:interface :parameters` describes configurable fragment behavior and defaults. Package lint synthesizes inputs and parameters into the internal template-variable environment so internal prompt/template checks can resolve them.
 
-Current inclusion lint does not validate required parameters, defaults, unknown parameters, or value types. Parameter data on an inclusion node is presently declarative only.
+Inclusion lint validates parameter names and scalar values with the same normalization/type rules as inputs. Parameters are optional by default; `:required true` requires either an authored non-`nil` value or a declared default. Effective parameters merge declared defaults before authored overrides and are exposed in `:fragment-inclusions`.
 
 ### Outputs and outcomes
 
@@ -173,19 +170,21 @@ A lintable inclusion currently looks like:
 
 Implemented inclusion semantics:
 
-- `:fragment` selects a package by metadata name;
-- keyword `:scope` can restrict lookup to project, global, or examples/configured roots;
-- project packages take precedence over global packages, which take precedence over examples by default;
-- required interface input names are checked;
+- `:fragment` must be a single safe package name (not a path, drive-qualified form, `.` or `..`) and the resolved package `:metadata :name` must match it exactly;
+- `:scope` may be a keyword or string and canonicalizes to `:project`, `:global`, or `:examples` (`:example`/`:configured` are examples aliases);
+- omitted scope uses project > global > examples precedence; explicit scope searches only that scope and never falls back;
+- `:version`, when present, must be a non-blank string exactly equal to `:metadata :version` of the resolved package;
+- `:prefix`, when present, must be a non-blank portable safe relative prefix: no absolute, drive/UNC, `.`/`..`, backslash, or parent traversal forms;
+- input/parameter declaration and binding containers must be maps; declaration entries must be maps; required and unknown bindings, parameter defaults, collisions, supported scalar declarations, and literal scalar values are checked without coercion;
 - transition outcomes are checked against the interface;
 - broken package lint is surfaced as one aggregate inclusion error.
 
-Documented or plausible fields that are not yet operational:
+A successful workflow lint result includes derived `:fragment-inclusions` keyed by inclusion state id. Each entry contains `:package-path`, canonical `:scope`, resolved `:version`, normalized/omitted `:prefix`, authored effective `:inputs`, and defaults-merged effective `:parameters`. This is inspection data only; lint does not mutate the workflow, copy resources, write prefixed artifacts, or execute fragments.
 
-- `:version` does not pin or validate the resolved package version;
-- `:prefix` does not namespace assets or runtime artifacts;
-- parameter contracts are not enforced;
+Still not operational:
+
 - package boundary resources are not projected;
+- `:prefix` does not namespace runtime artifacts because runtime fragment execution is absent;
 - no fragment outcome can be produced at runtime.
 
 The importing workflow ultimately needs to own the state id, scope/version selection, explicit bindings, path prefix, outgoing outcome transitions, and collision handling. Those target semantics are not all implemented in v1 today.

@@ -265,13 +265,31 @@
 (defn resolve-node-package-path [pkg p]
   (when p (str (fs/path (node-package-dir pkg) p))))
 (defn absolute-path? [s] (and (string? s) (str/starts-with? s "/")))
+(defn relative-path-components [s]
+  (str/split (str s) #"/"))
 (defn contains-parent-segment? [s]
-  (some #{".."} (str/split (str s) #"/")))
+  (some #{".."} (relative-path-components s)))
+(defn contains-dot-segment? [s]
+  (some #{"." ".."} (relative-path-components s)))
+(defn windows-drive-qualified-path? [s]
+  (and (string? s) (boolean (re-find #"^[A-Za-z]:" s))))
+(defn portable-absolute-path? [s]
+  (and (string? s)
+       (or (str/starts-with? s "/")
+           (str/starts-with? s "\\\\")
+           (windows-drive-qualified-path? s))))
+
 (defn safe-relative-path? [s]
   (and (string? s)
        (not (str/blank? s))
        (not (absolute-path? s))
        (not (contains-parent-segment? s))))
+
+(defn safe-relative-prefix? [s]
+  (and (safe-relative-path? s)
+       (not (portable-absolute-path? s))
+       (not (str/includes? s "\\"))
+       (not (contains-dot-segment? s))))
 
 (defn template-vars [s]
   (when (string? s)

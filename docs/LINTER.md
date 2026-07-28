@@ -70,9 +70,22 @@ Fragment package lint:
 
 Inclusion (workflow-side `{:type :fragment}` node) diagnostics:
 
-- `fragment-unknown-package` — the referenced fragment package could not be discovered.
-- `fragment-input-binding-missing` — a required `:interface :inputs` input is not bound at the import site.
+- `fragment-unknown-package` — the referenced fragment package could not be discovered in the allowed scope(s).
+- `fragment-invalid-name` — `:fragment` is not a single safe package name.
+- `fragment-name-mismatch` — the resolved package `:metadata :name` does not match the requested `:fragment` identity.
+- `fragment-invalid-scope` — `:scope` is present but is not one of project/global/examples aliases.
+- `fragment-invalid-version` / `fragment-version-mismatch` — `:version` is blank/non-string or does not exactly match resolved package metadata.
+- `fragment-invalid-prefix` — `:prefix` is not a portable safe relative prefix.
+- `fragment-interface-bindings-not-map` / `fragment-bindings-not-map` / `fragment-binding-contract-not-map` — interface declaration containers, authored binding containers, or declaration entries are malformed.
+- `fragment-binding-name-collision` — declared or bound input/parameter names collide after keyword normalization.
+- `fragment-input-binding-missing` / `fragment-parameter-binding-missing` — a required input or parameter has no non-`nil` effective value.
+- `fragment-unknown-input` / `fragment-unknown-parameter` — the import site binds a name not declared by the interface.
+- `fragment-missing-scalar-type` — an input/parameter declaration omits `:type` or sets it to `nil`.
+- `fragment-unsupported-scalar-type` — an input/parameter declares a type outside `:string`, `:integer`, `:number`, or `:boolean`.
+- `fragment-input-type-mismatch` / `fragment-parameter-type-mismatch` — a known literal/default value does not match its declared scalar type; lint does not coerce strings.
 - `fragment-unknown-outcome` — a transition references an outcome not declared in `:interface :outcomes`.
 - `fragment-uncovered-outcome` — an `:interface :outcomes` member has no covering transition (warning).
+
+Successful workflow lint may include `:fragment-inclusions`, a derived map keyed by state id containing `:package-path`, canonical `:scope`, resolved `:version`, `:prefix`, effective `:inputs`, and defaults-merged effective `:parameters`. This is static inspection data, not runtime behavior.
 
 Internal subgraph checks within a fragment run the **full** workflow primitive set on `:fragment :states` once in `lint-fragment-package`: top-level (`missing-initial-state`, `missing-terminal-state`), `node-type-checks`, `transition-checks`, `reachability-checks` (`unreachable-state`), `node-contract-checks` (`agent-missing-prompt-template`, `prompt-template-missing`, `deterministic-missing-handler`, `process-missing-command`, `timer-missing-duration`, `approval-missing-message`, `missing-runtime-timeout`), `duplicate-output-checks`, `workflow-resource-checks` (`resource-*`), `cycle-checks` (`cycle-without-explicit-limit`), `template-var-checks` (`unknown-template-root`, `unknown-*-template-var`), and `path-contract-checks` (`invalid-artifact-path`, `output-schema-missing`). Boundary inputs/parameters from `:interface` are synthesized as the internal `:inputs` so template-var checks for boundary bindings resolve. Inclusion sites (`{:type :fragment}`) lint **only** the boundary contract and never re-run these internal checks.

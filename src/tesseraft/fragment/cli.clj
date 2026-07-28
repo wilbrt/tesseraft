@@ -145,6 +145,7 @@
         (let [hard-errors (filter (fn [d]
                                     (and (= "error" (:severity d))
                                          (not (#{:fragment-input-binding-missing
+                                                 :fragment-parameter-binding-missing
                                                  :fragment-uncovered-outcome
                                                  :dead-end-non-terminal}
                                                (keyword (:code d))))))
