@@ -191,7 +191,7 @@ pre {
 .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1rem; max-width: 100%; }
 .control-card { border: 1px solid var(--color-border); border-radius: 0.6rem; padding: 0.85rem; background: var(--color-surface-muted); display: grid; gap: 0.6rem; }
 .control-card label { display: grid; gap: 0.25rem; font-weight: 700; }
-.control-card input, .control-card textarea, .control-card select { font: inherit; border: 1px solid var(--color-header-muted); border-radius: 0.4rem; padding: 0.45rem; }
+.control-card input, .control-card textarea, .control-card select { font: inherit; border: 1px solid var(--color-header-muted); border-radius: 0.4rem; padding: 0.45rem; min-width: 0; width: 100%; max-width: 100%; }
 .control-card textarea { min-height: 4.5rem; resize: vertical; }
 .workflow-inputs { display: grid; gap: 0.65rem; border: 1px solid var(--color-soft); border-radius: 0.5rem; padding: 0.75rem; background: var(--color-surface); }
 .workflow-inputs h4 { margin: 0; }

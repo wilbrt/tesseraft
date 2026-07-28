@@ -63,6 +63,35 @@ test('WT3 publishes no-tracker and built-in work-tracker schemas', () => {
   }), false, 'unsupported schema versions are rejected by schema');
 });
 
+test('WT6 normalized work item schema discriminates provider remote scope', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(repoRoot, 'schemas', 'normalized-work-item.schema.json'), 'utf8'));
+  const base = {
+    schema_version: 1,
+    project: { id: 'alpha' },
+    identifier: 'ID-1',
+    title: 'Title',
+    description: '',
+    state: { name: 'open' },
+    priority: 'none',
+    assignees: [],
+    labels: [],
+    fetched_at: '2024-01-01T00:00:00Z'
+  };
+  const remotes = {
+    plane: { id: 'p1', identifier: 'PL-1', workspace_slug: 'ws', project_id: 'pid' },
+    jira: { id: '100', identifier: 'TES-1', project_key: 'TES' },
+    'github-issues': { id: '7', identifier: '#7', repository: 'owner/repo' }
+  };
+  for (const provider of Object.keys(remotes)) {
+    assert.equal(validateWithDraft202012(schema, { ...base, provider, remote: remotes[provider] }), true, `${provider} scope is valid`);
+    for (const [remoteProvider, remote] of Object.entries(remotes)) {
+      if (remoteProvider === provider) continue;
+      assert.equal(validateWithDraft202012(schema, { ...base, provider, remote }), false, `${provider} rejects ${remoteProvider} scope`);
+      assert.equal(validateWithDraft202012(schema, { ...base, provider, remote: { ...remotes[provider], ...remote } }), false, `${provider} rejects mixed ${remoteProvider} scope`);
+    }
+  }
+});
+
 test('WT3 core create inspect update clear normalizes tracker and preserves legacy connections', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt3-core-'));
   try {

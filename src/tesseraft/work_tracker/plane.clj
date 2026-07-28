@@ -76,6 +76,10 @@
   (or (get response k)
       (get response (name k))))
 
+(defn- http-status [response]
+  (let [status (response-value response :status)]
+    (when (integer? status) status)))
+
 (defn- failure
   ([category message] (failure category message {}))
   ([category message details]
@@ -202,7 +206,7 @@
                                     :url url
                                     :headers {"X-API-Key" api-key "Accept" "application/json"}
                                     :timeout-ms request-timeout-ms})]
-        (let [status (response-value response :status)
+        (let [status (http-status response)
               body (response-value response :body)
               headers (response-value response :headers)
               error (response-value response :error)]
@@ -219,6 +223,7 @@
                      {:http_status 429 :rate_limit (safe-rate-limit-metadata headers)})
             (= 401 status) (failure "unauthorized" "Plane credential was rejected" {:http_status 401})
             (= 404 status) (failure "not_found" "Plane item was not found" {:http_status 404})
+            (nil? status) (failure "malformed_output" "Plane transport returned malformed response metadata")
             (<= 400 status 499) (failure "client_error" "Plane request failed" {:http_status status})
             (<= 500 status 599) (failure "server_error" "Plane service failed" {:http_status status})
             :else (failure "unexpected_status" "Plane returned an unexpected status" {:http_status status})))))))

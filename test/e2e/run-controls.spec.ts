@@ -1,6 +1,29 @@
 import path from 'node:path';
 import { expect, test } from './fixtures';
 
+test('keeps the start wizard open and visible when run creation is rejected', async ({ page, isolatedRun }) => {
+  await page.goto(isolatedRun.baseURL);
+  await page.getByRole('button', { name: /Runs: operate and inspect run status/ }).click();
+  await page.getByLabel('Run controls').getByRole('button', { name: 'Start workflow', exact: true }).click();
+  const wizard = page.getByRole('dialog', { name: 'Start workflow' });
+  await wizard.getByRole('button', { name: isolatedRun.pw3.workflowName, exact: true }).click();
+  await wizard.getByLabel('Run ID').fill(isolatedRun.pw3.runId);
+  await wizard.getByLabel('Max automated steps').fill('1');
+  await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
+
+  await page.route('**/api/runs', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: 'duplicate run id from e2e' } }) });
+      return;
+    }
+    await route.fallback();
+  });
+  await wizard.getByRole('button', { name: 'Start and run' }).click();
+  await expect(wizard).toBeVisible();
+  await expect(wizard.getByText('duplicate run id from e2e')).toBeVisible();
+  await expect(wizard.getByLabel('Run ID')).toHaveValue(isolatedRun.pw3.runId);
+});
+
 test('starts, steps, and resumes a safe local workflow from visible run controls', async ({ page, isolatedRun }) => {
   const pageErrors: Error[] = [];
   page.on('pageerror', (error) => pageErrors.push(error));
@@ -17,11 +40,17 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await wizard.getByLabel('Run ID').fill(isolatedRun.pw3.runId);
   await wizard.getByLabel('Max automated steps').fill('1');
   await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
-  await wizard.getByRole('button', { name: 'Start and run' }).click();
+  const [startResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url() === `${isolatedRun.baseURL}/api/runs` && response.request().method() === 'POST'),
+    wizard.getByRole('button', { name: 'Start and run' }).click()
+  ]);
+  expect(startResponse.status(), 'start run status').toBe(202);
   await expect(wizard).toBeHidden();
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    const response = await fetch(`${isolatedRun.baseURL}/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    if (response.status !== 200) return { status: `http-${response.status}`, state: null, pathUnderWorkspace: false };
+    const body = await response.json() as { run: { status: string; state: string; path: string } };
     const apiRunDir = path.resolve(isolatedRun.workspaceRoot, body.run.path);
     return { status: body.run.status, state: body.run.state, pathUnderWorkspace: apiRunDir.startsWith(path.resolve(isolatedRun.workspaceRoot) + path.sep) };
   }, { timeout: 15_000 }).toEqual({ status: 'running', state: isolatedRun.pw3.expectedAfterStartState, pathUnderWorkspace: true });

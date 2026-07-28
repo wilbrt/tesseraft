@@ -386,6 +386,8 @@ test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST r
   // stays open and preserves configured inputs, rather than closing silently.
   assert.match(controls, /data\.status === 'guarded'/);
   assert.match(controls, /Run start was guarded/);
+  assert.match(wizard, /await onStart\(payload\);\s*onClose\(\);/s);
+  assert.doesNotMatch(wizard, /onClose\(\);\s*try\s*\{\s*await onStart\(payload\);/s);
 });
 
 test('project overlays portal outside clipping layout and Settings owns the full page surface', () => {

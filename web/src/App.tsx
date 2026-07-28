@@ -111,6 +111,17 @@ export const App = () => {
     if (snapshot.events) setEvents(snapshot.events);
     if (snapshot.artifacts) setArtifacts(snapshot.artifacts);
     if (snapshot.runs) setRuns({ data: snapshot.runs, error: null });
+    if (snapshot.run) {
+      const snapshotRun = snapshot.run;
+      setRuns((current) => {
+        const list = snapshot.runs || current.data;
+        const index = list.findIndex((run) => run.run_id === snapshotRun.run_id);
+        if (index === -1) return current;
+        const next = [...list];
+        next[index] = { ...next[index], ...snapshotRun };
+        return { data: next, error: null };
+      });
+    }
     setLastRunRefresh(new Date().toLocaleTimeString());
   };
 

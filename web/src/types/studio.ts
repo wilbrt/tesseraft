@@ -16,6 +16,7 @@ export const NODE_TYPES: NodeTypeId[] = [':agent', ':deterministic', ':process',
 // remains the final authority and accepts unknown handlers via the
 // "Custom…" option. Update this when the Clojure registry changes.
 export const KNOWN_HANDLERS: string[] = [
+  ':work-tracker/fetch-item',
   ':jira/fetch-ticket',
   ':git/ensure-branch',
   ':git/ensure-worktree',

@@ -46,6 +46,9 @@ node --test test/work-tracker-settings-doctor.test.js
 printf '\nChecking Plane work-item read adapter contracts (WT5)...\n'
 node --test test/work-tracker-read.test.js
 ./bin/tesseraft lint test/fixtures/valid/work-tracker-fetch/workflow.edn
+
+printf '\nChecking Jira and GitHub Issues work-item read adapter contracts (WT6)...\n'
+node --test test/work-tracker-read-adapters.test.js
 ./bin/tesseraft control-plane project work-tracker-providers >/tmp/tesseraft-cp-work-tracker-providers.json
 python3 - <<'PY'
 import json
