@@ -21,6 +21,20 @@ BASE_WORKFLOW = '''{:api-version "tesseraft.workflow/v1"
           :abort {:type :terminal :status :failure}}}
 '''
 
+# :initial already resolves to an existing state and the sole terminal is
+# reachable, so this workflow is strict-lint-clean before any import -- used
+# to prove a diagnostic the import itself creates still blocks.
+CLEAN_SINGLE_TERMINAL_WORKFLOW = '''{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "import-transaction-clean"}
+ :inputs {:repo-root {:type :string :required true}
+          :test-cmd {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "10m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :done
+ :states {:done {:type :terminal :status :success}}}
+'''
+
 
 def with_tmp(fn):
     tmp = Path(tempfile.mkdtemp(prefix="tesseraft-fi5-"))
@@ -207,6 +221,73 @@ def test_next_fills_only_unmapped_declared_outcomes():
     with_tmp(run)
 
 
+def test_next_rejected_when_every_outcome_already_routed():
+    def run(tmp):
+        fragment, wf = write_project(tmp)
+        args = import_args(fragment, wf) + ["--next", "abort"]
+        assert_rollback(tmp, args, "--next is only valid when at least one declared outcome is not routed with --outcome")
+    with_tmp(run)
+
+
+def test_unknown_outcome_route_is_rejected():
+    def run(tmp):
+        fragment, wf = write_project(tmp)
+        args = import_args(fragment, wf) + ["--outcome", "bogus=done"]
+        assert_rollback(tmp, args, "Unknown fragment outcome route(s)")
+    with_tmp(run)
+
+
+def test_reuse_action_leaves_preexisting_identical_asset_untouched():
+    def run(tmp):
+        fragment, wf = write_project(tmp)
+        src_dir = fragment.parent
+        (tmp / "prompts").mkdir()
+        (tmp / "schemas").mkdir()
+        shutil.copy(src_dir / "prompts/fix.md.tmpl", tmp / "prompts/fix.md.tmpl")
+        shutil.copy(src_dir / "schemas/status.schema.json", tmp / "schemas/status.schema.json")
+        before_prompts_mtime = (tmp / "prompts/fix.md.tmpl").stat().st_mtime_ns
+        before_schemas_mtime = (tmp / "schemas/status.schema.json").stat().st_mtime_ns
+        proc = tesseraft(import_args(fragment, wf), tmp / "home")
+        assert proc.returncode == 0, proc.stderr
+        assert (tmp / "prompts/fix.md.tmpl").stat().st_mtime_ns == before_prompts_mtime
+        assert (tmp / "schemas/status.schema.json").stat().st_mtime_ns == before_schemas_mtime
+        assert (tmp / "prompts/fix.md.tmpl").read_bytes() == (src_dir / "prompts/fix.md.tmpl").read_bytes()
+        assert (tmp / "schemas/status.schema.json").read_bytes() == (src_dir / "schemas/status.schema.json").read_bytes()
+    with_tmp(run)
+
+
+def test_import_succeeds_despite_preexisting_unreachable_terminal():
+    """BASE_WORKFLOW's :abort is unreachable before any import: :initial
+    names :run-tests, which does not exist in :states until this very import
+    creates it, so nothing ever routes to :abort on its own. Routing both
+    declared outcomes to :done (never to :abort) leaves that same
+    pre-existing unreachable-state diagnostic untouched -- not introduced by
+    the import -- so a whole-workflow strict gate must not block this
+    otherwise complete, fully-bound import."""
+    def run(tmp):
+        fragment, wf = write_project(tmp)
+        args = without_pair(import_args(fragment, wf), "--outcome", "fail=abort") + ["--outcome", "fail=done"]
+        proc = tesseraft(args, tmp / "home")
+        assert proc.returncode == 0, proc.stderr
+        assert "pass->done" in proc.stdout and "fail->done" in proc.stdout, proc.stdout
+    with_tmp(run)
+
+
+def test_import_blocked_by_diagnostic_the_import_itself_introduces():
+    """CLEAN_SINGLE_TERMINAL_WORKFLOW is strict-lint-clean before import: its
+    sole state is also :initial. Importing a new node that nothing
+    transitions into leaves that new node itself unreachable -- a diagnostic
+    that did not and could not exist before the import -- which must still
+    block, unlike the pre-existing case above."""
+    def run(tmp):
+        fragment, wf = write_project(tmp, CLEAN_SINGLE_TERMINAL_WORKFLOW)
+        pre_status, pre_payload = lint_json(wf, tmp / "home", strict=True)
+        assert pre_status == 0, pre_payload
+        args = without_pair(import_args(fragment, wf), "--outcome", "fail=abort") + ["--outcome", "fail=done"]
+        assert_rollback(tmp, args, "Fragment import would introduce a strict lint diagnostic")
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_success_writes_complete_strict_linting_inclusion_and_summary()
     test_failures_leave_workflow_and_assets_unchanged()
@@ -214,3 +295,8 @@ if __name__ == "__main__":
     test_asset_that_would_overwrite_workflow_file_is_rejected_without_mutation()
     test_partial_commit_failure_rolls_back_previously_installed_assets()
     test_next_fills_only_unmapped_declared_outcomes()
+    test_next_rejected_when_every_outcome_already_routed()
+    test_unknown_outcome_route_is_rejected()
+    test_reuse_action_leaves_preexisting_identical_asset_untouched()
+    test_import_succeeds_despite_preexisting_unreachable_terminal()
+    test_import_blocked_by_diagnostic_the_import_itself_introduces()

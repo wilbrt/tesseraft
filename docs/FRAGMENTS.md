@@ -228,7 +228,7 @@ Import currently:
 2. validates required bindings, parameter values, version/scope/prefix, declared outcome coverage, and all target states in memory;
 3. refuses unsafe, missing, conflicting, or workflow-file-colliding assets before mutation;
 4. writes a complete `:fragment` node preserving existing authored workflow fields;
-5. strict-lints the candidate workflow in memory;
+5. strict-lints the candidate workflow in memory and refuses only diagnostics the import itself introduces, so a pre-existing unrelated warning elsewhere in the workflow does not block the import;
 6. stages new assets and the rendered workflow, reuses byte-identical assets, and rolls back handled failures so the workflow and assets remain unchanged;
 7. prints the state id plus concise input, parameter, and outcome-route summaries.
 
