@@ -8,9 +8,54 @@ The first node fetches the selected project tracker through `:work-tracker/fetch
 
 Tracker choice controls intake only. GitHub code-host/PR configuration and credentials control PR publication through `:github/create-pr`; selecting the GitHub Issues tracker does not supply PR transport credentials.
 
+## Portable project setup
+
+For real runs, configure the project through the portable descriptor and control-plane contracts in [`../../docs/PROJECTS.md`](../../docs/PROJECTS.md): see "Project identity" for `.tesseraft/project.json`, "Credential ownership" for reference/value ownership, "Work tracker connection" for provider shapes, and "Control-plane commands" for `tesseraft control-plane project connections`.
+
+A portable `.tesseraft/project.json` may commit project identity, discovery, provider config, and non-secret credential references. Do **not** include `workspace_root`, raw tokens, or other machine-local state:
+
+```json
+{
+  "version": 1,
+  "project_id": "my-project",
+  "name": "My Project",
+  "runs_root": "runs",
+  "discovery": { "workflow-roots": ["examples"] },
+  "connections": {
+    "github": { "credential-ref": "env:GITHUB_PR_TOKEN" },
+    "work-tracker": {
+      "provider": "plane",
+      "credential-ref": "env:PLANE_TRACKER_TOKEN",
+      "config": {
+        "api-base-url": "https://api.plane.so",
+        "workspace-slug": "acme",
+        "project-id": "project-uuid"
+      }
+    }
+  }
+}
+```
+
+Equivalent control-plane setup can write or update just the tracker connection:
+
+```bash
+./bin/tesseraft control-plane project connections my-project \
+  --work-tracker-provider plane \
+  --work-tracker-credential-ref env:PLANE_TRACKER_TOKEN \
+  --work-tracker-config '{"api-base-url":"https://api.plane.so","workspace-slug":"acme","project-id":"project-uuid"}'
+```
+
+Tracker config shapes are:
+
+- Plane: `provider: "plane"`, `credential-ref`, and `config.api-base-url`, `config.workspace-slug`, `config.project-id`.
+- Jira: `provider: "jira"`, `credential-ref`, and `config.base-url`, `config.project-key`.
+- GitHub Issues: `provider: "github-issues"`, `credential-ref`, and `config.repository` as `owner/name`.
+
+The project owns and commits the provider config plus the non-secret `credential-ref`; the user, machine, or CI owns and supplies the referenced secret value through the selected store, such as an environment variable. Never put a raw token in the project descriptor, fixture, prompt, or workflow. `connections.github.credential-ref` is a separate credential for GitHub PR publication and is not supplied by choosing `connections.work-tracker.provider = "github-issues"`.
+
 ## Local mock fixtures
 
-The fixture project contexts are non-secret and use inert credential references:
+The fixture project contexts are non-secret mock envelopes (not portable descriptors, because they include fixture-local `workspace_root`) and use inert credential references:
 
 - `fixtures/plane-project.json`
 - `fixtures/jira-project.json`
