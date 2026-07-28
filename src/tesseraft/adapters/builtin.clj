@@ -45,7 +45,9 @@
 (defn branch-name [ctx node]
   (or (not-empty (get-in ctx [:inputs :branch]))
       (not-empty (artifact-text ctx (get-in node [:inputs :branch-file])))
-      (str "feature/" (str/lower-case (get-in ctx [:inputs :ticket] "workflow")))))
+      (str "feature/" (str/lower-case (or (not-empty (get-in ctx [:inputs :item-id]))
+                                            (not-empty (get-in ctx [:inputs :ticket]))
+                                            "workflow")))))
 (defn git-ref-candidates [ref]
   (cond
     (str/starts-with? ref "refs/") [ref]

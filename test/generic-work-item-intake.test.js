@@ -9,9 +9,9 @@ const workflow = path.join(repoRoot, 'examples', 'work-item-to-pr', 'workflow.ed
 const fixturesDir = path.join(repoRoot, 'examples', 'work-item-to-pr', 'fixtures');
 
 const providers = [
-  { provider: 'plane', fixture: 'plane-project.json', itemId: 'PLANE-42' },
-  { provider: 'jira', fixture: 'jira-project.json', itemId: 'JIRA-42' },
-  { provider: 'github-issues', fixture: 'github-issues-project.json', itemId: '42' }
+  { provider: 'plane', fixture: 'plane-project.json', itemId: 'PLANE-42', expectedBranch: 'feature/plane-42' },
+  { provider: 'jira', fixture: 'jira-project.json', itemId: 'JIRA-42', expectedBranch: 'feature/jira-42' },
+  { provider: 'github-issues', fixture: 'github-issues-project.json', itemId: '42', expectedBranch: 'feature/42' }
 ];
 
 function runCli(args, options = {}) {
@@ -35,11 +35,18 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function startMockRun({ provider, fixtureName, itemId }) {
-  const runId = `generic-${provider}-mock`;
+function stateBranch(runDirPath) {
+  const state = fs.readFileSync(path.join(runDirPath, 'state.edn'), 'utf8');
+  const match = state.match(/:branch\s+"([^"]+)"/);
+  assert.ok(match, 'run state should record the selected branch');
+  return match[1];
+}
+
+function startMockRun({ provider, fixtureName, itemId, branch }) {
+  const runId = branch ? `generic-${provider}-explicit-branch-mock` : `generic-${provider}-mock`;
   const projectContext = fixture(fixtureName);
   fs.rmSync(runDir(runId), { recursive: true, force: true });
-  runCli([
+  const args = [
     'run', 'start', workflow,
     '--executor', 'mock',
     '--run-id', runId,
@@ -47,9 +54,11 @@ function startMockRun({ provider, fixtureName, itemId }) {
     '--project-context', JSON.stringify(projectContext),
     '--input', `item-id=${itemId}`,
     '--input', 'repo-root=.',
-    '--input', 'base-branch=main',
-    '--format', 'json'
-  ]);
+    '--input', 'base-branch=main'
+  ];
+  if (branch) args.push('--input', `branch=${branch}`);
+  args.push('--format', 'json');
+  runCli(args);
   return { runId, dir: runDir(runId), projectContext };
 }
 
@@ -75,6 +84,7 @@ function assertNoFiles(runDirPath, relativeFiles) {
 }
 
 test('generic work-item-to-pr graph consumes one normalized boundary for Plane, Jira, and GitHub Issues fixtures', () => {
+  const branches = new Set();
   for (const entry of providers) {
     const { runId, dir, projectContext } = startMockRun({ provider: entry.provider, fixtureName: entry.fixture, itemId: entry.itemId });
 
@@ -92,6 +102,9 @@ test('generic work-item-to-pr graph consumes one normalized boundary for Plane, 
     assert.deepEqual(item.labels, [{ name: 'mock' }]);
 
     step(dir);
+    assert.equal(stateBranch(dir), entry.expectedBranch);
+    assert.notEqual(entry.expectedBranch, 'feature/workflow');
+    branches.add(entry.expectedBranch);
     assertNoFiles(dir, ['pr/pr.json', 'worktree/path.txt']);
 
     step(dir);
@@ -113,6 +126,21 @@ test('generic work-item-to-pr graph consumes one normalized boundary for Plane, 
       .join('\n');
     assert.doesNotMatch(generated, /WT6I_[A-Z_]+TOKEN|private-sentinel|credential-ref|api-base-url|workspace-slug|project-key/i);
   }
+  assert.equal(branches.size, providers.length, 'provider fixture item IDs should resolve to distinct default branches');
+});
+
+test('explicit generic branch input remains authoritative over item-id default', () => {
+  const explicitBranch = 'feature/custom-work-item-branch';
+  const entry = providers[0];
+  const { dir } = startMockRun({
+    provider: entry.provider,
+    fixtureName: entry.fixture,
+    itemId: entry.itemId,
+    branch: explicitBranch
+  });
+  step(dir);
+  step(dir);
+  assert.equal(stateBranch(dir), explicitBranch);
 });
 
 test('missing tracker fails at the real fetch preflight before branch, agent, push, or PR effects', () => {
