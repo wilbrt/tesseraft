@@ -1,0 +1,35 @@
+Fresh Claude Code session: PR DRAFTING ONLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/design.md
+- Implementation summaries, bb test reports, Playwright reports, and review reports: {{run.dir}}
+- Worktree: {{run.worktree-dir}}
+
+Goal:
+Draft clear pull request metadata for the accepted change.
+
+Testing policy (deterministic-first):
+- Testing is NOT your job. Do NOT run tests, lint, type checks, builds, or
+  `npm`/`bb` commands here.
+- The deterministic test gates (bb test and Playwright) and the code review
+  already passed before this node. Reference their reports in the PR body;
+  do not re-run anything.
+
+Rules:
+- Do not edit source code, call GitHub, or push.
+- Summarize the change, the deterministic validation performed (bb test +
+  Playwright browser suite), and notable risks.
+- Fail only if accurate PR metadata cannot yet be produced; a failed draft
+  is retried.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status: {{run.dir}}/pr/draft-status.json
+
+Status:
+{"status":"pass","summary":"PR metadata drafted","issues_file":null}
+
+The body should include Summary, Implementation notes, Validation (bb test
+and Playwright results), and Risks or follow-up.

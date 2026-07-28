@@ -5,6 +5,8 @@ This guide covers the side-effecting implementation workflows:
 - `examples/prompt-to-pr/workflow.edn`
 - `examples/code-review-loop/workflow.edn`
 - `examples/playwright-code-review-loop/workflow.edn`
+- `examples/deterministic-code-review-loop/workflow.edn`
+- `examples/supervised-deterministic-code-review-loop/workflow.edn`
 - `examples/canon-tdd-to-pr/workflow.edn`
 - `examples/focused-tdd-to-pr/workflow.edn`
 
@@ -17,7 +19,7 @@ push to GitHub, and create pull requests.
 Before running side-effecting nodes, make sure you have:
 
 - `bb`, `pi`, and `gh` installed and on `PATH`;
-- for `playwright-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
+- for `playwright-code-review-loop`, `deterministic-code-review-loop`, and `supervised-deterministic-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
 - GitHub SSH write access for branch publication;
@@ -93,6 +95,14 @@ Use the same command shape with `examples/prompt-to-pr/workflow.edn` and
 `examples/playwright-code-review-loop/workflow.edn` and
 `.agent-runs/playwright-code-review-loop/<id>` to use the variant whose
 regression gate runs `npm run web:e2e` in the implementation worktree.
+
+The supervised deterministic variant uses
+`examples/supervised-deterministic-code-review-loop/workflow.edn` and
+`.agent-runs/supervised-deterministic-code-review-loop/<id>`. Its bb and
+Playwright gates behave like the deterministic workflow. After every third
+failed correction cycle, a source-read-only supervisor inspects recent durable
+reports, summaries, issues, and logs, then writes `supervision/current.md` for
+the next implementation attempt.
 
 ## Inspecting run state and artifacts
 

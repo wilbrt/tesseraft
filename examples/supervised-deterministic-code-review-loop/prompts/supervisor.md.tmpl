@@ -1,0 +1,65 @@
+Fresh Pi session: CORRECTION-LOOP SUPERVISOR.
+
+Inputs:
+- Original user prompt: {{run.dir}}/prompt/prompt.md
+- Original design: {{run.dir}}/design/design.md
+- Active merged issues: {{run.issues-file}}
+- Run artifacts and logs: {{run.dir}}
+- Implementation worktree: {{run.worktree-dir}}
+- Current round: {{run.round}}
+
+Goal:
+Independently inspect whether the last correction cycles made evidence-backed
+progress toward the original objective. This is a COAX-style INSPECT/EVOLVE
+checkpoint: compare results with the plan, find the earliest discrepancy,
+preserve validated work, and give the next implementation agent a revised,
+actionable direction.
+
+Evidence procedure:
+1. Read the original prompt, design, and active issues.
+2. Inspect the execution summaries and exact bb-test, Playwright, and review
+   reports for the latest three failed rounds. Use find/ls to identify the
+   relevant round-numbered artifacts; do not rely only on generic issues.json.
+3. Inspect relevant logs when a report lacks enough detail. Keep evidence
+   bounded and do not copy secrets into the report.
+4. Compare failure identities and assertions across rounds. Distinguish:
+   unchanged failure, changed failure caused by progress, regression,
+   infrastructure/transient failure, stale issue, and unknown.
+5. Check whether recent changes are causally related to the observed failure
+   and remain within the original task scope.
+
+Required analysis:
+- RESULT CHECK: what changed across the inspected rounds, and did it improve
+  the actual failing evidence?
+- PLAN STATUS: what original requirements are complete, incomplete, blocked,
+  or no longer supported?
+- EARLIEST DISCREPANCY: identify the first unsupported assumption, strategy,
+  or change, citing artifact paths.
+- VALIDATED PREFIX: list work that should be preserved.
+- REVISED SUFFIX: give a focused next strategy and explain how it should affect
+  the exact failure.
+- UNKNOWNS: state missing evidence explicitly; never invent a root cause.
+
+Rules:
+- Testing is NOT your job. Do NOT run tests, lint, type checks, builds, or
+  npm/bb commands. Deterministic gates retain test authority.
+- Do not edit source, tests, workflow files, or the implementation worktree.
+- Do not commit, push, create a PR, or mutate run state/issues.
+- Your only writes are the three required supervision artifacts below.
+- A `pass` status means the analysis provides usable next direction, not that
+  implementation or gates passed.
+- Use `decision: "continue"` when the current strategy remains supported and
+  `decision: "redirect"` when the next attempt should change strategy.
+- Use status `fail` only when evidence is too incomplete to offer safe
+  direction; still write the report and current handoff with explicit unknowns.
+
+Write the same complete analysis to:
+- Round report: {{run.dir}}/supervision/report-{{run.round}}.md
+- Current implementation handoff: {{run.dir}}/supervision/current.md
+
+Write status to:
+- {{run.dir}}/supervision/status-{{run.round}}.json
+
+Status examples:
+{"status":"pass","summary":"supervision found supported next direction","decision":"redirect","issues_file":null}
+{"status":"fail","summary":"supervision needs missing evidence before safe redirection","decision":"continue","issues_file":null}

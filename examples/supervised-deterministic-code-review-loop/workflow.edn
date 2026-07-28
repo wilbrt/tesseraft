@@ -1,8 +1,8 @@
 {:api-version "tesseraft.workflow/v1"
  :kind :workflow
- :metadata {:name "deterministic-code-review-loop"
-            :title "Deterministic Code Review Loop"
-            :description "Design, implement, code review, and PR creation where AGENTS RUN NO TESTS. Every test signal is produced by a deterministic :process node: `bb test` (cheap smoke suite) runs first, then the Playwright browser suite runs on bb-green, so a fast failure short-circuits before the expensive browser gate. Agents are for design, implementation, review, and PR drafting only."}
+ :metadata {:name "supervised-deterministic-code-review-loop"
+            :title "Supervised Deterministic Code Review Loop"
+            :description "The deterministic code review loop with an independent, read-only supervisor checkpoint after every three failed correction cycles. Deterministic bb and Playwright gates retain test authority; the supervisor inspects durable run evidence and writes direction for the next implementation attempt."}
  :inputs {:prompt {:type :string :required true}
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
@@ -37,7 +37,7 @@
    :thinking "medium"
    :prompt-template "prompts/design.md.tmpl"
    :prompt-output "prompts/generated/design-{{run.attempt}}.md"
-   :session-name "deterministic-code-review-loop-design-{{run.attempt}}"
+   :session-name "supervised-deterministic-code-review-loop-design-{{run.attempt}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
    :outputs {:status {:path "design/status.json" :schema "../../schemas/status.schema.json" :required true}
@@ -64,14 +64,44 @@
    :thinking "medium"
    :prompt-template "prompts/implement.md.tmpl"
    :prompt-output "prompts/generated/implement-{{run.round}}.md"
-   :session-name "deterministic-code-review-loop-implement-{{run.round}}"
+   :session-name "supervised-deterministic-code-review-loop-implement-{{run.round}}"
    :tools [:read :bash :edit :write :grep :find :ls]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "90m"}
    :outputs {:status {:path "execution/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :summary {:path "execution/summary-{{run.round}}.md" :required true}
              :issues {:path "execution/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :bb-test-gate}
-                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :implement}]}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :supervision-check}]}
+
+  ;; All failed correction cycles pass through this cheap cadence check. Since
+  ;; runs start at round 1, rounds 4, 7, 10, ... represent each third failure.
+  :supervision-check
+  {:type :process
+   :title "Check periodic supervision cadence"
+   :command ["./scripts/check_supervision.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "30s"}
+   :transitions [{:when {:route "supervise"} :next :supervisor}
+                 {:when {:route "continue"} :next :implement}]}
+
+  :supervisor
+  {:type :agent
+   :title "Inspect correction-loop progress"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/supervisor.md.tmpl"
+   :prompt-output "prompts/generated/supervisor-{{run.round}}.md"
+   :session-name "supervised-deterministic-code-review-loop-supervisor-{{run.round}}"
+   :tools [:read :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs {:status {:path "supervision/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
+             :report {:path "supervision/report-{{run.round}}.md" :required true}
+             :current {:path "supervision/current.md" :required true}}
+   :transitions [{:when {:status "pass"} :next :implement}
+                 {:when {:status "fail"} :next :implement}]}
 
   ;; ---- Deterministic gate 1: bb test (cheap, fast) ----
   ;; Runs `bb test` in the implementation worktree. Runs first so a fast
@@ -89,7 +119,7 @@
    :outputs {:report {:path "bb-test/report-{{run.round}}.md" :required true}
              :issues {:path "bb-test/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :playwright-gate}
-                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :implement}]}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :supervision-check}]}
 
   ;; ---- Deterministic gate 2: Playwright browser suite (expensive) ----
   ;; Runs `npm run web:e2e` in the implementation worktree, but only after the
@@ -106,7 +136,7 @@
    :outputs {:report {:path "playwright/report-{{run.round}}.md" :required true}
              :issues {:path "playwright/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :next :review}
-                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :implement}]}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :supervision-check}]}
 
   :review
   {:type :agent
@@ -117,14 +147,14 @@
    :thinking "medium"
    :prompt-template "prompts/review.md.tmpl"
    :prompt-output "prompts/generated/review-{{run.round}}.md"
-   :session-name "deterministic-code-review-loop-review-{{run.round}}"
+   :session-name "supervised-deterministic-code-review-loop-review-{{run.round}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "45m"}
    :outputs {:status {:path "review/status-{{run.round}}.json" :schema "../../schemas/status.schema.json" :required true}
              :report {:path "review/report-{{run.round}}.md" :required true}
              :issues {:path "review/issues-{{run.round}}.json" :schema "../../schemas/issues.schema.json" :required false}}
    :transitions [{:when {:status "pass"} :effects [:clear-issues] :next :pr-draft}
-                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :implement}]}
+                 {:when {:status "fail"} :effects [:merge-issues :inc-round] :next :supervision-check}]}
 
   :pr-draft
   {:type :agent
@@ -135,7 +165,7 @@
    :thinking "medium"
    :prompt-template "prompts/pr-draft.md.tmpl"
    :prompt-output "prompts/generated/pr-draft-{{run.attempt}}.md"
-   :session-name "deterministic-code-review-loop-pr-draft-{{run.attempt}}"
+   :session-name "supervised-deterministic-code-review-loop-pr-draft-{{run.attempt}}"
    :tools [:read :bash :grep :find :ls :write]
    :runtime {:cwd "{{run.worktree-dir}}" :timeout "20m"}
    :outputs {:status {:path "pr/draft-status.json" :schema "../../schemas/status.schema.json" :required true}
