@@ -52,7 +52,8 @@ def main() -> None:
     brief = read(run_dir / "design/brief.md", 9000)
     validation = read(newest(run_dir / "validation", "summary-*.json"), 2200)
     review_text = read(newest(run_dir / "review", "report-*.md"), 2800)
-    replacement = bool(str(request.get("inputs", {}).get("branch", "")).strip())
+    requested_branch = request.get("inputs", {}).get("branch")
+    replacement = isinstance(requested_branch, str) and bool(requested_branch.strip())
     summary = review_summary(review_text) if replacement else section(brief, "Description", 1200)
     problem_heading = "## Final correction" if replacement else "## Problem"
     body = "\n".join([

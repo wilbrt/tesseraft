@@ -204,8 +204,9 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             result = self.invoke("assemble_pr.py", request)
             self.assertEqual(result.returncode, 0, result.stderr)
             body = (run_dir / "pr/pr-body.md").read_text()
-            self.assertIn("Full user-visible delivery.", body)
-            self.assertIn("Users lack the complete behavior.", body)
+            self.assertIn("## Summary\n\nFull user-visible delivery.", body)
+            self.assertIn("## Problem\n\nUsers lack the complete behavior.", body)
+            self.assertNotIn("## Final correction", body)
             self.assertNotIn("Only fixed the final tiny correction.", body)
             self.assertLessEqual(len(body.encode()), 16000)
 

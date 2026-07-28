@@ -38,3 +38,9 @@ Replacement runs must preserve an explicitly supplied task branch rather than in
 FI3-DIP2 continued the preserved branch and opened PR #89 in round 1 with 3 agent sessions, 38 responses, and $2.28 recorded executor cost. Its focused correction, deterministic validation, and whole-diff review all passed without feedback or supervision.
 
 A replacement design correctly focused on the final defect, but that caused initial PR assembly to present the correction rather than the complete 11-commit branch. On replacement runs, require the design PR title to name the complete base-to-branch change, synthesize the summary from the whole-diff review, and label the focused design problem as the final correction.
+
+## FI4-DIP1 reviewed observations
+
+FI4-DIP1 opened PR #90 in round 3 with 6 agent sessions, 100 responses, and $6.27 recorded executor cost. Two distinct correction cycles—an ambient resource-kind mismatch followed by pathless alias and documentation findings—routed directly to implementation with zero supervisor sessions. This supports diagnostic-sensitive exact fingerprints while retaining normalized failure classes.
+
+Normal runs may carry a JSON `null` branch input. Replacement detection must require a nonblank string; stringifying null incorrectly labels ordinary PR metadata as a replacement/final-correction body. Keep explicit replacement semantics type-sensitive.
