@@ -361,6 +361,9 @@ python3 test/fragment_package_parity.test.py
 printf '\nChecking fragment inclusion contract FI3...\n'
 python3 test/fragment_inclusion_contract.test.py
 
+printf '\nChecking transactional fragment import FI5...\n'
+python3 test/fragment_import_transaction.test.py
+
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json
@@ -372,7 +375,7 @@ PY
 rm -f /tmp/tesseraft-fragment-lint.json
 
 printf '\nLinting fragment-including workflow fixtures...\n'
-./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn
+./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn --strict
 
 assert_lint_json_has_error () {
   local output="$1"
