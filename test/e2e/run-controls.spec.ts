@@ -25,7 +25,9 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await expect(wizard).toBeHidden();
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    const response = await fetch(`${isolatedRun.baseURL}/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    if (response.status !== 200) return { status: `http-${response.status}`, state: null, pathUnderWorkspace: false };
+    const body = await response.json() as { run: { status: string; state: string; path: string } };
     const apiRunDir = path.resolve(isolatedRun.workspaceRoot, body.run.path);
     return { status: body.run.status, state: body.run.state, pathUnderWorkspace: apiRunDir.startsWith(path.resolve(isolatedRun.workspaceRoot) + path.sep) };
   }, { timeout: 15_000 }).toEqual({ status: 'running', state: isolatedRun.pw3.expectedAfterStartState, pathUnderWorkspace: true });
