@@ -31,7 +31,8 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
 
     def test_graph_is_bounded_deterministic_first_and_has_no_pr_agent(self):
         workflow = WORKFLOW.read_text()
-        self.assertIn(':max-rounds 8', workflow)
+        self.assertIn(':max-rounds 12', workflow)
+        self.assertIn(':inputs {:correction-budget 8}', workflow)
         self.assertIn(':command ["./scripts/run_validation.py"]', workflow)
         self.assertIn(':command ["./scripts/prepare_feedback.py"]', workflow)
         self.assertIn('{:when {:route "supervise"} :next :supervisor}', workflow)
@@ -151,6 +152,33 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             self.assertEqual(current["class_repeat_count"], 1)
             history = json.loads((run_dir / "feedback/history.json").read_text())
             self.assertEqual(history[0]["failure_class"], "validation-entrypoint-missing")
+
+    def test_changed_diagnostics_do_not_trigger_supervision_and_soft_budget_intervenes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            run_dir, repo = root / "run", root / "repo"
+            (run_dir / "validation").mkdir(parents=True)
+            self.init_repo(repo)
+            issue_path = run_dir / "validation/issues-1.json"
+            base = {"source": "deterministic-validation", "severity": "major", "title": "focused check failed", "acceptance_criteria": "focused check passes"}
+            issue_path.write_text(json.dumps([{**base, "details": "Traceback line 10\nAssertionError: first assertion"}]))
+            request = {"run": {"round": 2, "worktree-dir": str(repo)}, "node": {"inputs": {"correction-budget": 8}}, "paths": {"run_dir": str(run_dir)}}
+            first = json.loads(self.invoke("prepare_feedback.py", request).stdout)
+            first_current = json.loads((run_dir / "feedback/current.json").read_text())
+            self.assertEqual(first["route"], "continue")
+            (repo / "progress.txt").write_text("progress\n")
+            subprocess.run(["git", "add", "progress.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "progress"], cwd=repo, check=True)
+            issue_path.write_text(json.dumps([{**base, "details": "Traceback line 20\nAssertionError: second assertion"}]))
+            request["run"]["round"] = 3
+            second = json.loads(self.invoke("prepare_feedback.py", request).stdout)
+            second_current = json.loads((run_dir / "feedback/current.json").read_text())
+            self.assertEqual(second["route"], "continue")
+            self.assertNotEqual(first_current["failure_fingerprint"], second_current["failure_fingerprint"])
+            self.assertNotEqual(first_current["diagnostic_signature"], second_current["diagnostic_signature"])
+            request["run"]["round"] = 9
+            over_budget = json.loads(self.invoke("prepare_feedback.py", request).stdout)
+            self.assertEqual(over_budget["route"], "intervene")
 
     def test_pr_assembly_leads_with_full_design_not_latest_correction(self):
         with tempfile.TemporaryDirectory() as tmp:

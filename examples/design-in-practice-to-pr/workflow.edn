@@ -7,7 +7,7 @@
           :repo-root {:type :path :required true}
           :base-branch {:type :string :default "main"}
           :branch {:type :string :required false}}
- :defaults {:max-rounds 8
+ :defaults {:max-rounds 12
             :state-timeout "45m"
             :approval-timeout "24h"
             :base-branch "main"}
@@ -138,6 +138,7 @@
    :input-mode :json-stdin
    :output-mode :json-stdout
    :runtime {:timeout "30s"}
+   :inputs {:correction-budget 8}
    :outputs {:current {:path "feedback/current.json" :required true}
              :history {:path "feedback/history.json" :required true}}
    :transitions [{:when {:route "continue"} :next :implement}

@@ -24,3 +24,13 @@ The same two failures had different exact fingerprints but one common class: mis
 Independent review found policy-allowlist parity, documentation-scope, and portable-key-collision defects after deterministic tests passed. Keep semantic review mandatory.
 
 Deterministic PR assembly worked but led with the newest correction summary rather than the complete change. Build PR summaries from the design problem/direction, final validation, final review, and diff—not from the latest correction alone.
+
+## FI3-DIP1 reviewed observations
+
+FI3-DIP1 reached the hard round limit with one minor review finding left after 15 agent sessions, 247 responses, and $15.53 recorded executor cost. The branch and all deterministic evidence were preserved, but the global max-round check ran before `prepare-feedback`, so intervention and run-learning telemetry were unreachable. Future workflows use a soft correction budget routed through intervention plus a higher hard runtime safety cap.
+
+The run made concrete progress across multiple assertions from the same focused check. Because exact fingerprints omitted diagnostics, changing assertions were misclassified as repeated and triggered an unnecessary supervisor session. Exact fingerprints must include a bounded normalized diagnostic signature; failure classes remain separate for common-cause reporting.
+
+The supervisor itself was useful: it identified an invalid import test fixture, preserved the validated implementation prefix, and redirected one precise correction. Keep supervision for genuinely repeated evidence, not merely repeated check titles.
+
+Replacement runs must preserve an explicitly supplied task branch rather than inventing a new branch, so bounded work can continue without mutating or repinning the failed run.

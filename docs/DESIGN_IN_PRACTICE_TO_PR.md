@@ -55,9 +55,9 @@ Correction agents receive `feedback/current.json`, not a merged historical backl
 - repeated evidence or unchanged work routes to a read-only supervisor;
 - continued stalling after two supervisor handoffs blocks for human retry/stop;
 - current feedback and supervision handoffs are each limited to 4 KB;
-- exact failure fingerprints drive retries while normalized failure classes expose common causes;
+- exact failure fingerprints include a bounded diagnostic signature, while normalized failure classes expose common causes;
 - validation-plan command paths are immutable implementation handoffs, preventing avoidable missing-entrypoint rounds;
-- global rounds are bounded at eight.
+- a soft correction budget of eight routes to human intervention, while a hard runtime safety cap of twelve prevents unbounded execution without bypassing intervention/telemetry.
 
 Full reports remain durable evidence but are not default correction context.
 
@@ -67,7 +67,9 @@ Full reports remain durable evidence but are not default correction context.
 
 Every completed or operator-stopped run writes `learning/run-summary.json` with rounds, event counts, feedback fingerprints, supervision count, PR presence, and executor-reported session/token/cost data when available. Token totals explicitly include cache reads where the executor reports them. Promoting observations into workflow guidance is a separate reviewed authoring change.
 
-The first reviewed run, FI2-DIP1, opened PR #87 at round 5 using nine agent sessions and $8.59 recorded executor cost. It validated current-only feedback and semantic review, and motivated immutable validation entrypoints, normalized failure classes, and concise full-change PR synthesis. These observations are versioned in the package's prior-run lessons.
+The first reviewed run, FI2-DIP1, opened PR #87 at round 5 using nine agent sessions and $8.59 recorded executor cost. It validated current-only feedback and semantic review, and motivated immutable validation entrypoints, normalized failure classes, and concise full-change PR synthesis.
+
+FI3-DIP1 reached the original hard limit with one minor review finding left after 15 sessions and $15.53 recorded cost. It proved that changed assertions under one check need diagnostic-sensitive fingerprints and that a hard limit must not preempt intervention/telemetry. The replacement-run contract preserves an explicitly supplied task branch without repinning the failed run. These observations are versioned in the package's prior-run lessons.
 
 ## Safe checks
 

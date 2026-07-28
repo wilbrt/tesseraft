@@ -18,6 +18,15 @@ def clipped(value: Any, maximum: int = MAX_TEXT) -> str:
     return text if len(text) <= maximum else text[:maximum] + "…"
 
 
+def diagnostic_signature(issues: list[dict[str, Any]]) -> str:
+    tails = []
+    for item in issues:
+        lines = [line.strip() for line in str(item.get("details", "")).splitlines() if line.strip()]
+        tails.append(lines[-1][-600:] if lines else "")
+    normalized = re.sub(r"\bline \d+\b", "line #", "\n".join(tails))
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def failure_class(issues: list[dict[str, Any]]) -> str:
     sources = {str(item.get("source", "")) for item in issues}
     text = "\n".join(f"{item.get('title', '')}\n{item.get('details', '')}" for item in issues).lower()
@@ -77,8 +86,9 @@ def main() -> None:
         "details": clipped(item.get("details")),
         "acceptance_criteria": clipped(item.get("acceptance_criteria"), 300),
     } for item in issues[:MAX_ISSUES] if isinstance(item, dict)]
+    signature = diagnostic_signature(compact_issues)
     identity = [{k: item.get(k) for k in ("source", "title", "acceptance_criteria")} for item in compact_issues]
-    failure_fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    failure_fingerprint = hashlib.sha256(json.dumps({"issues": identity, "diagnostic_signature": signature}, sort_keys=True).encode()).hexdigest()
     classified_as = failure_class(compact_issues)
     worktree_raw = run.get("worktree-dir")
     work = work_fingerprint(pathlib.Path(worktree_raw).resolve() if worktree_raw else None)
@@ -102,7 +112,13 @@ def main() -> None:
         class_repeated += 1
     unchanged_work = bool(previous and previous.get("work_fingerprint") == work["fingerprint"])
     supervision_count = len(list((run_dir / "supervision").glob("status-*.json")))
-    if (repeated >= 2 or unchanged_work) and supervision_count >= 2:
+    budget = request.get("node", {}).get("inputs", {}).get("correction-budget", 8)
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1:
+        raise ValueError("correction-budget must be a positive integer")
+    current_round = int(run.get("round", 1))
+    if current_round > budget:
+        route = "intervene"
+    elif (repeated >= 2 or unchanged_work) and supervision_count >= 2:
         route = "intervene"
     elif repeated >= 2 or unchanged_work:
         route = "supervise"
@@ -112,6 +128,7 @@ def main() -> None:
         "round": source_round,
         "source_path": str(source_path.relative_to(run_dir)) if source_path else None,
         "failure_fingerprint": failure_fingerprint,
+        "diagnostic_signature": signature,
         "failure_class": classified_as,
         "work_fingerprint": work["fingerprint"],
         "head": work["head"],
@@ -123,6 +140,7 @@ def main() -> None:
         "round": source_round,
         "source_path": entry["source_path"],
         "failure_fingerprint": failure_fingerprint,
+        "diagnostic_signature": signature,
         "failure_class": classified_as,
         "repeat_count": repeated,
         "class_repeat_count": class_repeated,
