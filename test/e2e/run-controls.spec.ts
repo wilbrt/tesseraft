@@ -17,7 +17,11 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await wizard.getByLabel('Run ID').fill(isolatedRun.pw3.runId);
   await wizard.getByLabel('Max automated steps').fill('1');
   await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
-  await wizard.getByRole('button', { name: 'Start and run' }).click();
+  const [startResponse] = await Promise.all([
+    page.waitForResponse((response) => response.url() === `${isolatedRun.baseURL}/api/runs` && response.request().method() === 'POST'),
+    wizard.getByRole('button', { name: 'Start and run' }).click()
+  ]);
+  expect(startResponse.status(), 'start run status').toBe(202);
   await expect(wizard).toBeHidden();
 
   await expect.poll(async () => {
