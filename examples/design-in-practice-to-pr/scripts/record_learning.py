@@ -29,6 +29,18 @@ def session_usage(session_dir: pathlib.Path) -> dict[str, Any]:
     return totals
 
 
+def combined_usage(run_dir: pathlib.Path) -> dict[str, Any]:
+    usage = session_usage(run_dir / "pi-sessions")
+    pi_sessions = usage["sessions"]
+    claude_dir = run_dir / "claude-sessions"
+    claude_sessions = len(list(claude_dir.glob("*.txt"))) if claude_dir.exists() else 0
+    usage["pi_sessions"] = pi_sessions
+    usage["claude_sessions"] = claude_sessions
+    usage["sessions"] = pi_sessions + claude_sessions
+    usage["claude_token_usage_available"] = False
+    return usage
+
+
 def main() -> None:
     request = json.load(sys.stdin)
     run = request.get("run", {})
@@ -61,8 +73,8 @@ def main() -> None:
         "feedback_cycles": len(feedback) if isinstance(feedback, list) else 0,
         "failure_fingerprints": [x.get("failure_fingerprint") for x in feedback if isinstance(x, dict)] if isinstance(feedback, list) else [],
         "supervision_count": len(list((run_dir / "supervision").glob("status-*.json"))),
-        "usage": session_usage(run_dir / "pi-sessions"),
-        "note": "Token totals include cache reads when reported by the executor. This artifact does not mutate workflow guidance."
+        "usage": combined_usage(run_dir),
+        "note": "Token totals include cache reads when reported by the executor. Claude Code session count is recorded, but its CLI executor does not report token or cost totals; CLI limit failures are the stopping signal. This artifact does not mutate workflow guidance."
     }
     out = run_dir / "learning/run-summary.json"
     out.parent.mkdir(parents=True, exist_ok=True)

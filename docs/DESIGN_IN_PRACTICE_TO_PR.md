@@ -2,7 +2,7 @@
 
 `examples/design-in-practice-to-pr/workflow.edn` turns a prompt into a problem-grounded design, isolated implementation, tiered deterministic validation, independent review, and pull request. It incorporates Rich Hickey's “Design in Practice” techniques without assigning each design phase to a separate model session.
 
-This is a side-effecting workflow. A real run can invoke Pi, create a Git worktree, edit and commit files, execute repository commands, push a branch, and create a GitHub pull request. Use `start`, `step`, and bounded `resume` as described in [WORKFLOW_RUNS.md](WORKFLOW_RUNS.md).
+This is a side-effecting workflow. A real run invokes the subscription-authenticated Claude Code executor, creates a Git worktree, edits and commits files, executes repository commands, pushes a branch, and creates a GitHub pull request. Design, independent review, and supervision use `claude-opus-5`; implementation and corrections use `claude-sonnet-5`. The executor strips `ANTHROPIC_API_KEY` so Claude Code uses its CLI login rather than API-key billing. Use `start`, `step`, and bounded `resume` as described in [WORKFLOW_RUNS.md](WORKFLOW_RUNS.md).
 
 ## State sequence
 
@@ -71,7 +71,9 @@ The first reviewed run, FI2-DIP1, opened PR #87 at round 5 using nine agent sess
 
 FI3-DIP1 reached the original hard limit with one minor review finding left after 15 sessions and $15.53 recorded cost. It proved that changed assertions under one check need diagnostic-sensitive fingerprints and that a hard limit must not preempt intervention/telemetry. FI3-DIP2 preserved that branch and opened PR #89 in round 1 with three sessions and $2.28 recorded cost. Replacement-run PR synthesis uses the whole-diff review for its summary while keeping the focused design problem as the final correction.
 
-FI4-DIP1 opened PR #90 in round 3 with six sessions and $6.27 recorded cost. Two distinct failures routed directly to correction with no unnecessary supervision, validating diagnostic-sensitive fingerprints. It also established that replacement detection must treat only a nonblank string branch as explicit—JSON null is an ordinary run. These observations are versioned in the package's prior-run lessons.
+FI4-DIP1 opened PR #90 in round 3 with six sessions and $6.27 recorded cost. Two distinct failures routed directly to correction with no unnecessary supervision, validating diagnostic-sensitive fingerprints. It also established that replacement detection must treat only a nonblank string branch as explicit—JSON null is an ordinary run.
+
+FI5-DIP1 preserved three implementation commits but became terminal when an interrupted process-validation attempt was correctly classified as orphaned. An operator-authorized executor handoff moved subsequent Design-in-Practice agent nodes to Claude Code; FI5 continuation uses an explicit replacement run on the preserved branch rather than forging the terminal run's state. These observations are versioned in the package's prior-run lessons.
 
 ## Safe checks
 

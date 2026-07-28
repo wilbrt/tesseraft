@@ -44,3 +44,9 @@ A replacement design correctly focused on the final defect, but that caused init
 FI4-DIP1 opened PR #90 in round 3 with 6 agent sessions, 100 responses, and $6.27 recorded executor cost. Two distinct correction cycles—an ambient resource-kind mismatch followed by pathless alias and documentation findings—routed directly to implementation with zero supervisor sessions. This supports diagnostic-sensitive exact fingerprints while retaining normalized failure classes.
 
 Normal runs may carry a JSON `null` branch input. Replacement detection must require a nonblank string; stringifying null incorrectly labels ordinary PR metadata as a replacement/final-correction body. Keep explicit replacement semantics type-sensitive.
+
+## FI5-DIP1 reviewed observations
+
+FI5-DIP1 preserved three clean implementation commits after focused transactional checks and strict fixture lint passed. The client controlling round-3 repository validation was interrupted; the process node stopped without a result artifact, and runtime correctly terminated the run as orphaned rather than replaying repository commands or forging completion. Continue from the preserved branch through an explicit replacement run.
+
+An operator-authorized executor handoff moved subsequent Design-in-Practice agent work to the Claude Code subscription executor. Use Opus for design/review/supervision and Sonnet for implementation/corrections, while retaining process-owned validation. Claude provider and thinking pins are intentionally absent because the executor ignores them.

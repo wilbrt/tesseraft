@@ -40,6 +40,12 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
         self.assertIn(':command ["./scripts/assemble_pr.py"]', workflow)
         self.assertNotIn(':merge-issues', workflow)
         self.assertNotIn(':title "Draft PR', workflow)
+        self.assertEqual(workflow.count(':executor :claude-code'), 4)
+        self.assertEqual(workflow.count(':model "claude-opus-5"'), 3)
+        self.assertEqual(workflow.count(':model "claude-sonnet-5"'), 1)
+        self.assertNotIn(':executor :pi-cli', workflow)
+        self.assertNotIn(':provider ', workflow)
+        self.assertNotIn(':thinking ', workflow)
         for state in ("design", "implement", "review"):
             prompt = (PACKAGE / "prompts" / f"{state}.md.tmpl").read_text()
             self.assertIn("Testing is NOT your job", prompt)
@@ -226,13 +232,19 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             sessions = run_dir / "pi-sessions"
             sessions.mkdir()
             (sessions / "one.jsonl").write_text(json.dumps({"message": {"usage": {"input": 10, "output": 2, "cacheRead": 5, "reasoning": 1, "totalTokens": 18, "cost": {"total": 0.1}}}}) + "\n")
+            claude_sessions = run_dir / "claude-sessions"
+            claude_sessions.mkdir()
+            (claude_sessions / "design.txt").write_text("claude-code session marker\n")
             request = {"run": {"id": "learning", "round": 3, "status": "blocked"}, "paths": {"run_dir": str(run_dir)}, "node": {"id": "record-learning"}}
             result = self.invoke("record_learning.py", request)
             self.assertEqual(result.returncode, 0, result.stderr)
             response = json.loads(result.stdout)
             self.assertFalse(response["pr_created"])
             summary = json.loads((run_dir / "learning/run-summary.json").read_text())
-            self.assertEqual(summary["usage"]["sessions"], 1)
+            self.assertEqual(summary["usage"]["sessions"], 2)
+            self.assertEqual(summary["usage"]["pi_sessions"], 1)
+            self.assertEqual(summary["usage"]["claude_sessions"], 1)
+            self.assertFalse(summary["usage"]["claude_token_usage_available"])
             self.assertEqual(summary["usage"]["total_tokens"], 18)
             self.assertFalse(summary["pr_created"])
 
