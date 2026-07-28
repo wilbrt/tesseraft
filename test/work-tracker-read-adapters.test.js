@@ -74,7 +74,7 @@ test('WT6 normalizes Jira and GitHub Issues into equivalent allowlisted artifact
         description: {
           type: 'doc', version: 1,
           content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'Safe Jira description' }] },
+            { type: 'paragraph', content: [{ type: 'text', text: 'Safe Jira description' }, { type: 'hardBreak' }, { type: 'text', text: 'Nested ADF line' }] },
             { type: 'paragraph', content: [{ type: 'text', text: 'Second ADF line' }] }
           ]
         },
@@ -86,7 +86,7 @@ test('WT6 normalizes Jira and GitHub Issues into equivalent allowlisted artifact
   assert.equal(jira.result.provider, 'jira');
   assert.deepEqual(jira.artifact.remote, { id: '10042', identifier: 'TES-42', project_key: 'TES' });
   assert.equal(jira.artifact.title, 'Fix Jira adapter');
-  assert.equal(jira.artifact.description, 'Safe Jira description\nSecond ADF line');
+  assert.equal(jira.artifact.description, 'Safe Jira description\nNested ADF line\nSecond ADF line');
   assert.deepEqual(jira.artifact.assignees, [{ id: 'acct-1', display_name: 'Ada' }]);
   assert.deepEqual(jira.artifact.labels, [{ name: 'bug' }]);
 
@@ -136,6 +136,17 @@ test('WT6 rejects malformed item refs/config before fake transport is called', (
   assert.equal(jiraOut.result.category, 'invalid_item_id');
   assert.equal(jiraOut.calls, 0);
 
+  const badJiraBaseUrl = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.jira :as jira])
+(def calls (atom 0))
+(binding [jira/*http-request* (fn [_] (swap! calls inc) {:status 200 :body "{}"})]
+  (println (json/generate-string {:result (jira/fetch-item {:tracker {:provider "jira" :config {:base-url "not a url" :project-key "TES"}}
+                                                           :token "TOKEN_SENTINEL" :item-id "TES-1" :timeout-ms 10})
+                                 :calls @calls})))`);
+  assert.equal(badJiraBaseUrl.result.category, 'invalid_config');
+  assert.equal(badJiraBaseUrl.calls, 0);
+
   const ghOut = bbJson(`
 (require '[cheshire.core :as json])
 (require '[tesseraft.work-tracker.github-issues :as gh])
@@ -146,7 +157,7 @@ test('WT6 rejects malformed item refs/config before fake transport is called', (
                                  :calls @calls})))`);
   assert.equal(ghOut.result.category, 'invalid_config');
   assert.equal(ghOut.calls, 0);
-  assert.doesNotMatch(JSON.stringify({ jiraOut, ghOut }), /TOKEN_SENTINEL/);
+  assert.doesNotMatch(JSON.stringify({ jiraOut, badJiraBaseUrl, ghOut }), /TOKEN_SENTINEL/);
 });
 
 test('WT6 GitHub Issues rejects pull request payloads instead of normalizing them as issues', () => {

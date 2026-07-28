@@ -99,6 +99,16 @@
   (when-let [parsed (parse-timeout-ms v)]
     (when (pos? parsed) (min max-timeout-ms (long parsed)))))
 
+(defn- absolute-http-url? [v]
+  (boolean
+    (when-let [s (present-string v)]
+      (try
+        (let [uri (URI/create s)
+              scheme (some-> (.getScheme uri) str/lower-case)]
+          (and (contains? #{"http" "https"} scheme)
+               (present-string (.getHost uri))))
+        (catch Throwable _ false)))))
+
 (defn- jira-key? [project-key item-id]
   (boolean
     (when (and (present-string project-key) (present-string item-id))
@@ -116,12 +126,14 @@
   (letfn [(walk [node]
             (cond
               (string? node) [node]
-              (map? node) (let [text (when (string? (:text node)) [(:text node)])
-                                children (when (sequential? (:content node)) (mapcat walk (:content node)))
-                                parts (concat text children)]
-                            (if (and (seq parts) (contains? #{"paragraph" "heading" "blockquote" "codeBlock" "bulletList" "orderedList" "listItem"} (:type node)))
-                              (concat parts ["\n"])
-                              parts))
+              (map? node) (if (= "hardBreak" (:type node))
+                            ["\n"]
+                            (let [text (when (string? (:text node)) [(:text node)])
+                                  children (when (sequential? (:content node)) (mapcat walk (:content node)))
+                                  parts (concat text children)]
+                              (if (and (seq parts) (contains? #{"paragraph" "heading" "blockquote" "codeBlock" "bulletList" "orderedList" "listItem"} (:type node)))
+                                (concat parts ["\n"])
+                                parts)))
               (sequential? node) (mapcat walk node)
               :else nil))]
     (when-let [s (not-empty (str/trim (str/join "" (walk v))))]
@@ -184,6 +196,9 @@
 
       (not request-timeout-ms)
       (failure "invalid_timeout" (str "Jira timeout-ms must be a positive duration; values above " max-timeout-ms "ms are clamped"))
+
+      (not (absolute-http-url? base-url))
+      (failure "invalid_config" "Jira base-url must be an absolute HTTP(S) URL")
 
       (not (jira-key? project-key item-id))
       (failure "invalid_item_id" "Jira item-id must be an issue key in the configured project")
