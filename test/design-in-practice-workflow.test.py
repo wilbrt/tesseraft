@@ -149,12 +149,13 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             (run_dir / "validation").mkdir(parents=True)
             self.init_repo(repo)
             issue = [{"source": "deterministic-validation", "severity": "major", "title": "focused check missing", "details": "python3: can't open file /repo/test/missing.py: No such file or directory", "acceptance_criteria": "declared check passes"}]
-            (run_dir / "validation/issues-1.json").write_text(json.dumps(issue))
+            (run_dir / "validation/issues-1.json").write_text(json.dumps({"version": 1, "issues": issue}))
             request = {"run": {"round": 2, "worktree-dir": str(repo)}, "paths": {"run_dir": str(run_dir)}}
             result = self.invoke("prepare_feedback.py", request)
             self.assertEqual(result.returncode, 0, result.stderr)
             current = json.loads((run_dir / "feedback/current.json").read_text())
             self.assertEqual(current["failure_class"], "validation-entrypoint-missing")
+            self.assertEqual(current["issues"][0]["title"], "focused check missing")
             self.assertEqual(current["class_repeat_count"], 1)
             history = json.loads((run_dir / "feedback/history.json").read_text())
             self.assertEqual(history[0]["failure_class"], "validation-entrypoint-missing")

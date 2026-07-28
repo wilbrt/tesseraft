@@ -76,15 +76,20 @@ def main() -> None:
     else:
         source_round, _, source_path = candidates[-1]
         loaded = json.loads(source_path.read_text())
-        issues = loaded if isinstance(loaded, list) else []
+        if isinstance(loaded, list):
+            issues = loaded
+        elif isinstance(loaded, dict) and isinstance(loaded.get("issues"), list):
+            issues = loaded["issues"]
+        else:
+            issues = []
         if not issues:
             issues = [{"source": "workflow", "title": "Empty current issue artifact", "details": "The newest issue artifact was empty.", "acceptance_criteria": "The failed node writes one actionable issue."}]
     compact_issues = [{
-        "source": clipped(item.get("source"), 100),
+        "source": clipped(item.get("source") or "code-review", 100),
         "severity": clipped(item.get("severity"), 40),
         "title": clipped(item.get("title"), 240),
-        "details": clipped(item.get("details")),
-        "acceptance_criteria": clipped(item.get("acceptance_criteria"), 300),
+        "details": clipped(item.get("details") or item.get("detail") or item.get("summary")),
+        "acceptance_criteria": clipped(item.get("acceptance_criteria") or item.get("suggested_fix") or item.get("suggestion"), 300),
     } for item in issues[:MAX_ISSUES] if isinstance(item, dict)]
     signature = diagnostic_signature(compact_issues)
     identity = [{k: item.get(k) for k in ("source", "title", "acceptance_criteria")} for item in compact_issues]

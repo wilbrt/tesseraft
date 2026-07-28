@@ -73,7 +73,7 @@ FI3-DIP1 reached the original hard limit with one minor review finding left afte
 
 FI4-DIP1 opened PR #90 in round 3 with six sessions and $6.27 recorded cost. Two distinct failures routed directly to correction with no unnecessary supervision, validating diagnostic-sensitive fingerprints. It also established that replacement detection must treat only a nonblank string branch as explicit—JSON null is an ordinary run.
 
-FI5-DIP1 preserved three implementation commits but became terminal when an interrupted process-validation attempt was correctly classified as orphaned. An operator-authorized executor handoff moved subsequent Design-in-Practice agent nodes to Claude Code; FI5 continuation uses an explicit replacement run on the preserved branch rather than forging the terminal run's state. These observations are versioned in the package's prior-run lessons.
+FI5-DIP1 preserved three implementation commits but became terminal when an interrupted process-validation attempt was correctly classified as orphaned. An operator-authorized executor handoff moved subsequent Design-in-Practice agent nodes to Claude Code. FI5-DIP2 continued the branch and opened PR #91 in round 4 with ten Claude sessions, three feedback cycles, and one supervision handoff. Claude review artifact shape exposed a correction-handoff gap; prompts now require canonical issue arrays and feedback defensively normalizes observed wrappers/aliases. These observations are versioned in the package's prior-run lessons.
 
 ## Safe checks
 

@@ -1,4 +1,4 @@
-Fresh Pi session: INDEPENDENT SEMANTIC CODE REVIEW.
+Fresh Claude Code session: INDEPENDENT SEMANTIC CODE REVIEW.
 
 Inputs:
 - Original prompt: {{run.dir}}/prompt/prompt.md
@@ -24,6 +24,7 @@ Rules:
 - Do not repeat stale findings, demand optional process ceremony, or invent unsupported concerns.
 - Do not edit source, tests, workflow definitions, or commits.
 - Write issues only when status is fail; use severities blocker, major, minor, or nit.
+- The issues file MUST be a top-level JSON array. Do not wrap it in an object such as `{\"issues\": [...]}`. Every issue object must use the configured schema fields: `source`, `severity`, `title`, `details`, and `acceptance_criteria`; do not invent aliases such as `detail`, `summary`, or `suggestion`.
 
 Write:
 - {{run.dir}}/review/report-{{run.round}}.md
