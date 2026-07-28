@@ -178,9 +178,20 @@
   (cond
     (keyword? x) (portable-key x)
     (set? x) (->> x (map portable-fragment-value) (sort-by pr-str) vec)
-    (map? x) (into (sorted-map)
-                   (map (fn [[k v]] [(portable-key k) (portable-fragment-value v)]))
-                   x)
+    (map? x) (let [entries (map (fn [[k v]] [(portable-key k) k (portable-fragment-value v)]) x)
+                   duplicate-key (->> entries
+                                      (group-by first)
+                                      (keep (fn [[projected originals]]
+                                              (when (< 1 (count originals))
+                                                {:projected-key projected
+                                                 :source-keys (mapv second originals)})))
+                                      first)]
+               (when duplicate-key
+                 (throw (ex-info "Portable fragment projection has duplicate map key"
+                                 duplicate-key)))
+               (into (sorted-map)
+                     (map (fn [[projected _ v]] [projected v]))
+                     entries))
     (vector? x) (mapv portable-fragment-value x)
     (sequential? x) (mapv portable-fragment-value x)
     :else x))

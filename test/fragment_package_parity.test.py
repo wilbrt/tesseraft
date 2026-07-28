@@ -78,7 +78,26 @@ def test_portable_fragment_projection_is_json_compatible_and_namespace_preservin
     assert "__dir" not in projection
 
 
+def test_portable_fragment_projection_rejects_duplicate_projected_map_keys():
+    proc = bb_eval('''
+(require '[tesseraft.spec :as spec])
+(try
+  (spec/portable-fragment-package-data {:fragment {:extension {:x 1 "x" 2}}})
+  (println "unexpected-success")
+  (catch clojure.lang.ExceptionInfo e
+    (let [data (ex-data e)]
+      (println (:projected-key data))
+      (println (pr-str (:source-keys data))))))
+''')
+    assert proc.returncode == 0, proc.stderr
+    assert "unexpected-success" not in proc.stdout
+    assert "x" in proc.stdout
+    assert ":x" in proc.stdout
+    assert '"x"' in proc.stdout
+
+
 if __name__ == "__main__":
     test_valid_edn_json_fragment_packages_have_identical_portable_projection_and_lint()
     test_invalid_edn_json_fragment_packages_have_same_diagnostic_codes()
     test_portable_fragment_projection_is_json_compatible_and_namespace_preserving()
+    test_portable_fragment_projection_rejects_duplicate_projected_map_keys()
