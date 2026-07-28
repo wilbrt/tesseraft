@@ -11,7 +11,7 @@
     [clojure.string :as str])
   (:import
     [java.nio.file Files StandardCopyOption CopyOption OpenOption]
-    [java.util UUID]))
+    [java.util Arrays UUID]))
 
 (defn parse-id [s]
   (cond
@@ -20,18 +20,13 @@
     (string? s) (keyword s)
     :else s))
 
-(defn write-edn! [path data]
-  (fs/create-dirs (fs/parent path))
-  (spit (str path) (with-out-str (pprint/pprint data)))
-  path)
-
 (defn edn-bytes [data]
   (.getBytes (with-out-str (pprint/pprint data)) "UTF-8"))
 
 (defn same-file-content? [a b]
   (and (fs/exists? a)
        (fs/exists? b)
-       (= (slurp (str a)) (slurp (str b)))))
+       (Arrays/equals (Files/readAllBytes (fs/path a)) (Files/readAllBytes (fs/path b)))))
 
 (defn parse-lint-args [args]
   (loop [xs args acc {:fragment-packages [] :format "human"}]
@@ -241,8 +236,8 @@
           (let [tmp (temp-sibling dest)]
             (try
               (copy-new! src tmp)
-              (copy-new! tmp dest)
               (swap! installed conj dest)
+              (move-replace! tmp dest)
               (finally
                 (fs/delete-if-exists tmp))))))
       (Files/write (fs/path wf-tmp) (edn-bytes data) (make-array OpenOption 0))

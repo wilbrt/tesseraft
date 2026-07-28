@@ -38,6 +38,24 @@ def write_project(tmp: Path, workflow_text=BASE_WORKFLOW):
     return package_root / "fragment.edn", wf
 
 
+def write_project_with_workflow_asset_conflict(tmp: Path):
+    """A package that declares an asset whose path resolves onto the
+    importing workflow file itself, to exercise the
+    'Refusing to overwrite workflow file with an asset' guard."""
+    package_root = tmp / ".tesseraft/fragments/test-fix-loop"
+    shutil.copytree(EXAMPLE, package_root)
+    fragment_path = package_root / "fragment.edn"
+    original = fragment_path.read_text()
+    marker = ':assets {:prompts ["prompts/fix.md.tmpl"]\n          :schemas ["schemas/status.schema.json"]}'
+    replacement = ':assets {:prompts ["prompts/fix.md.tmpl"]\n          :schemas ["schemas/status.schema.json"]\n          :configs ["workflow.edn"]}'
+    assert marker in original, original
+    fragment_path.write_text(original.replace(marker, replacement))
+    (package_root / "workflow.edn").write_text("{:not :the-real-workflow}\n")
+    wf = tmp / "workflow.edn"
+    wf.write_text(BASE_WORKFLOW)
+    return fragment_path, wf
+
+
 def snapshot(tmp: Path):
     data = {}
     for p in sorted(tmp.rglob("*")):
@@ -144,10 +162,36 @@ def test_failures_leave_workflow_and_assets_unchanged():
     with_tmp(run)
 
 
-def test_existing_state_and_differing_workflow_file_are_rejected_without_mutation():
+def test_existing_state_id_is_rejected_without_mutation():
     def run(tmp):
         fragment, wf = write_project(tmp, BASE_WORKFLOW.replace(':done {:type :terminal :status :success}', ':run-tests {:type :terminal :status :success}\n          :done {:type :terminal :status :success}'))
         assert_rollback(tmp, import_args(fragment, wf), "Workflow state already exists")
+    with_tmp(run)
+
+
+def test_asset_that_would_overwrite_workflow_file_is_rejected_without_mutation():
+    def run(tmp):
+        fragment, wf = write_project_with_workflow_asset_conflict(tmp)
+        assert_rollback(tmp, import_args(fragment, wf), "Refusing to overwrite workflow file with an asset")
+    with_tmp(run)
+
+
+def test_partial_commit_failure_rolls_back_previously_installed_assets():
+    """The example package installs prompts/fix.md.tmpl before
+    schemas/status.schema.json. Pre-creating 'schemas' as a regular file
+    passes asset-plan (the destination file does not exist yet) but makes
+    the second asset's directory creation fail after the first asset has
+    already been staged into place, exercising commit-transaction!'s
+    rollback of a previously installed asset and its empty parent dir."""
+    def run(tmp):
+        fragment, wf = write_project(tmp)
+        (tmp / "schemas").write_text("blocking file, not a directory")
+        before = snapshot(tmp)
+        proc = tesseraft(import_args(fragment, wf), tmp / "home")
+        assert proc.returncode != 0, proc.stdout
+        assert "schemas" in proc.stderr, proc.stderr
+        assert snapshot(tmp) == before
+        assert not (tmp / "prompts").exists(), "first installed asset should be rolled back"
     with_tmp(run)
 
 
@@ -166,5 +210,7 @@ def test_next_fills_only_unmapped_declared_outcomes():
 if __name__ == "__main__":
     test_success_writes_complete_strict_linting_inclusion_and_summary()
     test_failures_leave_workflow_and_assets_unchanged()
-    test_existing_state_and_differing_workflow_file_are_rejected_without_mutation()
+    test_existing_state_id_is_rejected_without_mutation()
+    test_asset_that_would_overwrite_workflow_file_is_rejected_without_mutation()
+    test_partial_commit_failure_rolls_back_previously_installed_assets()
     test_next_fills_only_unmapped_declared_outcomes()
