@@ -70,7 +70,15 @@ test('WT6 normalizes Jira and GitHub Issues into equivalent allowlisted artifact
     root, projectId: 'jira-proj', provider: 'jira', itemId: 'TES-42', token: 'JIRA_SECRET',
     body: JSON.stringify({
       id: '10042', key: 'TES-42', fields: {
-        summary: 'Fix Jira adapter', description: 'Safe Jira description', status: { name: 'In Progress' }, priority: { name: 'High' },
+        summary: 'Fix Jira adapter',
+        description: {
+          type: 'doc', version: 1,
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Safe Jira description' }] },
+            { type: 'paragraph', content: [{ type: 'text', text: 'Second ADF line' }] }
+          ]
+        },
+        status: { name: 'In Progress' }, priority: { name: 'High' },
         assignee: { accountId: 'acct-1', displayName: 'Ada', emailAddress: 'RAW_RESPONSE_SENTINEL' }, labels: ['bug']
       }, raw_secret: 'RAW_RESPONSE_SENTINEL'
     })
@@ -78,6 +86,7 @@ test('WT6 normalizes Jira and GitHub Issues into equivalent allowlisted artifact
   assert.equal(jira.result.provider, 'jira');
   assert.deepEqual(jira.artifact.remote, { id: '10042', identifier: 'TES-42', project_key: 'TES' });
   assert.equal(jira.artifact.title, 'Fix Jira adapter');
+  assert.equal(jira.artifact.description, 'Safe Jira description\nSecond ADF line');
   assert.deepEqual(jira.artifact.assignees, [{ id: 'acct-1', display_name: 'Ada' }]);
   assert.deepEqual(jira.artifact.labels, [{ name: 'bug' }]);
 

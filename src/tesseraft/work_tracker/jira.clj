@@ -113,11 +113,19 @@
     (if (contains? #{"urgent" "high" "medium" "low" "none"} s) s "none")))
 
 (defn- doc-text [v]
-  (cond
-    (string? v) v
-    (map? v) (str/join "" (keep doc-text (or (:content v) [])))
-    (sequential? v) (str/join "" (keep doc-text v))
-    :else nil))
+  (letfn [(walk [node]
+            (cond
+              (string? node) [node]
+              (map? node) (let [text (when (string? (:text node)) [(:text node)])
+                                children (when (sequential? (:content node)) (mapcat walk (:content node)))
+                                parts (concat text children)]
+                            (if (and (seq parts) (contains? #{"paragraph" "heading" "blockquote" "codeBlock" "bulletList" "orderedList" "listItem"} (:type node)))
+                              (concat parts ["\n"])
+                              parts))
+              (sequential? node) (mapcat walk node)
+              :else nil))]
+    (when-let [s (not-empty (str/trim (str/join "" (walk v))))]
+      s)))
 
 (defn- normalize-assignee [a]
   (when (map? a)
