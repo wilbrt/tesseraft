@@ -680,28 +680,30 @@
               iface (:interface pkg)
               outcomes (set (:outcomes iface))
               covered (set (map keyword (keep fragment-transition-outcome (spec/transitions n))))
-              diagnostics (vec (remove nil?
-                                       (apply concat
-                                         [(fragment-binding-diagnostics path :inputs (:inputs iface {}) (:inputs n {}) true)
-                                          (fragment-binding-diagnostics path :parameters (:parameters iface {}) (:parameters n {}) false)
-                                          (fragment-version-diagnostics path n pkg)
-                                          (fragment-prefix-diagnostics path n)
-                                          (let [res (lint-fragment-package-cached pkg opts)
-                                                fkey (spec/fragment-package-file pkg)
-                                                seen (::fragment-internal-seen opts)]
-                                            (when (and (not (:ok res))
-                                                       (or (nil? seen)
-                                                           (not (contains? @seen fkey))))
-                                              (when seen (swap! seen conj fkey))
-                                              [(err :fragment-internal-lint-failed (conj path :fragment)
-                                                    (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
-                                                    (str/join "; " (map :message (:errors res))))]))
-                                          (for [o outcomes :when (not (contains? covered o))]
-                                            (warn :fragment-uncovered-outcome (conj path :transitions)
-                                                  (str "Fragment outcome " o " is not covered by any transition")))
-                                          (for [o covered :when (not (contains? outcomes o))]
-                                            (err :fragment-unknown-outcome (conj path :transitions)
-                                                 (str "Transition references unknown fragment outcome " o)))])))]
+              boundary-diagnostics (vec (remove nil?
+                                                (apply concat
+                                                       [(fragment-binding-diagnostics path :inputs (:inputs iface {}) (:inputs n {}) true)
+                                                        (fragment-binding-diagnostics path :parameters (:parameters iface {}) (:parameters n {}) false)
+                                                        (fragment-version-diagnostics path n pkg)
+                                                        (fragment-prefix-diagnostics path n)
+                                                        (for [o outcomes :when (not (contains? covered o))]
+                                                          (warn :fragment-uncovered-outcome (conj path :transitions)
+                                                                (str "Fragment outcome " o " is not covered by any transition")))
+                                                        (for [o covered :when (not (contains? outcomes o))]
+                                                          (err :fragment-unknown-outcome (conj path :transitions)
+                                                               (str "Transition references unknown fragment outcome " o)))])))
+              internal-diagnostics (when-not (some #(= "error" (:severity %)) boundary-diagnostics)
+                                     (let [res (lint-fragment-package-cached pkg opts)
+                                           fkey (spec/fragment-package-file pkg)
+                                           seen (::fragment-internal-seen opts)]
+                                       (when (and (not (:ok res))
+                                                  (or (nil? seen)
+                                                      (not (contains? @seen fkey))))
+                                         (when seen (swap! seen conj fkey))
+                                         [(err :fragment-internal-lint-failed (conj path :fragment)
+                                               (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
+                                               (str/join "; " (map :message (:errors res))))])))
+              diagnostics (vec (concat boundary-diagnostics internal-diagnostics))]
           (cond-> {:diagnostics diagnostics}
             (not-any? #(= "error" (:severity %)) diagnostics)
             (assoc :inclusion (fragment-effective-contract resolved pkg n))))
