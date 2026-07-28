@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tiered deterministic validation plan",
+  "type": "object",
+  "required": ["version", "tiers"],
+  "properties": {
+    "version": {"const": 1},
+    "tiers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "checks"],
+        "properties": {
+          "id": {"enum": ["focused", "repository", "browser"]},
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "required": ["id", "command", "timeout_seconds"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1, "maxLength": 80},
+                "command": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "items": {"type": "string", "minLength": 1, "maxLength": 500}
+                },
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

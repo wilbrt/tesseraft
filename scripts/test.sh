@@ -25,6 +25,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/deterministic-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/supervised-deterministic-code-review-loop/workflow.edn
+./bin/tesseraft lint examples/design-in-practice-to-pr/workflow.edn --strict
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
@@ -73,6 +74,9 @@ python3 test/deterministic-code-review-workflow.test.py
 
 printf '\nChecking supervised deterministic code review workflow contract...\n'
 python3 test/supervised-deterministic-code-review-workflow.test.py
+
+printf '\nChecking Design in Practice to PR workflow contract...\n'
+python3 test/design-in-practice-workflow.test.py
 
 printf '\nChecking agent node model/provider plumbing...\n'
 AGENT_MODEL_WORKFLOW="$TMP_DIR/agent-model-provider.workflow.edn"
