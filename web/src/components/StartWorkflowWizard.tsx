@@ -214,9 +214,9 @@ export const StartWorkflowWizard = ({ open, workflows, initialWorkflow, onClose,
     setSubmitError(null);
     const gitUser = buildGitUser();
     const payload = { workflow_name: selectedWorkflow, run_id: runId, inputs: buildInputs(), max_steps: maxSteps, ...(gitUser ? { git_user: gitUser } : {}) };
-    onClose();
     try {
       await onStart(payload);
+      onClose();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {

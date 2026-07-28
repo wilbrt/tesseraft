@@ -54,10 +54,28 @@
 (defn- header-value [headers name]
   (some (fn [[k v]] (when (= (str/lower-case (str k)) (str/lower-case name)) (str v))) headers))
 
+(defn- safe-token [v max-len]
+  (when-let [s (present-string v)]
+    (when (and (<= (count s) max-len) (not (re-find #"[\r\n]" s))) s)))
+
+(defn- bounded-int-string [v max-value]
+  (when-let [s (safe-token v 20)]
+    (when (re-matches #"[0-9]+" s)
+      (try
+        (let [n (Long/parseLong s)]
+          (when (<= n max-value) s))
+        (catch Throwable _ nil)))))
+
+(defn- safe-retry-token [v]
+  (or (bounded-int-string v 86400)
+      (when-let [s (safe-token v 64)]
+        (when (re-matches #"(?i)[a-z]{3}, \d{2} [a-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT" s)
+          s))))
+
 (defn- safe-rate-limit-metadata [headers]
-  (let [remaining (header-value headers "X-RateLimit-Remaining")
-        reset (header-value headers "X-RateLimit-Reset")
-        retry (header-value headers "Retry-After")]
+  (let [remaining (bounded-int-string (header-value headers "X-RateLimit-Remaining") 1000000000)
+        reset (bounded-int-string (header-value headers "X-RateLimit-Reset") 4102444800)
+        retry (safe-retry-token (header-value headers "Retry-After"))]
     (cond-> {}
       remaining (assoc :remaining remaining)
       reset (assoc :reset reset)
@@ -109,12 +127,30 @@
         (present-string (:display_name a)) (assoc :display_name (present-string (:display_name a)))))))
 
 (defn- normalize-label [l]
-  (when-let [name (present-string (str l))]
-    {:name name}))
+  (when (string? l)
+    (when-let [name (present-string l)]
+      {:name name})))
+
+(defn- valid-jira-issue? [project-key item-id issue]
+  (let [fields (:fields issue)
+        key (present-string (:key issue))]
+    (and (map? issue)
+         key
+         (= (str/upper-case key) (str/upper-case (str item-id)))
+         (jira-key? project-key key)
+         (present-string (:id issue))
+         (map? fields)
+         (or (nil? (:summary fields)) (string? (:summary fields)))
+         (or (nil? (:description fields)) (or (string? (:description fields)) (map? (:description fields))))
+         (or (nil? (:labels fields)) (sequential? (:labels fields)))
+         (every? string? (or (:labels fields) []))
+         (or (nil? (:assignees fields)) (sequential? (:assignees fields)))
+         (every? map? (or (:assignees fields) []))
+         (or (nil? (:assignee fields)) (map? (:assignee fields))))))
 
 (defn normalize-jira-issue [tracker tesseraft-project-id item-id issue]
-  (let [fields (or (:fields issue) {})
-        identifier (or (present-string (:key issue)) (str item-id))]
+  (let [fields (:fields issue)
+        identifier (present-string (:key issue))]
     {:schema_version 1
      :provider "jira"
      :project {:id (str tesseraft-project-id)}
@@ -159,7 +195,7 @@
           (= 200 status)
           (try
             (let [issue (json/parse-string (or body "") true)]
-              (if (and (map? issue) (or (present-string (:id issue)) (present-string (:key issue))))
+              (if (valid-jira-issue? project-key item-id issue)
                 {:ok true :status "ok" :item (normalize-jira-issue tracker tesseraft-project-id item-id issue)}
                 (failure "malformed_output" "Jira returned malformed issue output" {:http_status 200})))
             (catch Throwable _ (failure "malformed_json" "Jira returned malformed JSON" {:http_status 200})))

@@ -149,6 +149,42 @@ test('WT6 GitHub Issues rejects pull request payloads instead of normalizing the
   assert.doesNotMatch(JSON.stringify(out.artifact), /RAW_RESPONSE_SENTINEL/);
 });
 
+test('WT6 rejects malformed and mismatched provider identities before normalization', () => {
+  const ghNested = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.github-issues :as gh])
+(binding [gh/*http-request* (fn [_] {:status 200 :body (json/generate-string {:id {:secret "RAW_RESPONSE_SENTINEL"} :number 1 :title "nested id"})})]
+  (println (json/generate-string (gh/fetch-item {:tracker {:provider "github-issues" :config {:repository "owner/repo"}}
+                                                :token "TOKEN_SENTINEL" :item-id "1" :timeout-ms 10}))))`);
+  assert.equal(ghNested.category, 'malformed_output');
+  assert.doesNotMatch(JSON.stringify(ghNested), /RAW_RESPONSE_SENTINEL|TOKEN_SENTINEL/);
+
+  const ghMismatch = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.github-issues :as gh])
+(binding [gh/*http-request* (fn [_] {:status 200 :body (json/generate-string {:id 2 :number 2 :title "wrong issue"})})]
+  (println (json/generate-string (gh/fetch-item {:tracker {:provider "github-issues" :config {:repository "owner/repo"}}
+                                                :token "TOKEN_SENTINEL" :item-id "1" :timeout-ms 10}))))`);
+  assert.equal(ghMismatch.category, 'malformed_output');
+
+  const jiraNestedLabel = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.jira :as jira])
+(binding [jira/*http-request* (fn [_] {:status 200 :body (json/generate-string {:id "100" :key "TES-1" :fields {:summary "T" :labels [{:secret "RAW_RESPONSE_SENTINEL"}]}})})]
+  (println (json/generate-string (jira/fetch-item {:tracker {:provider "jira" :config {:base-url "https://jira.example" :project-key "TES"}}
+                                                 :token "TOKEN_SENTINEL" :item-id "TES-1" :timeout-ms 10}))))`);
+  assert.equal(jiraNestedLabel.category, 'malformed_output');
+  assert.doesNotMatch(JSON.stringify(jiraNestedLabel), /RAW_RESPONSE_SENTINEL|TOKEN_SENTINEL/);
+
+  const jiraMismatch = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.jira :as jira])
+(binding [jira/*http-request* (fn [_] {:status 200 :body (json/generate-string {:id "100" :key "TES-2" :fields {:summary "wrong issue"}})})]
+  (println (json/generate-string (jira/fetch-item {:tracker {:provider "jira" :config {:base-url "https://jira.example" :project-key "TES"}}
+                                                 :token "TOKEN_SENTINEL" :item-id "TES-1" :timeout-ms 10}))))`);
+  assert.equal(jiraMismatch.category, 'malformed_output');
+});
+
 test('WT6 adapter failures are stable, bounded, and redacted', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt6-failures-'));
   writeProject(root, 'alpha', ghTracker());
@@ -168,6 +204,24 @@ test('WT6 adapter failures are stable, bounded, and redacted', () => {
     const durable = fs.readFileSync(path.join(out['run-dir'], 'work-tracker', 'item.json'), 'utf8');
     assert.doesNotMatch(durable, /SECRET BODY|SERVER SECRET BODY|RAW_RESPONSE_SENTINEL|TOKEN_SENTINEL|Authorization/);
   }
+
+  const noisyRate = bbJson(runtimeScript({
+    root, itemId: '4', status: 429, body: 'SECRET BODY', token: 'RATE_TOKEN',
+    headers: { 'X-RateLimit-Remaining': 'not-a-number SECRET', 'X-RateLimit-Reset': '999999999999999999999999', 'Retry-After': 'bad\nheader SECRET' }
+  }));
+  assert.equal(noisyRate.artifact.category, 'rate_limited');
+  assert.deepEqual(noisyRate.artifact.rate_limit, {});
+  assert.doesNotMatch(JSON.stringify(noisyRate.artifact), /SECRET|not-a-number|999999999999/);
+
+  const jiraNoisyRate = bbJson(`
+(require '[cheshire.core :as json])
+(require '[tesseraft.work-tracker.jira :as jira])
+(binding [jira/*http-request* (fn [_] {:status 429 :headers {"X-RateLimit-Remaining" "not-a-number SECRET" "X-RateLimit-Reset" "999999999999999999999999" "Retry-After" "bad\\nheader SECRET"} :body "SECRET BODY"})]
+  (println (json/generate-string (jira/fetch-item {:tracker {:provider "jira" :config {:base-url "https://jira.example" :project-key "TES"}}
+                                                 :token "TOKEN_SENTINEL" :item-id "TES-1" :timeout-ms 10}))))`);
+  assert.equal(jiraNoisyRate.category, 'rate_limited');
+  assert.deepEqual(jiraNoisyRate.rate_limit, {});
+  assert.doesNotMatch(JSON.stringify(jiraNoisyRate), /SECRET|not-a-number|999999999999|TOKEN_SENTINEL/);
 });
 
 test('WT6 timeout and transport failures do not retain exception or token text', () => {

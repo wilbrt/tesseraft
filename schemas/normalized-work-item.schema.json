@@ -76,5 +76,25 @@
     "url": { "type": ["string", "null"] },
     "fetched_at": { "type": "string", "format": "date-time" }
   },
+  "oneOf": [
+    {
+      "properties": {
+        "provider": { "const": "plane" },
+        "remote": { "required": ["workspace_slug", "project_id"] }
+      }
+    },
+    {
+      "properties": {
+        "provider": { "const": "jira" },
+        "remote": { "required": ["project_key"] }
+      }
+    },
+    {
+      "properties": {
+        "provider": { "const": "github-issues" },
+        "remote": { "required": ["repository"] }
+      }
+    }
+  ],
   "additionalProperties": false
 }

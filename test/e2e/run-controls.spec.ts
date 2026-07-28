@@ -1,6 +1,29 @@
 import path from 'node:path';
 import { expect, test } from './fixtures';
 
+test('keeps the start wizard open and visible when run creation is rejected', async ({ page, isolatedRun }) => {
+  await page.goto(isolatedRun.baseURL);
+  await page.getByRole('button', { name: /Runs: operate and inspect run status/ }).click();
+  await page.getByLabel('Run controls').getByRole('button', { name: 'Start workflow', exact: true }).click();
+  const wizard = page.getByRole('dialog', { name: 'Start workflow' });
+  await wizard.getByRole('button', { name: isolatedRun.pw3.workflowName, exact: true }).click();
+  await wizard.getByLabel('Run ID').fill(isolatedRun.pw3.runId);
+  await wizard.getByLabel('Max automated steps').fill('1');
+  await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
+
+  await page.route('**/api/runs', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: 'duplicate run id from e2e' } }) });
+      return;
+    }
+    await route.fallback();
+  });
+  await wizard.getByRole('button', { name: 'Start and run' }).click();
+  await expect(wizard).toBeVisible();
+  await expect(wizard.getByText('duplicate run id from e2e')).toBeVisible();
+  await expect(wizard.getByLabel('Run ID')).toHaveValue(isolatedRun.pw3.runId);
+});
+
 test('starts, steps, and resumes a safe local workflow from visible run controls', async ({ page, isolatedRun }) => {
   const pageErrors: Error[] = [];
   page.on('pageerror', (error) => pageErrors.push(error));

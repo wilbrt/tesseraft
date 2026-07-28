@@ -54,10 +54,28 @@
 (defn- header-value [headers name]
   (some (fn [[k v]] (when (= (str/lower-case (str k)) (str/lower-case name)) (str v))) headers))
 
+(defn- safe-token [v max-len]
+  (when-let [s (present-string v)]
+    (when (and (<= (count s) max-len) (not (re-find #"[\r\n]" s))) s)))
+
+(defn- bounded-int-string [v max-value]
+  (when-let [s (safe-token v 20)]
+    (when (re-matches #"[0-9]+" s)
+      (try
+        (let [n (Long/parseLong s)]
+          (when (<= n max-value) s))
+        (catch Throwable _ nil)))))
+
+(defn- safe-retry-token [v]
+  (or (bounded-int-string v 86400)
+      (when-let [s (safe-token v 64)]
+        (when (re-matches #"(?i)[a-z]{3}, \d{2} [a-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT" s)
+          s))))
+
 (defn- safe-rate-limit-metadata [headers]
-  (let [remaining (header-value headers "X-RateLimit-Remaining")
-        reset (header-value headers "X-RateLimit-Reset")
-        retry (header-value headers "Retry-After")]
+  (let [remaining (bounded-int-string (header-value headers "X-RateLimit-Remaining") 1000000000)
+        reset (bounded-int-string (header-value headers "X-RateLimit-Reset") 4102444800)
+        retry (safe-retry-token (header-value headers "Retry-After"))]
     (cond-> {}
       remaining (assoc :remaining remaining)
       reset (assoc :reset reset)
@@ -91,19 +109,25 @@
   (let [[owner repo] (str/split repository #"/" 2)]
     (str "https://api.github.com/repos/" (encode-segment owner) "/" (encode-segment repo) "/issues/" (encode-segment number))))
 
+(defn- scalar-string [v]
+  (cond
+    (string? v) (present-string v)
+    (integer? v) (str v)
+    :else nil))
+
 (defn- normalize-priority [issue]
-  (let [names (set (map #(some-> (:name %) str str/lower-case str/trim) (:labels issue)))]
+  (let [names (set (keep #(some-> (:name %) present-string str/lower-case str/trim) (:labels issue)))]
     (or (first (filter names ["urgent" "high" "medium" "low"])) "none")))
 
 (defn- normalize-assignee [a]
   (when (map? a)
-    (when-let [id (or (some-> (:id a) str present-string) (present-string (:login a)))]
+    (when-let [id (or (scalar-string (:id a)) (present-string (:login a)))]
       (cond-> {:id id}
         (present-string (:login a)) (assoc :display_name (present-string (:login a)))))))
 
 (defn- normalize-label [l]
   (when (map? l)
-    (let [id (some-> (:id l) str present-string)
+    (let [id (scalar-string (:id l))
           name (present-string (:name l))]
       (when (or id name)
         (cond-> {}
@@ -111,12 +135,34 @@
           name (assoc :name name)
           (present-string (:color l)) (assoc :color (present-string (:color l))))))))
 
+(defn- valid-github-issue? [item-id issue]
+  (let [number (scalar-string (:number issue))]
+    (and (map? issue)
+         (issue-number? number)
+         (= number (str item-id))
+         (scalar-string (:id issue))
+         (or (nil? (:title issue)) (string? (:title issue)))
+         (or (nil? (:body issue)) (string? (:body issue)))
+         (or (nil? (:state issue)) (string? (:state issue)))
+         (or (nil? (:html_url issue)) (string? (:html_url issue)))
+         (or (nil? (:assignees issue)) (sequential? (:assignees issue)))
+         (every? #(and (map? %)
+                       (or (nil? (:id %)) (scalar-string (:id %)))
+                       (or (nil? (:login %)) (string? (:login %))))
+                 (or (:assignees issue) []))
+         (or (nil? (:labels issue)) (sequential? (:labels issue)))
+         (every? #(and (map? %)
+                       (or (nil? (:id %)) (scalar-string (:id %)))
+                       (or (nil? (:name %)) (string? (:name %)))
+                       (or (nil? (:color %)) (string? (:color %))))
+                 (or (:labels issue) [])))))
+
 (defn normalize-github-issue [tracker tesseraft-project-id item-id issue]
-  (let [number (or (some-> (:number issue) str present-string) (str item-id))]
+  (let [number (scalar-string (:number issue))]
     {:schema_version 1
      :provider "github-issues"
      :project {:id (str tesseraft-project-id)}
-     :remote {:id (or (some-> (:id issue) str present-string) number)
+     :remote {:id (scalar-string (:id issue))
               :identifier (str "#" number)
               :repository (get-in tracker [:config :repository])}
      :identifier (str "#" number)
@@ -168,6 +214,8 @@
                 (failure "malformed_output" "GitHub returned malformed issue output" {:http_status 200})
                 (contains? issue :pull_request)
                 (failure "not_issue" "GitHub Issues endpoint returned a pull request, not an issue" {:http_status 200})
+                (not (valid-github-issue? item-id issue))
+                (failure "malformed_output" "GitHub returned malformed issue output" {:http_status 200})
                 :else
                 {:ok true :status "ok" :item (normalize-github-issue tracker tesseraft-project-id item-id issue)}))
             (catch Throwable _ (failure "malformed_json" "GitHub returned malformed JSON" {:http_status 200})))
