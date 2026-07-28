@@ -69,7 +69,7 @@ Every completed or operator-stopped run writes `learning/run-summary.json` with 
 
 The first reviewed run, FI2-DIP1, opened PR #87 at round 5 using nine agent sessions and $8.59 recorded executor cost. It validated current-only feedback and semantic review, and motivated immutable validation entrypoints, normalized failure classes, and concise full-change PR synthesis.
 
-FI3-DIP1 reached the original hard limit with one minor review finding left after 15 sessions and $15.53 recorded cost. It proved that changed assertions under one check need diagnostic-sensitive fingerprints and that a hard limit must not preempt intervention/telemetry. The replacement-run contract preserves an explicitly supplied task branch without repinning the failed run. These observations are versioned in the package's prior-run lessons.
+FI3-DIP1 reached the original hard limit with one minor review finding left after 15 sessions and $15.53 recorded cost. It proved that changed assertions under one check need diagnostic-sensitive fingerprints and that a hard limit must not preempt intervention/telemetry. FI3-DIP2 preserved that branch and opened PR #89 in round 1 with three sessions and $2.28 recorded cost. Replacement-run PR synthesis uses the whole-diff review for its summary while keeping the focused design problem as the final correction. These observations are versioned in the package's prior-run lessons.
 
 ## Safe checks
 

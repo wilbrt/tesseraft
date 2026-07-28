@@ -34,3 +34,7 @@ The run made concrete progress across multiple assertions from the same focused 
 The supervisor itself was useful: it identified an invalid import test fixture, preserved the validated implementation prefix, and redirected one precise correction. Keep supervision for genuinely repeated evidence, not merely repeated check titles.
 
 Replacement runs must preserve an explicitly supplied task branch rather than inventing a new branch, so bounded work can continue without mutating or repinning the failed run.
+
+FI3-DIP2 continued the preserved branch and opened PR #89 in round 1 with 3 agent sessions, 38 responses, and $2.28 recorded executor cost. Its focused correction, deterministic validation, and whole-diff review all passed without feedback or supervision.
+
+A replacement design correctly focused on the final defect, but that caused initial PR assembly to present the correction rather than the complete 11-commit branch. On replacement runs, require the design PR title to name the complete base-to-branch change, synthesize the summary from the whole-diff review, and label the focused design problem as the final correction.

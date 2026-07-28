@@ -209,6 +209,16 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             self.assertNotIn("Only fixed the final tiny correction.", body)
             self.assertLessEqual(len(body.encode()), 16000)
 
+            (run_dir / "review/report-9.md").write_text(
+                "# Review\n\n## Verdict: PASS\n\nThe complete branch implements every user-visible capability.\n\nValidation passed.\n"
+            )
+            request["inputs"]["branch"] = "feature/pr-assembly"
+            replacement = self.invoke("assemble_pr.py", request)
+            self.assertEqual(replacement.returncode, 0, replacement.stderr)
+            replacement_body = (run_dir / "pr/pr-body.md").read_text()
+            self.assertIn("## Summary\n\nThe complete branch implements every user-visible capability.", replacement_body)
+            self.assertIn("## Final correction", replacement_body)
+
     def test_learning_records_usage_and_distinguishes_no_pr(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = pathlib.Path(tmp)

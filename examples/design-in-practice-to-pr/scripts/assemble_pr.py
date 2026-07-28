@@ -28,6 +28,15 @@ def section(markdown: str, heading: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "\n\n[truncated]"
 
 
+def review_summary(markdown: str, limit: int = 1200) -> str:
+    for paragraph in re.split(r"\n\s*\n", markdown):
+        text = paragraph.strip()
+        if not text or text.startswith("#") or re.match(r"(?i)^verdict\s*:", text):
+            continue
+        return text if len(text) <= limit else text[:limit] + "\n\n[truncated]"
+    return "Not available."
+
+
 def main() -> None:
     request = json.load(sys.stdin)
     run = request.get("run", {})
@@ -43,9 +52,12 @@ def main() -> None:
     brief = read(run_dir / "design/brief.md", 9000)
     validation = read(newest(run_dir / "validation", "summary-*.json"), 2200)
     review_text = read(newest(run_dir / "review", "report-*.md"), 2800)
+    replacement = bool(str(request.get("inputs", {}).get("branch", "")).strip())
+    summary = review_summary(review_text) if replacement else section(brief, "Description", 1200)
+    problem_heading = "## Final correction" if replacement else "## Problem"
     body = "\n".join([
-        "## Summary", "", section(brief, "Description", 1200),
-        "", "## Problem", "", section(brief, "Problem", 1200),
+        "## Summary", "", summary,
+        "", problem_heading, "", section(brief, "Problem", 1200),
         "", "## Approach and scope", "", section(brief, "Decision and tradeoffs", 1800),
         "", section(brief, "Scope", 1200),
         "", "## Validation", "", f"```json\n{validation}\n```",
