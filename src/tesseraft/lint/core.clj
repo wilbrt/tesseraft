@@ -735,7 +735,7 @@
   (when-let [input-key (boundary-input-key-for-resource input-bindings resource)]
     (when-let [[workflow-kind ambient-key] (exact-boundary-template-ref (get input-bindings input-key))]
       (let [ambient-path (workflow-binding-resource-path wf workflow-kind ambient-key)]
-        (cond-> (assoc resource
+        (cond-> (assoc (dissoc resource :path)
                        :kind (workflow-binding-resource-kind workflow-kind)
                        :name (workflow-binding-resource-name wf workflow-kind ambient-key))
           ambient-path (assoc :path ambient-path))))))

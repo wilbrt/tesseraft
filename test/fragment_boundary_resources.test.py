@@ -39,16 +39,17 @@ def write_fragment_package(tmp: Path, text=FRAGMENT):
     (package_root / "fragment.edn").write_text(text)
 
 
-def write_workflow(tmp: Path, states: str, inputs='{:repo-root {:path "repo" :resource-name "workspace"}}'):
+def write_workflow(tmp: Path, states: str, inputs='{:repo-root {:path "repo" :resource-name "workspace"}}', defaults='{}'):
     wf = tmp / "workflow.edn"
     workflow = '''{:api-version "tesseraft.workflow/v1"
  :kind :workflow
  :metadata {:name "fragment-boundary-resources"}
  :inputs INPUTS
+ :defaults DEFAULTS
  :initial :prepare
  :states {STATES}}
 '''
-    wf.write_text(workflow.replace("INPUTS", inputs).replace("STATES", states))
+    wf.write_text(workflow.replace("INPUTS", inputs).replace("DEFAULTS", defaults).replace("STATES", states))
     return wf
 
 
@@ -157,6 +158,29 @@ def test_literal_input_binding_does_not_invent_external_prerequisite():
     with_tmp(run)
 
 
+def test_pathless_workflow_input_alias_drops_fragment_boundary_path():
+    def run(tmp):
+        write_fragment_package(tmp)
+        wf = write_workflow(tmp, base_states(), inputs='{:repo-root {}}')
+        status, payload = lint(wf, tmp / "home")
+        assert status == 0, payload
+        reqs = payload["fragment-inclusions"]["run"]["resources"]["requires"]
+        assert reqs[0] == {"kind": "input", "name": "repo-root", "mode": "read"}, reqs
+    with_tmp(run)
+
+
+def test_pathless_workflow_default_alias_drops_fragment_boundary_path():
+    def run(tmp):
+        write_fragment_package(tmp)
+        states = base_states().replace('{{inputs.repo-root}}', '{{defaults.repo-root}}')
+        wf = write_workflow(tmp, states, inputs='{}', defaults='{:repo-root {}}')
+        status, payload = lint(wf, tmp / "home")
+        assert status == 0, payload
+        reqs = payload["fragment-inclusions"]["run"]["resources"]["requires"]
+        assert reqs[0] == {"kind": "default", "name": "repo-root", "mode": "read"}, reqs
+    with_tmp(run)
+
+
 def test_two_prefixed_inclusions_project_distinct_outputs_without_mutating_authored_nodes():
     def run(tmp):
         write_fragment_package(tmp)
@@ -195,4 +219,6 @@ if __name__ == "__main__":
     test_fragment_boundary_resources_are_inspectable_and_drive_flow()
     test_missing_projected_incoming_resource_fails_at_inclusion_boundary()
     test_literal_input_binding_does_not_invent_external_prerequisite()
+    test_pathless_workflow_input_alias_drops_fragment_boundary_path()
+    test_pathless_workflow_default_alias_drops_fragment_boundary_path()
     test_two_prefixed_inclusions_project_distinct_outputs_without_mutating_authored_nodes()

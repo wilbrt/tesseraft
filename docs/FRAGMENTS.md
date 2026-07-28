@@ -27,7 +27,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | JSON Schema enforcement | Not wired into the linter; descriptive contract only |
 | Required outcome/exit enforcement when omitted | Implemented |
 | Parameter, version, and prefix semantics | Implemented for static workflow lint; no runtime writes/execution |
-| Boundary resource projection into workflow lint | Not implemented |
+| Boundary resource projection into workflow lint | Implemented for static workflow lint; no runtime writes/execution |
 | Runtime fragment execution | Not implemented |
 | Public fragment control-plane API / Studio catalog | Not implemented |
 | Fragment gallery | Deferred (roadmap P1.5) |
