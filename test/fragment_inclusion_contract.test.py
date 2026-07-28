@@ -433,6 +433,54 @@ def test_repeated_broken_package_inclusions_never_emit_effective_data():
     with_tmp(run)
 
 
+def test_required_input_defaults_do_not_satisfy_authored_binding_contract():
+    def run(tmp):
+        home = tmp / "global-home"
+        pkg = FRAGMENT.replace(
+            ':repo-root {:type :string :required true}',
+            ':repo-root {:type :string :required true :default "from-package"}',
+        )
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:count 2}
+   :parameters {:retries 1}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=pkg, workflow_node=node)
+        status, payload = lint(wf, home)
+        assert status != 0, payload
+        missing = [d for d in payload["diagnostics"] if d["code"] == "fragment-input-binding-missing"]
+        assert missing, payload
+        assert missing[0]["path"] == ["states", "run", "inputs", "repo-root"], payload
+        assert "run" not in payload.get("fragment-inclusions", {}), payload
+    with_tmp(run)
+
+
+def test_authored_inputs_win_and_optional_input_defaults_are_not_projected():
+    def run(tmp):
+        home = tmp / "global-home"
+        pkg = FRAGMENT.replace(
+            ':repo-root {:type :string :required true}\n                      :count {:type :integer :required false}',
+            ':repo-root {:type :string :required true :default "from-package"}\n                      :count {:type :integer :required false :default 99}',
+        )
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:repo-root "authored"}
+   :parameters {:retries 1 :mode "fast"}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=pkg, workflow_node=node)
+        status, payload = lint(wf, home)
+        assert status == 0, payload
+        inclusion = payload["fragment-inclusions"]["run"]
+        assert inclusion["inputs"] == {"repo-root": "authored"}, inclusion
+        assert "count" not in inclusion["inputs"], inclusion
+        assert inclusion["parameters"] == {"mode": "fast", "retries": 1, "ratio": 1.5, "enabled": True}, inclusion
+    with_tmp(run)
+
+
 def test_import_allows_authoring_stub_with_required_parameter_pending():
     def run(tmp):
         home = tmp / "global-home"
@@ -461,4 +509,6 @@ if __name__ == "__main__":
     test_resolved_package_metadata_name_must_match_requested_fragment()
     test_malformed_binding_containers_and_contract_entries_are_rejected()
     test_repeated_broken_package_inclusions_never_emit_effective_data()
+    test_required_input_defaults_do_not_satisfy_authored_binding_contract()
+    test_authored_inputs_win_and_optional_input_defaults_are_not_projected()
     test_import_allows_authoring_stub_with_required_parameter_pending()

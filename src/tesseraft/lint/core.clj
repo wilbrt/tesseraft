@@ -586,11 +586,14 @@
     (map? contract) (= true (:required contract))
     :else false))
 
-(defn fragment-effective-value [contract supplied-map k]
+(defn fragment-parameter-effective-value [contract supplied-map k]
   (if (contains? supplied-map k)
     (get supplied-map k)
     (when (and (map? contract) (contains? contract :default))
       (:default contract))))
+
+(defn fragment-input-effective-bindings [supplied]
+  (:map (normalized-fragment-map supplied) {}))
 
 (defn fragment-value-type-ok? [declared value]
   (case declared
@@ -630,9 +633,13 @@
       (apply concat
              (for [[k contract] declared-map
                    :let [contract-map? (map? contract)
-                         has-effective? (or (contains? bound-map k)
-                                            (and contract-map? (contains? contract :default)))
-                         value (fragment-effective-value contract bound-map k)
+                         has-effective? (if input?
+                                          (contains? bound-map k)
+                                          (or (contains? bound-map k)
+                                              (and contract-map? (contains? contract :default))))
+                         value (if input?
+                                 (get bound-map k)
+                                 (fragment-parameter-effective-value contract bound-map k))
                          typ (some-> (when contract-map? (:type contract)) normalize-fragment-name-key)]]
                (concat
                  (when-not contract-map?
@@ -656,7 +663,7 @@
                          (conj base-path kind k)
                          (str "Fragment " (name kind) " " (name k) " must be " (name typ) " without coercion"))])))))))
 
-(defn effective-fragment-bindings [contracts supplied]
+(defn effective-fragment-parameters [contracts supplied]
   (let [declared (:map (normalized-fragment-map contracts) {})
         bound (:map (normalized-fragment-map supplied) {})]
     (into {}
@@ -693,8 +700,8 @@
      :scope (:scope resolved)
      :version (get-in pkg [:metadata :version])
      :prefix prefix
-     :inputs (effective-fragment-bindings (:inputs iface {}) (:inputs node {}))
-     :parameters (effective-fragment-bindings (:parameters iface {}) (:parameters node {}))}))
+     :inputs (fragment-input-effective-bindings (:inputs node {}))
+     :parameters (effective-fragment-parameters (:parameters iface {}) (:parameters node {}))}))
 
 (defn fragment-node-result [wf id n opts]
   (let [frag-name (:fragment n)

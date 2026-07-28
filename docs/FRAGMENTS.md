@@ -98,9 +98,9 @@ For consumers that need JSON data, `portable-fragment-package-data` returns a de
 
 ### Inputs
 
-`:interface :inputs` describes values supplied by an importing workflow. Inclusion lint normalizes declared and bound names to keyword identity, rejects normalization collisions, rejects unknown bindings, requires every input unless `:required false`, treats `nil` as missing for required inputs, and validates known scalar literals without coercion.
+`:interface :inputs` describes values supplied by an importing workflow. Inclusion lint normalizes declared and bound names to keyword identity, rejects normalization collisions, rejects unknown bindings, requires every input unless `:required false`, treats `nil` as missing for required inputs, and validates known scalar literals without coercion. Input declaration `:default` values do not satisfy required inputs and are not synthesized into effective inclusion inputs; successful input data reflects authored bindings only.
 
-Supported scalar types are `:string`, `:integer`, `:number`, and `:boolean`. Unsupported declared types are lint errors. Templated strings remain strings; lint does not evaluate templates or coerce string values into numbers/booleans. Bindings are exposed as derived lint data only because fragment execution is absent.
+Supported scalar types are `:string`, `:integer`, `:number`, and `:boolean`. Unsupported declared types are lint errors. Templated strings remain strings; lint does not evaluate templates or coerce string values into numbers/booleans. Authored bindings are exposed as derived lint data only because fragment execution is absent.
 
 ### Parameters
 
@@ -175,11 +175,11 @@ Implemented inclusion semantics:
 - omitted scope uses project > global > examples precedence; explicit scope searches only that scope and never falls back;
 - `:version`, when present, must be a non-blank string exactly equal to `:metadata :version` of the resolved package;
 - `:prefix`, when present, must be a non-blank portable safe relative prefix: no absolute, drive/UNC, `.`/`..`, backslash, or parent traversal forms;
-- input/parameter declaration and binding containers must be maps; declaration entries must be maps; required and unknown bindings, defaults, collisions, supported scalar declarations, and literal scalar values are checked without coercion;
+- input/parameter declaration and binding containers must be maps; declaration entries must be maps; required and unknown bindings, parameter defaults, collisions, supported scalar declarations, and literal scalar values are checked without coercion;
 - transition outcomes are checked against the interface;
 - broken package lint is surfaced as one aggregate inclusion error.
 
-A successful workflow lint result includes derived `:fragment-inclusions` keyed by inclusion state id. Each entry contains `:package-path`, canonical `:scope`, resolved `:version`, normalized/omitted `:prefix`, effective `:inputs`, and defaults-merged effective `:parameters`. This is inspection data only; lint does not mutate the workflow, copy resources, write prefixed artifacts, or execute fragments.
+A successful workflow lint result includes derived `:fragment-inclusions` keyed by inclusion state id. Each entry contains `:package-path`, canonical `:scope`, resolved `:version`, normalized/omitted `:prefix`, authored effective `:inputs`, and defaults-merged effective `:parameters`. This is inspection data only; lint does not mutate the workflow, copy resources, write prefixed artifacts, or execute fragments.
 
 Still not operational:
 
