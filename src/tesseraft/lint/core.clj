@@ -478,29 +478,60 @@
         (some #{s} acc) acc
         :else (recur (fs/path p) (conj acc s))))))
 
-(defn find-fragment-package-file [wf node]
+(def fragment-scopes [:project :global :examples])
+(def fragment-scope-aliases {:project :project "project" :project
+                             :global :global "global" :global
+                             :example :examples "example" :examples
+                             :examples :examples "examples" :examples
+                             :configured :examples "configured" :examples})
+(def fragment-scalar-types #{:string :integer :number :boolean})
+
+(defn normalize-fragment-name-key [x]
+  (cond
+    (keyword? x) x
+    (and (string? x) (str/starts-with? x ":")) (keyword (subs x 1))
+    (string? x) (keyword x)
+    :else x))
+
+(defn normalize-fragment-scope [scope]
+  (cond
+    (nil? scope) nil
+    (contains? fragment-scope-aliases scope) (get fragment-scope-aliases scope)
+    (keyword? scope) (get fragment-scope-aliases (name scope))
+    (string? scope) (get fragment-scope-aliases scope)
+    :else nil))
+
+(defn fragment-package-candidates [wf name]
+  (let [nm (str name)
+        home (fragment-home-dir)
+        ancs (ancestor-dirs (or (spec/workflow-dir wf) "."))]
+    (vec (concat
+           (for [d ancs]
+             {:scope :project :path (str (fs/path d ".tesseraft" "fragments" nm "fragment.edn"))})
+           [{:scope :global :path (str (fs/path home "fragments" nm "fragment.edn"))}]
+           (for [d ancs]
+             {:scope :examples :path (str (fs/path d "examples" "fragments" nm "fragment.edn"))})))))
+
+(defn resolve-fragment-package [wf node]
   (when-let [name (:fragment node)]
-    (let [nm (str name)
-          scope (:scope node)
-          home (fragment-home-dir)
-          ancs (ancestor-dirs (or (spec/workflow-dir wf) "."))
-          exists (fn [f] (when (fs/exists? f) (str f)))]
-      (or
-        ;; explicit scope directory
-        (when (string? scope)
-          (or (exists (fs/path scope "fragment.edn"))
-              (exists (fs/path scope nm "fragment.edn"))
-              (exists (fs/path scope "fragments" nm "fragment.edn"))))
-        (when (#{:project} scope)
-          (some exists (for [d ancs] (fs/path d ".tesseraft" "fragments" nm "fragment.edn"))))
-        (when (#{:global} scope)
-          (exists (fs/path home "fragments" nm "fragment.edn")))
-        (when (#{:example :examples :configured} scope)
-          (some exists (for [d ancs] (fs/path d "examples" "fragments" nm "fragment.edn"))))
-        ;; default precedence: project > global > examples
-        (some exists (for [d ancs] (fs/path d ".tesseraft" "fragments" nm "fragment.edn")))
-        (exists (fs/path home "fragments" nm "fragment.edn"))
-        (some exists (for [d ancs] (fs/path d "examples" "fragments" nm "fragment.edn")))))))
+    (let [explicit? (contains? node :scope)
+          scope (normalize-fragment-scope (:scope node))
+          candidates (cond->> (fragment-package-candidates wf name)
+                       scope (filter #(= scope (:scope %))))
+          found (first (filter #(fs/exists? (:path %)) candidates))]
+      (cond
+        (and explicit? (nil? scope))
+        {:error :invalid-scope}
+
+        found
+        (assoc found :name name :explicit-scope? explicit?)
+
+        :else
+        {:error :not-found :name name :scope scope :explicit-scope? explicit?}))))
+
+(defn find-fragment-package-file [wf node]
+  (let [res (resolve-fragment-package wf node)]
+    (when (:path res) (:path res))))
 
 (defn fragment-transition-outcome [tr]
   (some-> (get-in tr [:when :fragment/outcome]) str))
@@ -511,58 +542,179 @@
     (map? contract) (not= false (:required contract))
     :else false))
 
-(defn fragment-node-diagnostics [wf id n opts]
-  (let [frag-name (:fragment n)
-        path [:states id]]
-    (if-let [fpath (find-fragment-package-file wf n)]
-      (try
-        (let [pkg (spec/read-fragment-package fpath)
-              iface (:interface pkg)
-              req-inputs (for [[k c] (:inputs iface {}) :when (fragment-node-output-required? c)] k)
-              bound-inputs (set (keys (:inputs n {})))
-              missing-inputs (remove #(contains? bound-inputs %) req-inputs)
-              outcomes (set (:outcomes iface))
-              covered (set (map keyword (keep fragment-transition-outcome (spec/transitions n))))]
-          (concat
-            (for [k missing-inputs]
-              (err :fragment-input-binding-missing (conj path :inputs k)
-                   (str "Fragment " frag-name " requires input " (name k) " but it is not bound")))
-            ;; Boundary-only inclusion: the import site does NOT re-prove the
-            ;; fragment's internal subgraph. Internal proof is done once by
-            ;; `tesseraft fragment lint` and `fragment import`. We surface
-            ;; at most one de-duplicated, per-file-path internal-lint signal
-            ;; per lint-workflow invocation so a broken fragment is still
-            ;; reported to importing workflows without N-fold re-proof.
-            (let [res (lint-fragment-package-cached pkg opts)
-                  fkey (spec/fragment-package-file pkg)
-                  seen (::fragment-internal-seen opts)]
-              (when (and (not (:ok res))
-                         (or (nil? seen)
-                             (not (contains? @seen fkey))))
-                (when seen (swap! seen conj fkey))
-                [(err :fragment-internal-lint-failed (conj path :fragment)
-                      (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
-                      (str/join "; " (map :message (:errors res))))]))
-            (for [o outcomes :when (not (contains? covered o))]
-              (warn :fragment-uncovered-outcome (conj path :transitions)
-                    (str "Fragment outcome " o " is not covered by any transition")))
-            (for [o covered :when (not (contains? outcomes o))]
-              (err :fragment-unknown-outcome (conj path :transitions)
-                   (str "Transition references unknown fragment outcome " o)))))
-        (catch Throwable t
-          [(err :fragment-internal-lint-failed (conj path :fragment)
-                (str "Fragment package " frag-name " could not be read: " (.getMessage t)))]))
-      [(err :fragment-unknown-package (conj path :fragment)
-            (str "Fragment package not found: " frag-name))])))
+(defn normalized-fragment-map [m]
+  (when (map? m)
+    (let [pairs (map (fn [[k v]] [(normalize-fragment-name-key k) k v]) m)
+          collisions (->> pairs (group-by first) (filter (fn [[_ xs]] (< 1 (count xs)))))]
+      {:map (into {} (map (fn [[k _ v]] [k v]) pairs))
+       :collisions (mapv first collisions)})))
 
-(defn fragment-node-checks [wf opts]
+(defn fragment-required? [contract input?]
+  (cond
+    input? (fragment-node-output-required? contract)
+    (map? contract) (= true (:required contract))
+    :else false))
+
+(defn fragment-effective-value [contract supplied-map k]
+  (if (contains? supplied-map k)
+    (get supplied-map k)
+    (when (and (map? contract) (contains? contract :default))
+      (:default contract))))
+
+(defn fragment-value-type-ok? [declared value]
+  (case declared
+    :string (string? value)
+    :integer (integer? value)
+    :number (number? value)
+    :boolean (or (true? value) (false? value))
+    false))
+
+(defn fragment-binding-diagnostics [base-path kind contracts supplied input?]
+  (let [declared (normalized-fragment-map contracts)
+        bound (normalized-fragment-map supplied)
+        declared-map (:map declared {})
+        bound-map (:map bound {})]
+    (concat
+      (for [k (:collisions declared)]
+        (err :fragment-binding-name-collision (conj base-path kind k)
+             (str "Fragment " (name kind) " declaration collides after name normalization: " k)))
+      (for [k (:collisions bound)]
+        (err :fragment-binding-name-collision (conj base-path kind k)
+             (str "Fragment " (name kind) " binding collides after name normalization: " k)))
+      (for [k (keys bound-map) :when (not (contains? declared-map k))]
+        (err (if input? :fragment-unknown-input :fragment-unknown-parameter) (conj base-path kind k)
+             (str "Unknown fragment " (name kind) " binding " k)))
+      (apply concat
+             (for [[k contract] declared-map
+                   :let [has-effective? (or (contains? bound-map k)
+                                            (and (map? contract) (contains? contract :default)))
+                         value (fragment-effective-value contract bound-map k)
+                         typ (some-> (when (map? contract) (:type contract)) normalize-fragment-name-key)]]
+               (concat
+                 (when (and (fragment-required? contract input?)
+                            (or (not has-effective?) (nil? value)))
+                   [(err (if input? :fragment-input-binding-missing :fragment-parameter-binding-missing)
+                         (conj base-path kind k)
+                         (str "Fragment requires " (name kind) " " (name k) " but it is not bound"))])
+                 (when (and typ (not (contains? fragment-scalar-types typ)))
+                   [(err :fragment-unsupported-scalar-type (conj base-path kind k :type)
+                         (str "Fragment " (name kind) " " (name k) " declares unsupported type " typ))])
+                 (when (and typ (contains? fragment-scalar-types typ) has-effective? (some? value)
+                            (not (fragment-value-type-ok? typ value)))
+                   [(err (if input? :fragment-input-type-mismatch :fragment-parameter-type-mismatch)
+                         (conj base-path kind k)
+                         (str "Fragment " (name kind) " " (name k) " must be " (name typ) " without coercion"))])))))))
+
+(defn effective-fragment-bindings [contracts supplied]
+  (let [declared (:map (normalized-fragment-map contracts) {})
+        bound (:map (normalized-fragment-map supplied) {})]
+    (into {}
+          (for [[k contract] declared
+                :let [has-bound? (contains? bound k)
+                      has-default? (and (map? contract) (contains? contract :default))]
+                :when (or has-bound? has-default?)]
+            [k (if has-bound? (get bound k) (:default contract))]))))
+
+(defn fragment-version-diagnostics [path node pkg]
+  (when (contains? node :version)
+    (let [wanted (:version node)
+          actual (get-in pkg [:metadata :version])]
+      (cond
+        (or (not (string? wanted)) (str/blank? wanted))
+        [(err :fragment-invalid-version (conj path :version)
+              "Fragment :version must be a non-blank string when present")]
+
+        (not= wanted actual)
+        [(err :fragment-version-mismatch (conj path :version)
+              (str "Fragment version " wanted " does not match resolved package version " (pr-str actual)))]))))
+
+(defn fragment-prefix-diagnostics [path node]
+  (when (contains? node :prefix)
+    (let [prefix (:prefix node)]
+      (when-not (spec/safe-relative-prefix? prefix)
+        [(err :fragment-invalid-prefix (conj path :prefix)
+              (str "Fragment :prefix must be a safe portable relative prefix: " (pr-str prefix)))]))))
+
+(defn fragment-effective-contract [resolved pkg node]
+  (let [iface (:interface pkg)
+        prefix (when (contains? node :prefix) (:prefix node))]
+    {:package-path (:path resolved)
+     :scope (:scope resolved)
+     :version (get-in pkg [:metadata :version])
+     :prefix prefix
+     :inputs (effective-fragment-bindings (:inputs iface {}) (:inputs node {}))
+     :parameters (effective-fragment-bindings (:parameters iface {}) (:parameters node {}))}))
+
+(defn fragment-node-result [wf id n opts]
+  (let [frag-name (:fragment n)
+        path [:states id]
+        resolved (resolve-fragment-package wf n)]
+    (cond
+      (= :invalid-scope (:error resolved))
+      {:diagnostics [(err :fragment-invalid-scope (conj path :scope)
+                          "Fragment :scope must be project, global, examples, example, or configured")]}
+
+      (nil? (:path resolved))
+      {:diagnostics [(err :fragment-unknown-package (conj path :fragment)
+                          (str "Fragment package not found: " frag-name))]}
+
+      :else
+      (try
+        (let [pkg (spec/read-fragment-package (:path resolved))
+              iface (:interface pkg)
+              outcomes (set (:outcomes iface))
+              covered (set (map keyword (keep fragment-transition-outcome (spec/transitions n))))
+              diagnostics (vec (remove nil?
+                                       (apply concat
+                                         [(fragment-binding-diagnostics path :inputs (:inputs iface {}) (:inputs n {}) true)
+                                          (fragment-binding-diagnostics path :parameters (:parameters iface {}) (:parameters n {}) false)
+                                          (fragment-version-diagnostics path n pkg)
+                                          (fragment-prefix-diagnostics path n)
+                                          (let [res (lint-fragment-package-cached pkg opts)
+                                                fkey (spec/fragment-package-file pkg)
+                                                seen (::fragment-internal-seen opts)]
+                                            (when (and (not (:ok res))
+                                                       (or (nil? seen)
+                                                           (not (contains? @seen fkey))))
+                                              (when seen (swap! seen conj fkey))
+                                              [(err :fragment-internal-lint-failed (conj path :fragment)
+                                                    (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
+                                                    (str/join "; " (map :message (:errors res))))]))
+                                          (for [o outcomes :when (not (contains? covered o))]
+                                            (warn :fragment-uncovered-outcome (conj path :transitions)
+                                                  (str "Fragment outcome " o " is not covered by any transition")))
+                                          (for [o covered :when (not (contains? outcomes o))]
+                                            (err :fragment-unknown-outcome (conj path :transitions)
+                                                 (str "Transition references unknown fragment outcome " o)))])))]
+          (cond-> {:diagnostics diagnostics}
+            (not-any? #(= "error" (:severity %)) diagnostics)
+            (assoc :inclusion (fragment-effective-contract resolved pkg n))))
+        (catch Throwable t
+          {:diagnostics [(err :fragment-internal-lint-failed (conj path :fragment)
+                              (str "Fragment package " frag-name " could not be read: " (.getMessage t)))]})))))
+
+(defn fragment-node-diagnostics [wf id n opts]
+  (:diagnostics (fragment-node-result wf id n opts)))
+
+(defn fragment-node-results [wf opts]
   (let [opts (-> opts
                  (assoc ::fragment-internal-cache (atom {}))
                  (assoc ::fragment-internal-seen (atom #{})))]
-    (apply concat
-           (for [[id n] (:states wf)
-                 :when (and (map? n) (= :fragment (:type n)))]
-             (fragment-node-diagnostics wf id n opts)))))
+    (vec
+      (keep (fn [[id n]]
+              (when (and (map? n) (= :fragment (:type n)))
+                [id (fragment-node-result wf id n opts)]))
+            (:states wf)))))
+
+(defn fragment-node-checks [wf opts]
+  (mapcat (comp :diagnostics second) (fragment-node-results wf opts)))
+
+(defn fragment-inclusion-results [results]
+  (into {}
+        (keep (fn [[id result]]
+                (when-let [incl (:inclusion result)]
+                  [id incl])))
+        results))
 
 (defn node-contract-checks [wf opts]
   (apply concat
@@ -728,14 +880,15 @@
 (defn lint-workflow
   ([wf] (lint-workflow wf {}))
   ([wf opts]
-   (let [diagnostics (vec (remove nil?
+   (let [fragment-results (fragment-node-results wf opts)
+         diagnostics (vec (remove nil?
                                   (concat
                                     (top-level-checks wf)
                                     (node-type-checks wf)
                                     (transition-checks wf)
                                     (reachability-checks wf)
                                     (node-contract-checks wf opts)
-                                    (fragment-node-checks wf opts)
+                                    (mapcat (comp :diagnostics second) fragment-results)
                                     (duplicate-output-checks wf)
                                     (workflow-resource-checks wf)
                                     (cycle-checks wf)
@@ -744,12 +897,14 @@
          strict? (:strict opts)
          errors (filter #(or (= "error" (:severity %))
                              (and strict? (= "warning" (:severity %)))) diagnostics)
-         warnings (filter #(= "warning" (:severity %)) diagnostics)]
-     {:ok (empty? errors)
-      :workflow (spec/workflow-file wf)
-      :errors (vec errors)
-      :warnings (vec warnings)
-      :diagnostics diagnostics})))
+         warnings (filter #(= "warning" (:severity %)) diagnostics)
+         inclusions (fragment-inclusion-results fragment-results)]
+     (cond-> {:ok (empty? errors)
+              :workflow (spec/workflow-file wf)
+              :errors (vec errors)
+              :warnings (vec warnings)
+              :diagnostics diagnostics}
+       (seq inclusions) (assoc :fragment-inclusions inclusions)))))
 
 (defn lint-file
   ([workflow-file] (lint-file workflow-file {}))

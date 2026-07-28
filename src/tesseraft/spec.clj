@@ -267,11 +267,23 @@
 (defn absolute-path? [s] (and (string? s) (str/starts-with? s "/")))
 (defn contains-parent-segment? [s]
   (some #{".."} (str/split (str s) #"/")))
+(defn portable-absolute-path? [s]
+  (and (string? s)
+       (or (str/starts-with? s "/")
+           (str/starts-with? s "\\\\")
+           (boolean (re-find #"^[A-Za-z]:[\\\\/]" s)))))
+
 (defn safe-relative-path? [s]
   (and (string? s)
        (not (str/blank? s))
-       (not (absolute-path? s))
+       (not (portable-absolute-path? s))
+       (not (str/includes? s "\\"))
        (not (contains-parent-segment? s))))
+
+(defn safe-relative-prefix? [s]
+  (and (safe-relative-path? s)
+       (not (#{"." ".."} s))
+       (not (str/starts-with? s "./"))))
 
 (defn template-vars [s]
   (when (string? s)

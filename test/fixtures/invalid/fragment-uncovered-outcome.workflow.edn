@@ -12,6 +12,7 @@
    :fragment "test-fix-loop"
    :inputs {:repo-root "{{inputs.repo-root}}"
             :test-cmd "{{inputs.test-cmd}}"}
+   :parameters {:max-rounds 3 :base-branch "main"}
    ;; Only covers :fail; :pass is uncovered -> warning.
    :transitions [{:when {:fragment/outcome "fail"} :next :abort}]}
   :abort {:type :terminal :status :failure}}}

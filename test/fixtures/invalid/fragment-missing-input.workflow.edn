@@ -11,6 +11,7 @@
    :fragment "test-fix-loop"
    ;; test-cmd is a required interface input but is not bound -> error.
    :inputs {:repo-root "{{inputs.repo-root}}"}
+   :parameters {:max-rounds 3 :base-branch "main"}
    :transitions [{:when {:fragment/outcome "pass"} :next :done}
                  {:when {:fragment/outcome "fail"} :next :abort}]}
   :done {:type :terminal :status :success}
