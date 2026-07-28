@@ -80,6 +80,7 @@ Inclusion (workflow-side `{:type :fragment}` node) diagnostics:
 - `fragment-binding-name-collision` — declared or bound input/parameter names collide after keyword normalization.
 - `fragment-input-binding-missing` / `fragment-parameter-binding-missing` — a required input or parameter has no non-`nil` effective value.
 - `fragment-unknown-input` / `fragment-unknown-parameter` — the import site binds a name not declared by the interface.
+- `fragment-missing-scalar-type` — an input/parameter declaration omits `:type` or sets it to `nil`.
 - `fragment-unsupported-scalar-type` — an input/parameter declares a type outside `:string`, `:integer`, `:number`, or `:boolean`.
 - `fragment-input-type-mismatch` / `fragment-parameter-type-mismatch` — a known literal/default value does not match its declared scalar type; lint does not coerce strings.
 - `fragment-unknown-outcome` — a transition references an outcome not declared in `:interface :outcomes`.

@@ -644,6 +644,9 @@
                    [(err (if input? :fragment-input-binding-missing :fragment-parameter-binding-missing)
                          (conj base-path kind k)
                          (str "Fragment requires " (name kind) " " (name k) " but it is not bound"))])
+                 (when (and contract-map? (nil? typ))
+                   [(err :fragment-missing-scalar-type (conj base-path kind k :type)
+                         (str "Fragment " (name kind) " " (name k) " must declare a supported scalar :type"))])
                  (when (and typ (not (contains? fragment-scalar-types typ)))
                    [(err :fragment-unsupported-scalar-type (conj base-path kind k :type)
                          (str "Fragment " (name kind) " " (name k) " declares unsupported type " typ))])
@@ -732,20 +735,23 @@
                                                         (for [o covered :when (not (contains? outcomes o))]
                                                           (err :fragment-unknown-outcome (conj path :transitions)
                                                                (str "Transition references unknown fragment outcome " o)))])))
-              internal-diagnostics (when-not (some #(= "error" (:severity %)) boundary-diagnostics)
-                                     (let [res (lint-fragment-package-cached pkg opts)
-                                           fkey (spec/fragment-package-file pkg)
-                                           seen (::fragment-internal-seen opts)]
-                                       (when (and (not (:ok res))
-                                                  (or (nil? seen)
-                                                      (not (contains? @seen fkey))))
-                                         (when seen (swap! seen conj fkey))
-                                         [(err :fragment-internal-lint-failed (conj path :fragment)
-                                               (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
-                                               (str/join "; " (map :message (:errors res))))])))
-              diagnostics (vec (concat boundary-diagnostics internal-diagnostics))]
+              internal-result (when-not (some #(= "error" (:severity %)) boundary-diagnostics)
+                                (let [res (lint-fragment-package-cached pkg opts)
+                                      fkey (spec/fragment-package-file pkg)
+                                      seen (::fragment-internal-seen opts)
+                                      failed? (not (:ok res))]
+                                  {:failed? failed?
+                                   :diagnostics (when (and failed?
+                                                           (or (nil? seen)
+                                                               (not (contains? @seen fkey))))
+                                                  (when seen (swap! seen conj fkey))
+                                                  [(err :fragment-internal-lint-failed (conj path :fragment)
+                                                        (str "Fragment package " frag-name " failed lint with " (count (:errors res)) " error(s)")
+                                                        (str/join "; " (map :message (:errors res))))])}))
+              diagnostics (vec (concat boundary-diagnostics (:diagnostics internal-result)))]
           (cond-> {:diagnostics diagnostics}
-            (not-any? #(= "error" (:severity %)) diagnostics)
+            (and (not (:failed? internal-result))
+                 (not-any? #(= "error" (:severity %)) diagnostics))
             (assoc :inclusion (fragment-effective-contract resolved pkg n))))
         (catch Throwable t
           {:diagnostics [(err :fragment-internal-lint-failed (conj path :fragment)

@@ -175,6 +175,27 @@ def test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coerc
     with_tmp(run)
 
 
+def test_missing_scalar_types_are_rejected_before_effective_inclusion_data():
+    def run(tmp):
+        home = tmp / "global-home"
+        pkg = FRAGMENT.replace(':repo-root {:type :string :required true}', ':repo-root {:required true}')
+        pkg = pkg.replace(':mode {:type :string :default "safe"}', ':mode {:type nil :default {:unsafe true}}')
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:repo-root {:unsafe true} :count 2}
+   :parameters {:retries 1}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=pkg, workflow_node=node)
+        status, payload = lint(wf, home)
+        got = codes(payload)
+        assert status != 0, payload
+        assert "fragment-missing-scalar-type" in got, payload
+        assert "run" not in payload.get("fragment-inclusions", {}), payload
+    with_tmp(run)
+
+
 def test_invalid_binding_names_and_normalization_collisions_are_rejected_precisely():
     def run(tmp):
         home = tmp / "global-home"
@@ -281,6 +302,35 @@ def test_malformed_binding_containers_and_contract_entries_are_rejected():
     with_tmp(run)
 
 
+def test_repeated_broken_package_inclusions_never_emit_effective_data():
+    def run(tmp):
+        home = tmp / "global-home"
+        broken = FRAGMENT.replace(':initial :start', ':initial :missing')
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:repo-root "."}
+   :parameters {:retries 1}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :again}]}
+  :again
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {:repo-root "."}
+   :parameters {:retries 1}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=broken, workflow_node=node)
+        status, payload = lint(wf, home)
+        got = codes(payload)
+        assert status != 0, payload
+        assert "fragment-internal-lint-failed" in got, payload
+        assert sum(1 for d in payload["diagnostics"] if d["code"] == "fragment-internal-lint-failed") == 1, payload
+        assert "run" not in payload.get("fragment-inclusions", {}), payload
+        assert "again" not in payload.get("fragment-inclusions", {}), payload
+    with_tmp(run)
+
+
 def test_import_allows_authoring_stub_with_required_parameter_pending():
     def run(tmp):
         home = tmp / "global-home"
@@ -299,9 +349,11 @@ if __name__ == "__main__":
     test_explicit_project_scope_does_not_fall_back_to_global()
     test_version_binding_type_name_and_prefix_diagnostics_are_distinct()
     test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coercion()
+    test_missing_scalar_types_are_rejected_before_effective_inclusion_data()
     test_invalid_binding_names_and_normalization_collisions_are_rejected_precisely()
     test_prefix_validation_rejects_dot_segments_and_windows_drive_forms()
     test_fragment_name_must_be_single_safe_package_name_and_stay_under_scope_root()
     test_resolved_package_metadata_name_must_match_requested_fragment()
     test_malformed_binding_containers_and_contract_entries_are_rejected()
+    test_repeated_broken_package_inclusions_never_emit_effective_data()
     test_import_allows_authoring_stub_with_required_parameter_pending()

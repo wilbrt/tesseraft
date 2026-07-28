@@ -282,12 +282,13 @@
 (defn safe-relative-path? [s]
   (and (string? s)
        (not (str/blank? s))
-       (not (portable-absolute-path? s))
-       (not (str/includes? s "\\"))
+       (not (absolute-path? s))
        (not (contains-parent-segment? s))))
 
 (defn safe-relative-prefix? [s]
   (and (safe-relative-path? s)
+       (not (portable-absolute-path? s))
+       (not (str/includes? s "\\"))
        (not (contains-dot-segment? s))))
 
 (defn template-vars [s]
