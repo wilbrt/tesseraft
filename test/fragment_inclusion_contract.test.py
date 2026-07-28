@@ -222,7 +222,7 @@ def test_prefix_validation_rejects_dot_segments_and_windows_drive_forms():
 def test_import_allows_authoring_stub_with_required_parameter_pending():
     def run(tmp):
         home = tmp / "global-home"
-        wf = write_project(tmp, workflow_node=''':start {:type :terminal :status :success}''')
+        wf = write_project(tmp, workflow_node=''':run {:type :terminal :status :success}''')
         package_path = tmp / ".tesseraft/fragments/contract-fragment/fragment.edn"
         proc = tesseraft(["fragment", "import", str(package_path), str(wf), "--as", "imported"], home)
         assert proc.returncode == 0, proc.stderr
