@@ -19,12 +19,15 @@ FRAGMENT = '''{:api-version "tesseraft.fragment/v1"
                           :enabled {:type :boolean :default true}}
              :outputs {:status {:required true}}
              :outcomes #{:pass :fail}}
- :fragment {:initial :done
+ :fragment {:initial :start
             :entry {:inputs [:repo-root :count]
                     :parameters [:mode :retries :ratio :enabled]}
             :exit [{:on :pass :produces {:status "status.json"}}
                    {:on :fail :produces {:status "status.json"}}]
-            :states {:done {:type :terminal :status :success :outcome :pass}
+            :states {:start {:type :router
+                             :transitions [{:next :done}
+                                           {:next :failed}]}
+                     :done {:type :terminal :status :success :outcome :pass}
                      :failed {:type :terminal :status :failure :outcome :fail}}}}
 '''
 
