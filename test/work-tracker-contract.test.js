@@ -87,6 +87,7 @@ test('WT6 normalized work item schema discriminates provider remote scope', () =
     for (const [remoteProvider, remote] of Object.entries(remotes)) {
       if (remoteProvider === provider) continue;
       assert.equal(validateWithDraft202012(schema, { ...base, provider, remote }), false, `${provider} rejects ${remoteProvider} scope`);
+      assert.equal(validateWithDraft202012(schema, { ...base, provider, remote: { ...remotes[provider], ...remote } }), false, `${provider} rejects mixed ${remoteProvider} scope`);
     }
   }
 });

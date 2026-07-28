@@ -76,23 +76,38 @@
     "url": { "type": ["string", "null"] },
     "fetched_at": { "type": "string", "format": "date-time" }
   },
-  "oneOf": [
+  "allOf": [
     {
-      "properties": {
-        "provider": { "const": "plane" },
-        "remote": { "required": ["workspace_slug", "project_id"] }
+      "if": { "properties": { "provider": { "const": "plane" } }, "required": ["provider"] },
+      "then": {
+        "properties": {
+          "remote": {
+            "required": ["workspace_slug", "project_id"],
+            "not": { "anyOf": [{ "required": ["project_key"] }, { "required": ["repository"] }] }
+          }
+        }
       }
     },
     {
-      "properties": {
-        "provider": { "const": "jira" },
-        "remote": { "required": ["project_key"] }
+      "if": { "properties": { "provider": { "const": "jira" } }, "required": ["provider"] },
+      "then": {
+        "properties": {
+          "remote": {
+            "required": ["project_key"],
+            "not": { "anyOf": [{ "required": ["workspace_slug"] }, { "required": ["project_id"] }, { "required": ["repository"] }] }
+          }
+        }
       }
     },
     {
-      "properties": {
-        "provider": { "const": "github-issues" },
-        "remote": { "required": ["repository"] }
+      "if": { "properties": { "provider": { "const": "github-issues" } }, "required": ["provider"] },
+      "then": {
+        "properties": {
+          "remote": {
+            "required": ["repository"],
+            "not": { "anyOf": [{ "required": ["workspace_slug"] }, { "required": ["project_id"] }, { "required": ["project_key"] }] }
+          }
+        }
       }
     }
   ],
