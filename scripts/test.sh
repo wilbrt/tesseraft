@@ -523,9 +523,9 @@ cp examples/fragments/test-fix-loop/prompts/fix.md.tmpl "$TEMP_PROJECT/.tesseraf
 cp examples/fragments/test-fix-loop/schemas/status.schema.json "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/schemas/status.schema.json"
 # Import into a workflow that lives next to the project fragment dir.
 cp "$TMP_DIR/fragment-import-target.workflow.edn" "$TEMP_PROJECT/workflow.edn"
-TESSERAFT_HOME="$TEMP_HOME" ./bin/tesseraft fragment import "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn" "$TEMP_PROJECT/workflow.edn" --as run-tests --next done
-# Import inserts a boundary node; the user still binds inputs/transitions next,
-# so we assert the node was written rather than requiring a fully green lint.
+TESSERAFT_HOME="$TEMP_HOME" ./bin/tesseraft fragment import "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn" "$TEMP_PROJECT/workflow.edn" --as run-tests --input 'repo-root="{{inputs.repo-root}}"' --input 'test-cmd="{{inputs.test-cmd}}"' --next done
+# Import writes a complete strict-lintable boundary node with bound inputs and
+# explicit transitions expanded from the declared fragment outcomes.
 WORKFLOW_FILE="$TEMP_PROJECT/workflow.edn" python3 - <<'PY'
 import os
 from pathlib import Path
