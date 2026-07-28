@@ -1,0 +1,18 @@
+{
+  "project_id": "wt6i-github-issues",
+  "name": "WT6I GitHub Issues mock project",
+  "workspace_root": ".",
+  "runs_root": ".agent-runs",
+  "connections": {
+    "github": {
+      "credential-ref": "env:WT6I_GITHUB_PR_TOKEN"
+    },
+    "work-tracker": {
+      "provider": "github-issues",
+      "credential-ref": "env:WT6I_GITHUB_ISSUES_TRACKER_TOKEN",
+      "config": {
+        "repository": "wt6i/work-item-intake"
+      }
+    }
+  }
+}

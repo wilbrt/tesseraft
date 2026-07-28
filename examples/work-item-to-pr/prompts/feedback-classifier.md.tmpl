@@ -1,0 +1,31 @@
+Fresh Pi session: PR FEEDBACK CLASSIFICATION.
+
+Inputs:
+- Normalized work item artifact: {{run.dir}}/work-tracker/item.json
+- PR feedback: {{run.dir}}/pr/feedback/feedback.json
+- Repository root: {{inputs.repo-root}}
+
+Use only these provider-neutral fields from the normalized work item:
+- identifier
+- title
+- description
+- state.name
+- priority
+- assignees[].display_name or assignees[].id
+- labels[].name or labels[].id
+- url
+
+Rules:
+- Do not edit source code.
+- Do not call Plane, Jira, GitHub, Slack, or other external APIs.
+- Classify only actionable PR feedback.
+- Do not use tracker configuration, credential references, raw provider responses, or the provider-specific remote scope.
+
+Write:
+- Status: {{run.dir}}/pr/feedback-status-{{run.feedback-cycle}}.json
+- Report: {{run.dir}}/pr/feedback-report-{{run.feedback-cycle}}.md
+- If actions are needed: {{run.dir}}/pr/feedback-issues-{{run.feedback-cycle}}.json
+
+Status values:
+{"status":"no_actions","summary":"short summary","issues_file":null}
+{"status":"actions_needed","summary":"short summary","issues_file":"pr/feedback-issues-{{run.feedback-cycle}}.json"}

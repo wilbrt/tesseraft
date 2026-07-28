@@ -49,7 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, jira-to-pr, and work-item-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies generic work-item intake fixtures, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then runs Chromium coverage for workflow inspection and isolated
@@ -99,6 +99,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - See `docs/WORKFLOW_RUNS.md` for safe side-effecting workflow run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
+- `examples/work-item-to-pr/workflow.edn` — provider-neutral Plane/Jira/GitHub Issues work-item intake through the normalized work-tracker boundary, followed by independent GitHub PR publication. See `examples/work-item-to-pr/README.md` for safe mock and bounded run instructions.
 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
@@ -107,6 +108,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
+./bin/tesseraft lint examples/work-item-to-pr/workflow.edn
 ```
 
 ## Local package locations

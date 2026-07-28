@@ -9,6 +9,7 @@ This guide covers the side-effecting implementation workflows:
 - `examples/supervised-deterministic-code-review-loop/workflow.edn`
 - `examples/canon-tdd-to-pr/workflow.edn`
 - `examples/focused-tdd-to-pr/workflow.edn`
+- `examples/work-item-to-pr/workflow.edn`
 
 Linting and prompt-collection checks are safe. Full or unbounded runs invoke Pi
 with `--approve` and can create worktrees, change files in the target repository,
@@ -20,6 +21,7 @@ Before running side-effecting nodes, make sure you have:
 
 - `bb`, `pi`, and `gh` installed and on `PATH`;
 - for `playwright-code-review-loop`, `deterministic-code-review-loop`, and `supervised-deterministic-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
+- for `work-item-to-pr`, an explicit project `connections.work-tracker` for Plane, Jira, or GitHub Issues; tracker credentials are for intake only and remain separate from GitHub PR credentials;
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
 - GitHub SSH write access for branch publication;
@@ -37,6 +39,7 @@ bb test
 ./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
+./bin/tesseraft lint examples/work-item-to-pr/workflow.edn
 ```
 
 For a prompt-collection-only check, start a run and execute just the first node:
@@ -103,6 +106,14 @@ Playwright gates behave like the deterministic workflow. After every third
 failed correction cycle, a source-read-only supervisor inspects recent durable
 reports, summaries, issues, and logs, then writes `supervision/current.md` for
 the next implementation attempt.
+
+The generic work-item variant uses `examples/work-item-to-pr/workflow.edn` and
+`.agent-runs/work-item-to-pr/<id>`. The first state fetches a Plane, Jira, or
+GitHub Issues item through the selected project `connections.work-tracker` and
+writes only the normalized `work-tracker/item.json` artifact. A project without
+a tracker fails at this first fetch before branch, agent, push, or PR effects.
+Use `--executor mock` with the fixtures under `examples/work-item-to-pr/fixtures/`
+for offline local runs; mock mode makes no tracker or GitHub network calls.
 
 ## Inspecting run state and artifacts
 
@@ -197,6 +208,7 @@ convergence model.
   external process failures.
 - `ensure-worktree` fetches `origin` and creates or reuses an isolated Git
   worktree and implementation branch.
+- `work-item-to-pr` starts with `fetch-work-item`; this read requires an explicitly configured project tracker in real mode and makes no Git or GitHub PR changes before it succeeds.
 - `create-pr` pushes the branch directly to the repository's GitHub SSH URL,
   then creates or reuses a GitHub pull request via `gh`, writing `pr/pr.json`.
   The push does not depend on an HTTPS OAuth token's `workflow` scope and does

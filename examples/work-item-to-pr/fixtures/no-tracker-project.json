@@ -1,0 +1,11 @@
+{
+  "project_id": "wt6i-no-tracker",
+  "name": "WT6I no tracker mock project",
+  "workspace_root": ".",
+  "runs_root": ".agent-runs",
+  "connections": {
+    "github": {
+      "credential-ref": "env:WT6I_GITHUB_PR_TOKEN"
+    }
+  }
+}
