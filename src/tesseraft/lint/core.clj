@@ -693,7 +693,92 @@
         [(err :fragment-invalid-prefix (conj path :prefix)
               (str "Fragment :prefix must be a safe portable relative prefix: " (pr-str prefix)))]))))
 
-(defn fragment-effective-contract [resolved pkg node]
+(defn exact-boundary-template-ref [value]
+  (when (string? value)
+    (when-let [[_ root field] (re-matches #"\{\{\s*(inputs|defaults)\.([^}\s]+)\s*\}\}" value)]
+      [(keyword root) (keyword field)])))
+
+(defn prefix-resource-path [prefix path]
+  (cond
+    (nil? path) nil
+    (str/blank? (str prefix)) path
+    :else (str prefix "/" path)))
+
+(defn prefix-boundary-resource [prefix resource]
+  (cond-> resource
+    (:path resource) (update :path #(prefix-resource-path prefix %))
+    (:schema resource) (update :schema #(prefix-resource-path prefix %))))
+
+(defn workflow-binding-resource-name [wf kind k]
+  (let [binding (get-in wf [kind k])]
+    (or (some-> (when (map? binding) (or (:name binding) (:resource-name binding))) normalize-resource-value)
+        (normalize-resource-value k))))
+
+(defn workflow-binding-resource-path [wf kind k]
+  (let [binding (get-in wf [kind k])]
+    (when (map? binding)
+      (some-> (:path binding) normalize-resource-value))))
+
+(defn boundary-input-key-for-resource [input-bindings resource]
+  (let [resource-name (normalize-resource-value (:name resource))]
+    (some (fn [k]
+            (when (= resource-name (normalize-resource-value k)) k))
+          (keys input-bindings))))
+
+(defn project-boundary-input-resource [wf input-bindings resource]
+  (when-let [input-key (boundary-input-key-for-resource input-bindings resource)]
+    (when-let [[ambient-kind ambient-key] (exact-boundary-template-ref (get input-bindings input-key))]
+      (let [ambient-path (workflow-binding-resource-path wf ambient-kind ambient-key)]
+        (cond-> (assoc resource
+                       :kind ambient-kind
+                       :name (workflow-binding-resource-name wf ambient-kind ambient-key))
+          ambient-path (assoc :path ambient-path))))))
+
+(defn project-boundary-incoming-resource [wf prefix input-bindings resource]
+  (if (boundary-input-key-for-resource input-bindings resource)
+    (project-boundary-input-resource wf input-bindings resource)
+    (prefix-boundary-resource prefix resource)))
+
+(defn normalized-output-key-map [m]
+  (when (map? m)
+    (into {} (map (fn [[k v]] [(normalize-fragment-name-key k) v])) m)))
+
+(defn boundary-resource-output-key [resource]
+  (normalize-fragment-name-key (:name resource)))
+
+(defn all-exit-output-path [pkg resource]
+  (let [exit (get-in pkg [:fragment :exit])
+        output-key (boundary-resource-output-key resource)
+        paths (for [e exit
+                    :let [produces (normalized-output-key-map (:produces e))]
+                    :when (contains? produces output-key)]
+                (normalize-resource-value (get produces output-key)))]
+    (when (and (seq exit)
+               (= (count exit) (count paths))
+               (= 1 (count (set paths))))
+      (first paths))))
+
+(defn project-boundary-produced-resource [prefix pkg resource]
+  (when-let [path (all-exit-output-path pkg resource)]
+    (-> resource
+        (assoc :path (prefix-resource-path prefix path))
+        (cond-> (:schema resource) (update :schema #(prefix-resource-path prefix %))))))
+
+(defn fragment-boundary-resources [wf pkg node]
+  (let [prefix (when (contains? node :prefix) (:prefix node))
+        resources (get-in pkg [:requirements :resources] {})
+        input-bindings (fragment-input-effective-bindings (:inputs node {}))]
+    {:requires (mapv identity
+                     (keep #(project-boundary-incoming-resource wf prefix input-bindings %)
+                           (:requires resources [])))
+     :consumes (mapv identity
+                     (keep #(project-boundary-incoming-resource wf prefix input-bindings %)
+                           (:consumes resources [])))
+     :produces (mapv identity
+                     (keep #(project-boundary-produced-resource prefix pkg %)
+                           (:produces resources [])))}))
+
+(defn fragment-effective-contract [wf resolved pkg node]
   (let [iface (:interface pkg)
         prefix (when (contains? node :prefix) (:prefix node))]
     {:package-path (:path resolved)
@@ -701,7 +786,8 @@
      :version (get-in pkg [:metadata :version])
      :prefix prefix
      :inputs (fragment-input-effective-bindings (:inputs node {}))
-     :parameters (effective-fragment-parameters (:parameters iface {}) (:parameters node {}))}))
+     :parameters (effective-fragment-parameters (:parameters iface {}) (:parameters node {}))
+     :resources (fragment-boundary-resources wf pkg node)}))
 
 (defn fragment-node-result [wf id n opts]
   (let [frag-name (:fragment n)
@@ -759,7 +845,7 @@
           (cond-> {:diagnostics diagnostics}
             (and (not (:failed? internal-result))
                  (not-any? #(= "error" (:severity %)) diagnostics))
-            (assoc :inclusion (fragment-effective-contract resolved pkg n))))
+            (assoc :inclusion (fragment-effective-contract wf resolved pkg n))))
         (catch Throwable t
           {:diagnostics [(err :fragment-internal-lint-failed (conj path :fragment)
                               (str "Fragment package " frag-name " could not be read: " (.getMessage t)))]})))))
@@ -786,6 +872,33 @@
                 (when-let [incl (:inclusion result)]
                   [id incl])))
         results))
+
+(defn exact-resource-dedupe [resources]
+  (vec (distinct resources)))
+
+(defn merge-effective-resource-groups [authored derived]
+  (let [authored (or authored {})]
+    (reduce (fn [acc group]
+              (let [entries (exact-resource-dedupe (concat (get authored group [])
+                                                           (get derived group [])))]
+                (if (seq entries)
+                  (assoc acc group entries)
+                  (dissoc acc group))))
+            authored
+            spec/resource-groups)))
+
+(defn workflow-with-fragment-boundary-resources [wf inclusions]
+  (if-not (seq inclusions)
+    wf
+    (update wf :states
+            (fn [states]
+              (reduce-kv (fn [acc id inclusion]
+                           (if-let [derived (:resources inclusion)]
+                             (update-in acc [id :resources]
+                                        #(merge-effective-resource-groups % derived))
+                             acc))
+                         states
+                         inclusions)))))
 
 (defn node-contract-checks [wf opts]
   (apply concat
@@ -952,6 +1065,8 @@
   ([wf] (lint-workflow wf {}))
   ([wf opts]
    (let [fragment-results (fragment-node-results wf opts)
+         inclusions (fragment-inclusion-results fragment-results)
+         analysis-wf (workflow-with-fragment-boundary-resources wf inclusions)
          diagnostics (vec (remove nil?
                                   (concat
                                     (top-level-checks wf)
@@ -960,16 +1075,15 @@
                                     (reachability-checks wf)
                                     (node-contract-checks wf opts)
                                     (mapcat (comp :diagnostics second) fragment-results)
-                                    (duplicate-output-checks wf)
-                                    (workflow-resource-checks wf)
-                                    (cycle-checks wf)
+                                    (duplicate-output-checks analysis-wf)
+                                    (workflow-resource-checks analysis-wf)
+                                    (cycle-checks analysis-wf)
                                     (template-var-checks wf)
                                     (policy-checks wf))))
          strict? (:strict opts)
          errors (filter #(or (= "error" (:severity %))
                              (and strict? (= "warning" (:severity %)))) diagnostics)
-         warnings (filter #(= "warning" (:severity %)) diagnostics)
-         inclusions (fragment-inclusion-results fragment-results)]
+         warnings (filter #(= "warning" (:severity %)) diagnostics)]
      (cond-> {:ok (empty? errors)
               :workflow (spec/workflow-file wf)
               :errors (vec errors)
