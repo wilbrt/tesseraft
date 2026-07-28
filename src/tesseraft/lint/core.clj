@@ -719,6 +719,12 @@
     (when (map? binding)
       (some-> (:path binding) normalize-resource-value))))
 
+(defn workflow-binding-resource-kind [workflow-kind]
+  (case workflow-kind
+    :inputs :input
+    :defaults :default
+    workflow-kind))
+
 (defn boundary-input-key-for-resource [input-bindings resource]
   (let [resource-name (normalize-resource-value (:name resource))]
     (some (fn [k]
@@ -727,11 +733,11 @@
 
 (defn project-boundary-input-resource [wf input-bindings resource]
   (when-let [input-key (boundary-input-key-for-resource input-bindings resource)]
-    (when-let [[ambient-kind ambient-key] (exact-boundary-template-ref (get input-bindings input-key))]
-      (let [ambient-path (workflow-binding-resource-path wf ambient-kind ambient-key)]
+    (when-let [[workflow-kind ambient-key] (exact-boundary-template-ref (get input-bindings input-key))]
+      (let [ambient-path (workflow-binding-resource-path wf workflow-kind ambient-key)]
         (cond-> (assoc resource
-                       :kind ambient-kind
-                       :name (workflow-binding-resource-name wf ambient-kind ambient-key))
+                       :kind (workflow-binding-resource-kind workflow-kind)
+                       :name (workflow-binding-resource-name wf workflow-kind ambient-key))
           ambient-path (assoc :path ambient-path))))))
 
 (defn project-boundary-incoming-resource [wf prefix input-bindings resource]
