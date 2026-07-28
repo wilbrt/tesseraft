@@ -69,5 +69,34 @@ def test_fragment_schema_requires_fi1_outcome_exit_terminal_and_nesting_contract
     assert_invalid(nested_fragment, ["fragment", "states", "done"])
 
 
+def test_fragment_schema_accepts_v1_state_transition_and_requirement_shapes():
+    package = deepcopy(VALID_PACKAGE)
+    package["requirements"] = {
+        "executors": ["pi-cli"],
+        "handlers": ["noop/succeed"],
+        "tools": ["read", "bash"],
+    }
+    package["fragment"]["initial"] = "lint"
+    package["fragment"]["states"] = {
+        "lint": {
+            "type": "deterministic",
+            "handler": "noop/succeed",
+            "tools": ["read"],
+            "transitions": [{"when": {"status": "pass"}, "effects": ["inc-round"], "next": "done"}],
+        },
+        "done": {"type": "terminal", "status": "success", "outcome": "pass"},
+    }
+    assert_valid(package)
+
+    missing_type = deepcopy(package)
+    del missing_type["fragment"]["states"]["lint"]["type"]
+    assert_invalid(missing_type, ["fragment", "states", "lint"])
+
+    unknown_type = deepcopy(package)
+    unknown_type["fragment"]["states"]["lint"]["type"] = "not-a-v1-state"
+    assert_invalid(unknown_type, ["fragment", "states", "lint", "type"])
+
+
 if __name__ == "__main__":
     test_fragment_schema_requires_fi1_outcome_exit_terminal_and_nesting_contract()
+    test_fragment_schema_accepts_v1_state_transition_and_requirement_shapes()

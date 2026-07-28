@@ -1,0 +1,43 @@
+{
+  "api-version": "tesseraft.fragment/v1",
+  "kind": "fragment",
+  "metadata": {"name": "fragment-parity-invalid-fixture"},
+  "interface": {
+    "inputs": {"repo-root": {"type": "string", "required": true}},
+    "outputs": {"status": {"schema": "schemas/status.schema.json", "required": true}},
+    "outcomes": ["pass", "fail"]
+  },
+  "requirements": {
+    "executors": ["pi-cli"],
+    "handlers": ["noop/succeed"],
+    "tools": ["read", "bash"],
+    "resources": {"requires": [{"kind": "input", "name": "repo-root", "mode": "reusable"}]}
+  },
+  "assets": {"prompts": ["prompts/fix.md.tmpl"], "schemas": ["schemas/status.schema.json"]},
+  "fragment": {
+    "initial": "lint",
+    "policies": {"allowed-agent-tools": ["custom/review"]},
+    "entry": {"inputs": ["repo-root"]},
+    "exit": [
+      {"on": "pass", "produces": {"status": "status/pass.json"}},
+      {"on": "pass", "produces": {"status": "status/pass-again.json"}},
+      {"on": "unknown", "produces": {}}
+    ],
+    "states": {
+      "lint": {
+        "type": "agent",
+        "executor": "pi-cli",
+        "tools": ["custom/review"],
+        "prompt-template": "prompts/fix.md.tmpl",
+        "runtime": {"timeout": "1m"},
+        "outputs": {"status": {"path": "lint/status.json", "required": true}},
+        "transitions": [
+          {"when": {"status": "pass"}, "next": "done"},
+          {"when": {"status": "fail"}, "effects": ["not-a-real-effect"], "next": "missing"}
+        ]
+      },
+      "nested": {"type": "fragment", "fragment": "child"},
+      "done": {"type": "terminal", "status": "success", "outcome": "maybe"}
+    }
+  }
+}

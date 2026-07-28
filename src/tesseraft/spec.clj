@@ -47,8 +47,159 @@
 (defn read-node-package [node-file]
   (read-data-file node-file))
 
+(defn- semantic-keyword [x]
+  (cond
+    (keyword? x) x
+    (and (string? x) (str/starts-with? x ":")) (keyword (subs x 1))
+    (string? x) (keyword x)
+    :else x))
+
+(defn- semantic-keyword-coll [xs]
+  (cond
+    (set? xs) (set (map semantic-keyword xs))
+    (vector? xs) (mapv semantic-keyword xs)
+    (sequential? xs) (map semantic-keyword xs)
+    :else xs))
+
+(defn- normalize-fragment-interface [interface]
+  (if-not (map? interface)
+    interface
+    (cond-> interface
+      (contains? interface :outcomes)
+      (update :outcomes (fn [xs]
+                          (cond
+                            (set? xs) (set (map semantic-keyword xs))
+                            (sequential? xs) (set (map semantic-keyword xs))
+                            :else xs))))))
+
+(defn- normalize-fragment-transition [tr]
+  (if-not (map? tr)
+    tr
+    (cond-> tr
+      (contains? tr :next) (update :next keywordize-node-id)
+      (contains? tr :effects) (update :effects semantic-keyword-coll)
+      (contains? tr :when) (update :when (fn [w]
+                                           (if (and (map? w) (contains? w :fragment/outcome))
+                                             (update w :fragment/outcome semantic-keyword)
+                                             w))))))
+
+(defn- normalize-fragment-node [node]
+  (if-not (map? node)
+    node
+    (cond-> node
+      (contains? node :type) (update :type semantic-keyword)
+      (contains? node :handler) (update :handler semantic-keyword)
+      (contains? node :executor) (update :executor semantic-keyword)
+      (contains? node :tools) (update :tools semantic-keyword-coll)
+      (contains? node :status) (update :status semantic-keyword)
+      (contains? node :outcome) (update :outcome (fn [x]
+                                                   (if (sequential? x)
+                                                     (set (map semantic-keyword x))
+                                                     (semantic-keyword x))))
+      (contains? node :next) (update :next keywordize-node-id)
+      (contains? node :transitions) (update :transitions (fn [xs]
+                                                           (if (sequential? xs)
+                                                             (mapv normalize-fragment-transition xs)
+                                                             xs))))))
+
+(defn- normalize-fragment-states [states]
+  (if-not (map? states)
+    states
+    (let [entries (map (fn [[id node]] [(keywordize-node-id id) (normalize-fragment-node node)]) states)
+          normalized-ids (map first entries)]
+      (if (= (count normalized-ids) (count (set normalized-ids)))
+        (into {} entries)
+        ;; Preserve a lint-visible malformed state instead of silently
+        ;; overwriting semantically duplicate EDN ids such as :done and "done".
+        (assoc (into {} (map (fn [[id node]] [id (normalize-fragment-node node)])) states)
+               ::state-id-collision nil)))))
+
+(defn- normalize-fragment-body [fragment]
+  (if-not (map? fragment)
+    fragment
+    (cond-> fragment
+      (contains? fragment :initial) (update :initial keywordize-node-id)
+      (contains? fragment :entry) (update :entry (fn [entry]
+                                                   (if-not (map? entry)
+                                                     entry
+                                                     (cond-> entry
+                                                       (contains? entry :inputs) (update :inputs semantic-keyword-coll)
+                                                       (contains? entry :parameters) (update :parameters semantic-keyword-coll)))))
+      (contains? fragment :exit) (update :exit (fn [xs]
+                                                 (if (sequential? xs)
+                                                   (mapv (fn [e]
+                                                           (if (map? e)
+                                                             (cond-> e
+                                                               (contains? e :on) (update :on semantic-keyword))
+                                                             e))
+                                                         xs)
+                                                   xs)))
+      (contains? fragment :states) (update :states normalize-fragment-states))))
+
+(defn- normalize-fragment-requirements [requirements]
+  (if-not (map? requirements)
+    requirements
+    (cond-> requirements
+      (contains? requirements :executors) (update :executors semantic-keyword-coll)
+      (contains? requirements :handlers) (update :handlers semantic-keyword-coll)
+      (contains? requirements :tools) (update :tools semantic-keyword-coll))))
+
+(defn- normalize-fragment-policies [policies]
+  (if-not (map? policies)
+    policies
+    (cond-> policies
+      (contains? policies :allowed-agent-tools) (update :allowed-agent-tools semantic-keyword-coll))))
+
+(defn normalize-fragment-package
+  "Canonicalize fragment-only semantic positions after generic EDN/JSON parsing.
+  Workflow and node package readers intentionally do not use this boundary."
+  [pkg]
+  (if-not (map? pkg)
+    pkg
+    (cond-> pkg
+      (contains? pkg :kind) (update :kind semantic-keyword)
+      (contains? pkg :interface) (update :interface normalize-fragment-interface)
+      (contains? pkg :requirements) (update :requirements normalize-fragment-requirements)
+      (contains? pkg :fragment) (update :fragment (fn [fragment]
+                                                    (cond-> (normalize-fragment-body fragment)
+                                                      (and (map? fragment) (contains? fragment :policies))
+                                                      (update :policies normalize-fragment-policies)))))))
+
 (defn read-fragment-package [fragment-file]
-  (read-data-file fragment-file))
+  (normalize-fragment-package (read-data-file fragment-file)))
+
+(defn- portable-key [k]
+  (cond
+    (keyword? k) (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
+    (string? k) k
+    :else (str k)))
+
+(defn- portable-fragment-value [x]
+  (cond
+    (keyword? x) (portable-key x)
+    (set? x) (->> x (map portable-fragment-value) (sort-by pr-str) vec)
+    (map? x) (let [entries (map (fn [[k v]] [(portable-key k) k (portable-fragment-value v)]) x)
+                   duplicate-key (->> entries
+                                      (group-by first)
+                                      (keep (fn [[projected originals]]
+                                              (when (< 1 (count originals))
+                                                {:projected-key projected
+                                                 :source-keys (mapv second originals)})))
+                                      first)]
+               (when duplicate-key
+                 (throw (ex-info "Portable fragment projection has duplicate map key"
+                                 duplicate-key)))
+               (into (sorted-map)
+                     (map (fn [[projected _ v]] [projected v]))
+                     entries))
+    (vector? x) (mapv portable-fragment-value x)
+    (sequential? x) (mapv portable-fragment-value x)
+    :else x))
+
+(defn portable-fragment-package-data
+  "Return deterministic JSON-compatible data for a normalized fragment package."
+  [pkg]
+  (portable-fragment-value (dissoc pkg :__file :__dir)))
 
 (defn workflow-dir [wf] (:__dir wf "."))
 (defn workflow-file [wf] (:__file wf))

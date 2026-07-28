@@ -21,9 +21,10 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | Project/global/example discovery helpers | Implemented |
 | `tesseraft fragment lint` | Implemented |
 | `tesseraft fragment import` authoring stub | Implemented |
-| Equivalent JSON package input | Not implemented |
-| JSON Schema enforcement | Not wired into the linter |
-| Required outcome/exit enforcement when omitted | Incomplete |
+| Equivalent JSON package input | Implemented for explicit lint/import package paths via a fragment-only normalization boundary; package discovery currently uses `fragment.edn` |
+| JSON-compatible normalized projection | Implemented (`portable-fragment-package-data`) |
+| JSON Schema enforcement | Not wired into the linter; descriptive contract only |
+| Required outcome/exit enforcement when omitted | Implemented |
 | Parameter, version, and prefix semantics | Incomplete or not implemented |
 | Boundary resource projection into workflow lint | Not implemented |
 | Runtime fragment execution | Not implemented |
@@ -35,7 +36,7 @@ P1.4 is complete in its deliberately bounded sense: spec/linter/docs, discovery 
 
 ## Implemented package shape
 
-The operational package format is currently EDN:
+The operational package format accepts EDN and equivalent JSON when a package file is passed explicitly to lint/import. Fragment packages are normalized once, immediately after generic file parsing, before those consumers inspect them:
 
 ```edn
 {:api-version "tesseraft.fragment/v1"
@@ -78,13 +79,19 @@ The operational package format is currently EDN:
             :states {:lint {...}
                      :test {...}
                      :fix {...}
-                     :done {:type :terminal :status :success}
-                     :failed {:type :terminal :status :failure}}}}
+                     :done {:type :terminal :status :success :outcome :pass}
+                     :failed {:type :terminal :status :failure :outcome :fail}}}}
 ```
 
-Required top-level fields currently enforced are `:api-version`, `:kind`, `:metadata`, `:interface`, and `:fragment`. The internal fragment requires `:initial` and `:states`.
+Required top-level fields currently enforced are `:api-version`, `:kind`, `:metadata`, `:interface`, and `:fragment`. The internal fragment requires `:initial` and `:states`, and the FI1 outcome/exit/terminal/nesting contract is enforced by lint.
 
-`schemas/fragment-package.schema.json` describes a JSON-shaped package, but it is not currently loaded by fragment lint. JSON values are not normalized into the keyword ids, node types, effects, and outcome set expected by the Clojure linter. Treat EDN as the only operational input format until normalization is implemented.
+`schemas/fragment-package.schema.json` describes the JSON-shaped package contract, but it is not currently loaded by fragment lint. Lint uses the parser boundary instead: JSON strings/arrays in semantic positions are canonicalized to the EDN-style internal values used by existing checks, while arbitrary payload strings are preserved.
+
+## Normalization and portable projection
+
+`read-fragment-package` is the single fragment-package normalization boundary. It canonicalizes semantic values that lint treats as identifiers or enums: package kind, fragment state ids and initial/transition targets, node types, handlers, executors, tools, transition effects, interface outcomes, terminal outcomes, exit outcomes, and fragment entry names. Workflow and node package readers are unchanged.
+
+For consumers that need JSON data, `portable-fragment-package-data` returns a deterministic projection of the normalized package with source metadata removed, keywords encoded as namespace-preserving strings such as `noop/succeed`, sets emitted as sorted vectors, and maps recursively converted to string keys. This projection is intended for inspection/serialization, not runtime fragment execution.
 
 ## Boundary contract
 
@@ -185,13 +192,13 @@ The importing workflow ultimately needs to own the state id, scope/version selec
 
 ## Discovery and control-plane state
 
-Fragment packages use the same filesystem scope convention as workflows and nodes:
+Fragment package discovery uses the same filesystem scope convention as workflows and nodes, but currently resolves only `fragment.edn` package files:
 
 - `examples/fragments/<name>/fragment.edn`
 - `~/.tesseraft/fragments/<name>/fragment.edn` (`TESSERAFT_HOME` is honored)
 - `.tesseraft/fragments/<name>/fragment.edn`
 
-Generic control-plane discovery and resolution helpers exist, including precedence/conflict handling. There are no public fragment list/detail/graph routes and no Studio catalog surface yet.
+Direct-path lint/import can read an equivalent `fragment.json`, but project/global/example discovery and workflow inclusion resolution do not discover `fragment.json` packages today. Generic control-plane discovery and resolution helpers exist for `fragment.edn`, including precedence/conflict handling. There are no public fragment list/detail/graph routes and no Studio catalog surface yet.
 
 ## Local CLI
 

@@ -8,8 +8,8 @@
     :evidence ["src/tesseraft/node/cli.clj" "docs/NODES.md" "docs/PACKAGES.md" "bb.edn :node"]}
    :fragment-package-contract
    {:status :implemented
-    :summary "First-class fragment packages (`tesseraft.fragment/v1`): boundary contract linting, `bb fragment lint|import`, scope model, and one fixture. Inclusion lints the boundary without duplicating internal proof."
-    :evidence ["src/tesseraft/fragment/cli.clj" "src/tesseraft/lint/core.clj lint-fragment-package" "docs/FRAGMENTS.md" "schemas/fragment-package.schema.json" "examples/fragments/test-fix-loop/fragment.edn" "bb.edn :fragment"]}
+    :summary "First-class fragment packages (`tesseraft.fragment/v1`): EDN/JSON-normalized boundary contract linting, JSON-compatible portable projection, `bb fragment lint|import`, scope model, and fixtures. Inclusion lints the boundary without duplicating internal proof."
+    :evidence ["src/tesseraft/spec.clj read-fragment-package/portable-fragment-package-data" "src/tesseraft/fragment/cli.clj" "src/tesseraft/lint/core.clj lint-fragment-package" "docs/FRAGMENTS.md" "schemas/fragment-package.schema.json" "examples/fragments/test-fix-loop/fragment.edn" "test/fixtures/valid/fragment-parity/fragment.{edn,json}" "test/fixtures/invalid/fragment-parity/fragment.{edn,json}" "test/fragment_package_parity.test.py" "bb.edn :fragment"]}
    :pinga-handler
    {:status :implemented
     :summary "Deterministic `:notify/pinga` handler shelling out to $PINGA_BIN."
