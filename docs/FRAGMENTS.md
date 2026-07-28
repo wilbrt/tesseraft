@@ -6,7 +6,7 @@ Version: `tesseraft.fragment/v1`
 
 Self-contained fragments are portable **multi-node subgraph** packages with a declared boundary contract. A fragment owns its internal graph and assets; an importing workflow owns the inclusion state id, bindings, outgoing transitions, and eventual path namespace.
 
-> **Current safety boundary:** fragment packages can be read, linted, discovered, and imported as authoring stubs. A workflow containing `{:type :fragment}` can pass lint but cannot run: the runner has no `:fragment` dispatch and currently fails with `No matching clause: :fragment`. Do not use fragments in production workflows yet.
+> **Current safety boundary:** fragment packages can be read, linted, discovered, and imported as complete lint-valid boundary inclusions. A workflow containing `{:type :fragment}` can pass lint but cannot run: the runner has no `:fragment` dispatch and currently fails with `No matching clause: :fragment`. Do not use fragments in production workflows yet.
 
 This document distinguishes the implemented P1.4 surface from the target executable contract. The ordered implementation prompts are in [FRAGMENT_IMPLEMENTATION_PROMPTS.md](FRAGMENT_IMPLEMENTATION_PROMPTS.md).
 
@@ -21,7 +21,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | Asset validation and collision-safe copying | Implemented |
 | Project/global/example discovery helpers | Implemented |
 | `tesseraft fragment lint` | Implemented |
-| `tesseraft fragment import` authoring stub | Implemented |
+| `tesseraft fragment import` transactional complete inclusion | Implemented |
 | Equivalent JSON package input | Implemented for explicit lint/import package paths via a fragment-only normalization boundary; package discovery currently uses `fragment.edn` |
 | JSON-compatible normalized projection | Implemented (`portable-fragment-package-data`) |
 | JSON Schema enforcement | Not wired into the linter; descriptive contract only |
@@ -207,24 +207,32 @@ Validate a package:
 ./bin/tesseraft fragment lint path/to/fragment.edn --format json --strict
 ```
 
-Import a package as an authoring stub:
+Import a package as a complete lint-valid inclusion:
 
 ```bash
 ./bin/tesseraft fragment import path/to/fragment.edn workflow.edn \
-  --as run-tests --next done
+  --as run-tests \
+  --input 'repo-root="{{inputs.repo-root}}"' \
+  --input 'test-cmd="{{inputs.test-cmd}}"' \
+  --parameter max-rounds=3 \
+  --parameter 'base-branch="main"' \
+  --outcome pass=done --outcome fail=abort \
+  --version 0.1.0 --scope project --prefix imported/test-fix-loop
 ```
+
+`--input`, `--parameter`, and `--outcome` are repeatable `name=EDN` / `outcome=state` pairs. Values are parsed as single EDN scalars without coercion. `--next state` is accepted only as a fallback for declared outcomes not already routed with `--outcome`; import always writes explicit `:transitions`, never an authored `:next`.
 
 Import currently:
 
-1. lints the package;
-2. refuses unsafe, missing, or conflicting assets;
-3. copies declared assets into the workflow package;
-4. inserts a node containing `:type`, `:fragment`, and optional `:next`;
-5. runs workflow lint in memory;
-6. deliberately tolerates expected authoring-pending diagnostics such as missing bindings or incomplete outcomes;
-7. writes the workflow stub.
+1. strict-lints the package;
+2. validates required bindings, parameter values, version/scope/prefix, declared outcome coverage, and all target states in memory;
+3. refuses unsafe, missing, conflicting, or workflow-file-colliding assets before mutation;
+4. writes a complete `:fragment` node preserving existing authored workflow fields;
+5. strict-lints the candidate workflow in memory;
+6. stages new assets and the rendered workflow, reuses byte-identical assets, and rolls back handled failures so the workflow and assets remain unchanged;
+7. prints the state id plus concise input, parameter, and outcome-route summaries.
 
-The user must still add inputs, parameters, and outcome transitions. The resulting workflow may not pass lint. Import is not runtime composition.
+Import is not runtime composition.
 
 `fragment export` is explicitly deferred to P4.3 and exits without extracting anything.
 
