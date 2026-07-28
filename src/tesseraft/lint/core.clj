@@ -501,33 +501,54 @@
     (string? scope) (get fragment-scope-aliases scope)
     :else nil))
 
+(defn safe-fragment-package-name? [name]
+  (and (string? name)
+       (not (str/blank? name))
+       (not (str/includes? name "/"))
+       (not (str/includes? name "\\"))
+       (not (#{"." ".."} name))
+       (not (spec/portable-absolute-path? name))
+       (not (spec/windows-drive-qualified-path? name))))
+
+(defn- path-beneath? [root child]
+  (let [root-path (.normalize (.toAbsolutePath (fs/path root)))
+        child-path (.normalize (.toAbsolutePath (fs/path child)))]
+    (.startsWith child-path root-path)))
+
+(defn- fragment-candidate [scope root name]
+  (let [path (str (fs/path root name "fragment.edn"))]
+    (when (path-beneath? root path)
+      {:scope scope :root (str (fs/path root)) :path path})))
+
 (defn fragment-package-candidates [wf name]
-  (let [nm (str name)
-        home (fragment-home-dir)
+  (let [home (fragment-home-dir)
         ancs (ancestor-dirs (or (spec/workflow-dir wf) "."))]
-    (vec (concat
-           (for [d ancs]
-             {:scope :project :path (str (fs/path d ".tesseraft" "fragments" nm "fragment.edn"))})
-           [{:scope :global :path (str (fs/path home "fragments" nm "fragment.edn"))}]
-           (for [d ancs]
-             {:scope :examples :path (str (fs/path d "examples" "fragments" nm "fragment.edn"))})))))
+    (vec (keep identity
+               (concat
+                 (for [d ancs]
+                   (fragment-candidate :project (fs/path d ".tesseraft" "fragments") name))
+                 [(fragment-candidate :global (fs/path home "fragments") name)]
+                 (for [d ancs]
+                   (fragment-candidate :examples (fs/path d "examples" "fragments") name)))))))
 
 (defn resolve-fragment-package [wf node]
   (when-let [name (:fragment node)]
     (let [explicit? (contains? node :scope)
-          scope (normalize-fragment-scope (:scope node))
-          candidates (cond->> (fragment-package-candidates wf name)
-                       scope (filter #(= scope (:scope %))))
-          found (first (filter #(fs/exists? (:path %)) candidates))]
+          scope (normalize-fragment-scope (:scope node))]
       (cond
+        (not (safe-fragment-package-name? name))
+        {:error :invalid-name :name name :explicit-scope? explicit?}
+
         (and explicit? (nil? scope))
         {:error :invalid-scope}
 
-        found
-        (assoc found :name name :explicit-scope? explicit?)
-
         :else
-        {:error :not-found :name name :scope scope :explicit-scope? explicit?}))))
+        (let [candidates (cond->> (fragment-package-candidates wf name)
+                           scope (filter #(= scope (:scope %))))
+              found (first (filter #(fs/exists? (:path %)) candidates))]
+          (if found
+            (assoc found :name name :explicit-scope? explicit?)
+            {:error :not-found :name name :scope scope :explicit-scope? explicit?}))))))
 
 (defn find-fragment-package-file [wf node]
   (let [res (resolve-fragment-package wf node)]
@@ -585,6 +606,12 @@
         declared-map (:map declared {})
         bound-map (:map bound {})]
     (concat
+      (when (and (some? contracts) (not (map? contracts)))
+        [(err :fragment-interface-bindings-not-map (conj base-path kind)
+              (str "Fragment interface " (name kind) " declarations must be a map"))])
+      (when (and (some? supplied) (not (map? supplied)))
+        [(err :fragment-bindings-not-map (conj base-path kind)
+              (str "Fragment " (name kind) " bindings must be a map"))])
       (for [k (:invalid-keys declared)]
         (err :fragment-invalid-binding-name (conj base-path kind)
              (str "Fragment " (name kind) " declaration name must be a non-blank string or keyword: " (pr-str k))))
@@ -602,12 +629,17 @@
              (str "Unknown fragment " (name kind) " binding " k)))
       (apply concat
              (for [[k contract] declared-map
-                   :let [has-effective? (or (contains? bound-map k)
-                                            (and (map? contract) (contains? contract :default)))
+                   :let [contract-map? (map? contract)
+                         has-effective? (or (contains? bound-map k)
+                                            (and contract-map? (contains? contract :default)))
                          value (fragment-effective-value contract bound-map k)
-                         typ (some-> (when (map? contract) (:type contract)) normalize-fragment-name-key)]]
+                         typ (some-> (when contract-map? (:type contract)) normalize-fragment-name-key)]]
                (concat
-                 (when (and (fragment-required? contract input?)
+                 (when-not contract-map?
+                   [(err :fragment-binding-contract-not-map (conj base-path kind k)
+                         (str "Fragment " (name kind) " declaration must be a map"))])
+                 (when (and contract-map?
+                            (fragment-required? contract input?)
                             (or (not has-effective?) (nil? value)))
                    [(err (if input? :fragment-input-binding-missing :fragment-parameter-binding-missing)
                          (conj base-path kind k)
@@ -666,6 +698,10 @@
         path [:states id]
         resolved (resolve-fragment-package wf n)]
     (cond
+      (= :invalid-name (:error resolved))
+      {:diagnostics [(err :fragment-invalid-name (conj path :fragment)
+                          (str "Fragment :fragment must be a single safe package name: " (pr-str frag-name)))]}
+
       (= :invalid-scope (:error resolved))
       {:diagnostics [(err :fragment-invalid-scope (conj path :scope)
                           "Fragment :scope must be project, global, examples, example, or configured")]}
@@ -682,7 +718,11 @@
               covered (set (map keyword (keep fragment-transition-outcome (spec/transitions n))))
               boundary-diagnostics (vec (remove nil?
                                                 (apply concat
-                                                       [(fragment-binding-diagnostics path :inputs (:inputs iface {}) (:inputs n {}) true)
+                                                       [(when (not= frag-name (get-in pkg [:metadata :name]))
+                                                          [(err :fragment-name-mismatch (conj path :fragment)
+                                                                (str "Fragment package metadata name " (pr-str (get-in pkg [:metadata :name]))
+                                                                     " does not match requested fragment " (pr-str frag-name)))])
+                                                        (fragment-binding-diagnostics path :inputs (:inputs iface {}) (:inputs n {}) true)
                                                         (fragment-binding-diagnostics path :parameters (:parameters iface {}) (:parameters n {}) false)
                                                         (fragment-version-diagnostics path n pkg)
                                                         (fragment-prefix-diagnostics path n)

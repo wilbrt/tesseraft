@@ -219,6 +219,68 @@ def test_prefix_validation_rejects_dot_segments_and_windows_drive_forms():
     with_tmp(run)
 
 
+def test_fragment_name_must_be_single_safe_package_name_and_stay_under_scope_root():
+    def run(tmp):
+        home = tmp / "global-home"
+        escape_root = tmp / ".tesseraft/escape"
+        escape_root.mkdir(parents=True)
+        (escape_root / "fragment.edn").write_text(FRAGMENT)
+        for fragment_name in ["../escape", "nested/name", r"nested\\name", ".", "C:escape"]:
+            node = f''':run
+  {{:type :fragment
+   :fragment {json.dumps(fragment_name)}
+   :scope :project
+   :inputs {{:repo-root "."}}
+   :parameters {{:retries 1}}
+   :transitions [{{:when {{:fragment/outcome "pass"}} :next :done}}
+                 {{:when {{:fragment/outcome "fail"}} :next :fail}}]}}'''
+            wf = write_project(tmp, workflow_node=node)
+            status, payload = lint(wf, home)
+            assert status != 0, (fragment_name, payload)
+            assert "fragment-invalid-name" in codes(payload), (fragment_name, payload)
+            assert "fragment-unknown-package" not in codes(payload), (fragment_name, payload)
+    with_tmp(run)
+
+
+def test_resolved_package_metadata_name_must_match_requested_fragment():
+    def run(tmp):
+        home = tmp / "global-home"
+        mismatch = FRAGMENT.replace(':metadata {:name "contract-fragment" :version "1.2.3"}',
+                                    ':metadata {:name "other-fragment" :version "1.2.3"}')
+        wf = write_project(tmp, package_text=mismatch)
+        status, payload = lint(wf, home)
+        assert status != 0, payload
+        got = codes(payload)
+        assert "fragment-name-mismatch" in got, payload
+        assert "fragment-internal-lint-failed" not in got, payload
+    with_tmp(run)
+
+
+def test_malformed_binding_containers_and_contract_entries_are_rejected():
+    def run(tmp):
+        home = tmp / "global-home"
+        bad_pkg = FRAGMENT.replace(':inputs {:repo-root {:type :string :required true}\n                      :count {:type :integer :required false}}',
+                                   ':inputs {:repo-root "not-a-contract"\n                      :count {:type :integer :required false}}')
+        bad_pkg = bad_pkg.replace(':parameters {:mode {:type :string :default "safe"}\n                          :retries {:type :integer :required true}\n                          :ratio {:type :number :default 1.5}\n                          :enabled {:type :boolean :default true}}',
+                                  ':parameters []')
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs []
+   :parameters []
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=bad_pkg, workflow_node=node)
+        status, payload = lint(wf, home)
+        got = codes(payload)
+        assert status != 0, payload
+        assert "fragment-bindings-not-map" in got, payload
+        assert "fragment-interface-bindings-not-map" in got, payload
+        assert "fragment-binding-contract-not-map" in got, payload
+        assert "fragment-internal-lint-failed" not in got, payload
+    with_tmp(run)
+
+
 def test_import_allows_authoring_stub_with_required_parameter_pending():
     def run(tmp):
         home = tmp / "global-home"
@@ -239,4 +301,7 @@ if __name__ == "__main__":
     test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coercion()
     test_invalid_binding_names_and_normalization_collisions_are_rejected_precisely()
     test_prefix_validation_rejects_dot_segments_and_windows_drive_forms()
+    test_fragment_name_must_be_single_safe_package_name_and_stay_under_scope_root()
+    test_resolved_package_metadata_name_must_match_requested_fragment()
+    test_malformed_binding_containers_and_contract_entries_are_rejected()
     test_import_allows_authoring_stub_with_required_parameter_pending()

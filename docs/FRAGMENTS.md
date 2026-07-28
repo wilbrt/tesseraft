@@ -170,12 +170,12 @@ A lintable inclusion currently looks like:
 
 Implemented inclusion semantics:
 
-- `:fragment` selects a package by metadata name;
+- `:fragment` must be a single safe package name (not a path, drive-qualified form, `.` or `..`) and the resolved package `:metadata :name` must match it exactly;
 - `:scope` may be a keyword or string and canonicalizes to `:project`, `:global`, or `:examples` (`:example`/`:configured` are examples aliases);
 - omitted scope uses project > global > examples precedence; explicit scope searches only that scope and never falls back;
 - `:version`, when present, must be a non-blank string exactly equal to `:metadata :version` of the resolved package;
 - `:prefix`, when present, must be a non-blank portable safe relative prefix: no absolute, drive/UNC, `.`/`..`, backslash, or parent traversal forms;
-- required and unknown input/parameter bindings, defaults, collisions, supported scalar declarations, and literal scalar values are checked without coercion;
+- input/parameter declaration and binding containers must be maps; declaration entries must be maps; required and unknown bindings, defaults, collisions, supported scalar declarations, and literal scalar values are checked without coercion;
 - transition outcomes are checked against the interface;
 - broken package lint is surfaced as one aggregate inclusion error.
 
