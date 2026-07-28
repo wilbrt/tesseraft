@@ -481,16 +481,16 @@ def test_authored_inputs_win_and_optional_input_defaults_are_not_projected():
     with_tmp(run)
 
 
-def test_import_allows_authoring_stub_with_required_parameter_pending():
+def test_import_rejects_incomplete_authoring_stub_without_mutation():
     def run(tmp):
         home = tmp / "global-home"
         wf = write_project(tmp, workflow_node=''':run {:type :terminal :status :success}''')
+        before = wf.read_text()
         package_path = tmp / ".tesseraft/fragments/contract-fragment/fragment.edn"
         proc = tesseraft(["fragment", "import", str(package_path), str(wf), "--as", "imported"], home)
-        assert proc.returncode == 0, proc.stderr
-        imported = wf.read_text()
-        assert ":imported" in imported, imported
-        assert ":parameters" not in imported or ":retries" not in imported, imported
+        assert proc.returncode != 0, proc.stdout
+        assert "Missing route" in proc.stderr or "Usage:" in proc.stderr, proc.stderr
+        assert wf.read_text() == before
     with_tmp(run)
 
 
@@ -511,4 +511,4 @@ if __name__ == "__main__":
     test_repeated_broken_package_inclusions_never_emit_effective_data()
     test_required_input_defaults_do_not_satisfy_authored_binding_contract()
     test_authored_inputs_win_and_optional_input_defaults_are_not_projected()
-    test_import_allows_authoring_stub_with_required_parameter_pending()
+    test_import_rejects_incomplete_authoring_stub_without_mutation()

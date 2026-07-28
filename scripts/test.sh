@@ -361,6 +361,9 @@ python3 test/fragment_package_parity.test.py
 printf '\nChecking fragment inclusion contract FI3...\n'
 python3 test/fragment_inclusion_contract.test.py
 
+printf '\nChecking transactional fragment import FI5...\n'
+python3 test/fragment_import_transaction.test.py
+
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json
@@ -372,7 +375,7 @@ PY
 rm -f /tmp/tesseraft-fragment-lint.json
 
 printf '\nLinting fragment-including workflow fixtures...\n'
-./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn
+./bin/tesseraft lint test/fixtures/valid/fragment-import.workflow.edn --strict
 
 assert_lint_json_has_error () {
   local output="$1"
@@ -523,9 +526,9 @@ cp examples/fragments/test-fix-loop/prompts/fix.md.tmpl "$TEMP_PROJECT/.tesseraf
 cp examples/fragments/test-fix-loop/schemas/status.schema.json "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/schemas/status.schema.json"
 # Import into a workflow that lives next to the project fragment dir.
 cp "$TMP_DIR/fragment-import-target.workflow.edn" "$TEMP_PROJECT/workflow.edn"
-TESSERAFT_HOME="$TEMP_HOME" ./bin/tesseraft fragment import "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn" "$TEMP_PROJECT/workflow.edn" --as run-tests --next done
-# Import inserts a boundary node; the user still binds inputs/transitions next,
-# so we assert the node was written rather than requiring a fully green lint.
+TESSERAFT_HOME="$TEMP_HOME" ./bin/tesseraft fragment import "$TEMP_PROJECT/.tesseraft/fragments/test-fix-loop/fragment.edn" "$TEMP_PROJECT/workflow.edn" --as run-tests --input 'repo-root="{{inputs.repo-root}}"' --input 'test-cmd="{{inputs.test-cmd}}"' --next done
+# Import writes a complete strict-lintable boundary node with bound inputs and
+# explicit transitions expanded from the declared fragment outcomes.
 WORKFLOW_FILE="$TEMP_PROJECT/workflow.edn" python3 - <<'PY'
 import os
 from pathlib import Path
