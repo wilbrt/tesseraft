@@ -49,7 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, jira-to-pr, and work-item-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies generic work-item intake fixtures, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then runs Chromium coverage for workflow inspection and isolated
@@ -99,6 +99,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - See `docs/WORKFLOW_RUNS.md` for safe side-effecting workflow run instructions.
 - `examples/pr-housekeeping/workflow.edn` — safe PR housekeeping report that classifies open pull requests without mutating GitHub state.
 - `examples/jira-to-pr/workflow.edn` — Jira-to-PR workflow with manual browser testing.
+- `examples/work-item-to-pr/workflow.edn` — provider-neutral Plane/Jira/GitHub Issues work-item intake through the normalized work-tracker boundary, followed by independent GitHub PR publication. See `examples/work-item-to-pr/README.md` for safe mock and bounded run instructions.
 
 ```bash
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
@@ -107,6 +108,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
+./bin/tesseraft lint examples/work-item-to-pr/workflow.edn
 ```
 
 ## Local package locations
@@ -166,6 +168,8 @@ src/tesseraft/adapters/*      deterministic handler adapters
 <!-- BEGIN STATUS — generated from STATUS.edn by `bb status`. Do not edit by hand. -->
 Implemented:
 
+- **work-item-to-pr-example** (implemented) — Provider-neutral `examples/work-item-to-pr` graph fetches Plane, Jira, or GitHub Issues work through the normalized `:work-tracker/fetch-item` boundary before any Git/agent/GitHub PR effects, keeps tracker selection separate from GitHub PR transport, includes local non-secret mock fixtures, and constrains prompts to normalized allowlisted work-item fields.
+  _Evidence:_ examples/work-item-to-pr/workflow.edn, examples/work-item-to-pr/prompts, examples/work-item-to-pr/fixtures, examples/work-item-to-pr/README.md, test/generic-work-item-intake.test.js, scripts/test.sh WT6I block
 - **work-tracker-plane-read** (implemented) — Read-only provider-neutral `:work-tracker/fetch-item` boundary for Plane, Jira, and GitHub Issues: resolves the selected run project's persisted `connections.work-tracker`, records that selected Tesseraft project separately from provider remote scope, uses only the project-scoped tracker credential ref, performs injectable bounded read requests, rejects malformed provider refs/config and GitHub PR payloads, and persists versioned normalized work-item artifacts without raw provider payloads or secrets. Mock mode remains offline. Legacy Jira ticket fetch and GitHub code-host/PR behavior remain independent.
   _Evidence:_ src/tesseraft/work_tracker/runtime.clj, src/tesseraft/work_tracker/plane.clj, src/tesseraft/work_tracker/jira.clj, src/tesseraft/work_tracker/github_issues.clj, src/tesseraft/adapters/builtin.clj :work-tracker/fetch-item, schemas/normalized-work-item.schema.json, test/work-tracker-read.test.js, test/work-tracker-read-adapters.test.js, test/fixtures/valid/work-tracker-fetch/workflow.edn, scripts/test.sh WT5/WT6 blocks
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.

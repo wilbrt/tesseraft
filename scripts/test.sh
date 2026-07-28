@@ -29,6 +29,7 @@ echo "Linting safe example workflows..."
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
 ./bin/tesseraft lint examples/jira-to-pr/workflow.edn
+./bin/tesseraft lint examples/work-item-to-pr/workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-reusable-read.workflow.edn
 ./bin/tesseraft lint test/fixtures/valid/resource-ambient-path.workflow.edn
 
@@ -50,6 +51,9 @@ node --test test/work-tracker-read.test.js
 
 printf '\nChecking Jira and GitHub Issues work-item read adapter contracts (WT6)...\n'
 node --test test/work-tracker-read-adapters.test.js
+
+printf '\nChecking generic work-item intake example (WT6I)...\n'
+node --test test/generic-work-item-intake.test.js
 ./bin/tesseraft control-plane project work-tracker-providers >/tmp/tesseraft-cp-work-tracker-providers.json
 python3 - <<'PY'
 import json

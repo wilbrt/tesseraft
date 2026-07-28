@@ -1,0 +1,20 @@
+{
+  "project_id": "wt6i-plane",
+  "name": "WT6I Plane mock project",
+  "workspace_root": ".",
+  "runs_root": ".agent-runs",
+  "connections": {
+    "github": {
+      "credential-ref": "env:WT6I_GITHUB_PR_TOKEN"
+    },
+    "work-tracker": {
+      "provider": "plane",
+      "credential-ref": "env:WT6I_PLANE_TRACKER_TOKEN",
+      "config": {
+        "api-base-url": "https://plane.example.invalid",
+        "workspace-slug": "wt6i-plane-workspace",
+        "project-id": "wt6i-plane-project"
+      }
+    }
+  }
+}

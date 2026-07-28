@@ -1,0 +1,28 @@
+Fresh Pi session: CODE REVIEW.
+
+Inputs:
+- Normalized work item artifact: {{run.dir}}/work-tracker/item.json
+- Design doc: {{run.dir}}/design/design.md
+- Manual test report: {{run.dir}}/manual-review/report-{{run.round}}.md
+
+Use only these provider-neutral fields from the normalized work item:
+- identifier
+- title
+- description
+- state.name
+- priority
+- assignees[].display_name or assignees[].id
+- labels[].name or labels[].id
+- url
+
+Rules:
+- Do not edit source code.
+- Review diff against base branch.
+- Produce actionable issues only.
+- Do not call Plane, Jira, GitHub, Slack, or other external APIs.
+- Do not use tracker configuration, credential references, raw provider responses, or the provider-specific remote scope.
+
+Write:
+- Report: {{run.dir}}/code-review/report-{{run.round}}.md
+- Status: {{run.dir}}/code-review/status-{{run.round}}.json
+- If failing: {{run.dir}}/code-review/issues-{{run.round}}.json

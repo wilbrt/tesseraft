@@ -41,7 +41,9 @@
     (not-empty (str/trim v))))
 
 (defn- item-id [ctx node]
-  (or (present-string (get-in node [:inputs :item-id]))
+  (or (some-> (get-in node [:inputs :item-id])
+              (spec/render-template-string ctx)
+              present-string)
       (present-string (get-in ctx [:inputs :item-id]))))
 
 (defn- artifact-path [ctx p]

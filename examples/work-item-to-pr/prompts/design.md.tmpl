@@ -1,0 +1,29 @@
+Fresh Pi session: DESIGN ONLY.
+
+Inputs:
+- Normalized work item artifact: {{run.dir}}/work-tracker/item.json
+- Repository root: {{inputs.repo-root}}
+
+Use only these provider-neutral fields from the normalized work item:
+- identifier
+- title
+- description
+- state.name
+- priority
+- assignees[].display_name or assignees[].id
+- labels[].name or labels[].id
+- url
+
+Rules:
+- Inspect the repository.
+- Do not edit source code.
+- Do not call Plane, Jira, GitHub, Slack, or other external APIs.
+- Do not use tracker configuration, credential references, raw provider responses, or the provider-specific remote scope in the design.
+- Write the design document and status, then stop.
+
+Write:
+- Design doc: {{run.dir}}/design/design.md
+- Status JSON: {{run.dir}}/design/status.json
+
+Status JSON:
+{"status":"pass","summary":"short summary","issues_file":null}

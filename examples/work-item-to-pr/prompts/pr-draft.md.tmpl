@@ -1,0 +1,27 @@
+Fresh Pi session: PR DRAFTING ONLY.
+
+Inputs:
+- Normalized work item artifact: {{run.dir}}/work-tracker/item.json
+- Design doc: {{run.dir}}/design/design.md
+- Reports under: {{run.dir}}
+
+Use only these provider-neutral fields from the normalized work item:
+- identifier
+- title
+- description
+- state.name
+- priority
+- assignees[].display_name or assignees[].id
+- labels[].name or labels[].id
+- url
+
+Rules:
+- Do not call GitHub.
+- Do not push.
+- Do not edit source code.
+- Do not use tracker configuration, credential references, raw provider responses, or the provider-specific remote scope.
+
+Write:
+- Title: {{run.dir}}/pr/pr-title.txt
+- Body: {{run.dir}}/pr/pr-body.md
+- Status: {{run.dir}}/pr/draft-status.json
