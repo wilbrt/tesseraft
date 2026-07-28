@@ -70,7 +70,8 @@ def test_invalid_edn_json_fragment_packages_have_same_diagnostic_codes():
 def test_portable_fragment_projection_is_json_compatible_and_namespace_preserving():
     projection = portable_projection(VALID_JSON)
     encoded = json.dumps(projection, sort_keys=True)
-    assert "noop/succeed" in encoded
+    assert "custom/review" in encoded
+    assert projection["fragment"]["policies"]["allowed-agent-tools"] == ["custom/review"]
     assert isinstance(projection["interface"]["outcomes"], list)
     assert projection["interface"]["outcomes"] == ["fail", "pass"]
     assert "__file" not in projection

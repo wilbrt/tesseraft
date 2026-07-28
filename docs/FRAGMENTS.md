@@ -21,7 +21,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | Project/global/example discovery helpers | Implemented |
 | `tesseraft fragment lint` | Implemented |
 | `tesseraft fragment import` authoring stub | Implemented |
-| Equivalent JSON package input | Implemented for lint/import/discovery via a fragment-only normalization boundary |
+| Equivalent JSON package input | Implemented for explicit lint/import package paths via a fragment-only normalization boundary; package discovery currently uses `fragment.edn` |
 | JSON-compatible normalized projection | Implemented (`portable-fragment-package-data`) |
 | JSON Schema enforcement | Not wired into the linter; descriptive contract only |
 | Required outcome/exit enforcement when omitted | Implemented |
@@ -36,7 +36,7 @@ P1.4 is complete in its deliberately bounded sense: spec/linter/docs, discovery 
 
 ## Implemented package shape
 
-The operational package format accepts EDN and equivalent JSON. Fragment packages are normalized once, immediately after generic file parsing, before lint/import/discovery consumers inspect them:
+The operational package format accepts EDN and equivalent JSON when a package file is passed explicitly to lint/import. Fragment packages are normalized once, immediately after generic file parsing, before those consumers inspect them:
 
 ```edn
 {:api-version "tesseraft.fragment/v1"
@@ -192,13 +192,13 @@ The importing workflow ultimately needs to own the state id, scope/version selec
 
 ## Discovery and control-plane state
 
-Fragment packages use the same filesystem scope convention as workflows and nodes:
+Fragment package discovery uses the same filesystem scope convention as workflows and nodes, but currently resolves only `fragment.edn` package files:
 
 - `examples/fragments/<name>/fragment.edn`
 - `~/.tesseraft/fragments/<name>/fragment.edn` (`TESSERAFT_HOME` is honored)
 - `.tesseraft/fragments/<name>/fragment.edn`
 
-Generic control-plane discovery and resolution helpers exist, including precedence/conflict handling. There are no public fragment list/detail/graph routes and no Studio catalog surface yet.
+Direct-path lint/import can read an equivalent `fragment.json`, but project/global/example discovery and workflow inclusion resolution do not discover `fragment.json` packages today. Generic control-plane discovery and resolution helpers exist for `fragment.edn`, including precedence/conflict handling. There are no public fragment list/detail/graph routes and no Studio catalog surface yet.
 
 ## Local CLI
 

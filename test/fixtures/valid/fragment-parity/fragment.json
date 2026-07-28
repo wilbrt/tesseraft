@@ -13,9 +13,10 @@
     "tools": ["read", "bash"],
     "resources": {"requires": [{"kind": "input", "name": "repo-root", "mode": "reusable"}]}
   },
-  "assets": {"schemas": ["schemas/status.schema.json"]},
+  "assets": {"prompts": ["prompts/fix.md.tmpl"], "schemas": ["schemas/status.schema.json"]},
   "fragment": {
     "initial": "lint",
+    "policies": {"allowed-agent-tools": ["custom/review"]},
     "entry": {"inputs": ["repo-root"]},
     "exit": [
       {"on": "pass", "produces": {"status": "status/pass.json"}},
@@ -23,8 +24,10 @@
     ],
     "states": {
       "lint": {
-        "type": "deterministic",
-        "handler": "noop/succeed",
+        "type": "agent",
+        "executor": "pi-cli",
+        "tools": ["custom/review"],
+        "prompt-template": "prompts/fix.md.tmpl",
         "runtime": {"timeout": "1m"},
         "outputs": {"status": {"path": "lint/status.json", "required": true}},
         "transitions": [

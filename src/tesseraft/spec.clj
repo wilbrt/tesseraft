@@ -144,6 +144,12 @@
       (contains? requirements :handlers) (update :handlers semantic-keyword-coll)
       (contains? requirements :tools) (update :tools semantic-keyword-coll))))
 
+(defn- normalize-fragment-policies [policies]
+  (if-not (map? policies)
+    policies
+    (cond-> policies
+      (contains? policies :allowed-agent-tools) (update :allowed-agent-tools semantic-keyword-coll))))
+
 (defn normalize-fragment-package
   "Canonicalize fragment-only semantic positions after generic EDN/JSON parsing.
   Workflow and node package readers intentionally do not use this boundary."
@@ -154,7 +160,10 @@
       (contains? pkg :kind) (update :kind semantic-keyword)
       (contains? pkg :interface) (update :interface normalize-fragment-interface)
       (contains? pkg :requirements) (update :requirements normalize-fragment-requirements)
-      (contains? pkg :fragment) (update :fragment normalize-fragment-body))))
+      (contains? pkg :fragment) (update :fragment (fn [fragment]
+                                                    (cond-> (normalize-fragment-body fragment)
+                                                      (and (map? fragment) (contains? fragment :policies))
+                                                      (update :policies normalize-fragment-policies)))))))
 
 (defn read-fragment-package [fragment-file]
   (normalize-fragment-package (read-data-file fragment-file)))
