@@ -27,7 +27,7 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | JSON Schema enforcement | Not wired into the linter; descriptive contract only |
 | Required outcome/exit enforcement when omitted | Implemented |
 | Parameter, version, and prefix semantics | Implemented for static workflow lint; no runtime writes/execution |
-| Boundary resource projection into workflow lint | Not implemented |
+| Boundary resource projection into workflow lint | Implemented for static workflow lint; no runtime writes/execution |
 | Runtime fragment execution | Not implemented |
 | Public fragment control-plane API / Studio catalog | Not implemented |
 | Fragment gallery | Deferred (roadmap P1.5) |
@@ -129,7 +129,7 @@ Reachable internal terminal states must keep workflow-style terminal `:status` a
 
 `:requirements` records executors, handlers, tools, secrets, template variables, and boundary resources. Package lint validates resource declaration shape. Internal `:fragment :resources` and node `:resources` participate in the internal-subgraph proof.
 
-Current limitation: package boundary `:requirements :resources` is **not projected** onto the workflow's `{:type :fragment}` inclusion node. Workflow resource flow reads only the inclusion node's own `:resources`. A downstream node that requires a package-declared output therefore reports `resource-missing-producer` unless the importer duplicates an equivalent production manually.
+For a valid workflow inclusion, package boundary `:requirements :resources` is projected into static workflow resource analysis as derived inclusion resources. Exact `{{inputs.x}}` / `{{defaults.x}}` input bindings alias the importer's ambient resource identity; literal scalar bindings satisfy the fragment boundary without inventing an external prerequisite. Safe inclusion prefixes are prepended to boundary resource paths. Produced boundary resources are advertised only when the corresponding output is present on every declared exit with the same path after prefixing.
 
 ## Internal subgraph lint
 
@@ -179,11 +179,10 @@ Implemented inclusion semantics:
 - transition outcomes are checked against the interface;
 - broken package lint is surfaced as one aggregate inclusion error.
 
-A successful workflow lint result includes derived `:fragment-inclusions` keyed by inclusion state id. Each entry contains `:package-path`, canonical `:scope`, resolved `:version`, normalized/omitted `:prefix`, authored effective `:inputs`, and defaults-merged effective `:parameters`. This is inspection data only; lint does not mutate the workflow, copy resources, write prefixed artifacts, or execute fragments.
+A successful workflow lint result includes derived `:fragment-inclusions` keyed by inclusion state id. Each entry contains `:package-path`, canonical `:scope`, resolved `:version`, normalized/omitted `:prefix`, authored effective `:inputs`, defaults-merged effective `:parameters`, and effective boundary `:resources` (`:requires`, `:consumes`, and conservative all-exit `:produces`). This is inspection data only; lint does not mutate the workflow, copy resources, write prefixed artifacts, or execute fragments. Internal fragment-state resources remain private and are not projected.
 
 Still not operational:
 
-- package boundary resources are not projected;
 - `:prefix` does not namespace runtime artifacts because runtime fragment execution is absent;
 - no fragment outcome can be produced at runtime.
 
