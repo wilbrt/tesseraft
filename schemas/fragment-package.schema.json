@@ -42,8 +42,23 @@
       },
       "additionalProperties": true
     },
+    "transition": {
+      "type": "object",
+      "required": ["next"],
+      "properties": {
+        "next": { "type": "string", "minLength": 1 },
+        "effects": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "when": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
     "fragmentState": {
       "type": "object",
+      "required": ["type"],
       "allOf": [
         {
           "if": { "properties": { "type": { "const": "terminal" } }, "required": ["type"] },
@@ -62,7 +77,22 @@
         }
       ],
       "properties": {
-        "type": { "type": "string" }
+        "type": {
+          "type": "string",
+          "enum": ["agent", "deterministic", "process", "timer", "approval", "router", "terminal"]
+        },
+        "handler": { "type": "string", "minLength": 1 },
+        "executor": { "type": "string", "minLength": 1 },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "next": { "type": "string", "minLength": 1 },
+        "transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/transition" }
+        }
       },
       "additionalProperties": true
     }
@@ -102,9 +132,9 @@
     "requirements": {
       "type": "object",
       "properties": {
-        "executors": { "type": "array", "items": { "type": "string" } },
-        "handlers": { "type": "array", "items": { "type": "string" } },
-        "tools": { "type": "array", "items": { "type": "string" } },
+        "executors": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "handlers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "tools": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
         "secrets": { "type": "array", "items": { "type": "string" } },
         "template-vars": { "type": "array", "items": { "type": "string" } },
         "resources": { "$ref": "#/$defs/resourceDeclaration" }
@@ -130,8 +160,8 @@
         "entry": {
           "type": "object",
           "properties": {
-            "inputs": { "type": "array", "items": { "type": "string" } },
-            "parameters": { "type": "array", "items": { "type": "string" } }
+            "inputs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "parameters": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
           },
           "additionalProperties": true
         },
