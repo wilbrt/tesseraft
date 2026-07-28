@@ -542,11 +542,21 @@
     (map? contract) (not= false (:required contract))
     :else false))
 
+(defn valid-fragment-name-key? [x]
+  (cond
+    (keyword? x) (not (str/blank? (name x)))
+    (and (string? x) (str/starts-with? x ":")) (not (str/blank? (subs x 1)))
+    (string? x) (not (str/blank? x))
+    :else false))
+
 (defn normalized-fragment-map [m]
   (when (map? m)
     (let [pairs (map (fn [[k v]] [(normalize-fragment-name-key k) k v]) m)
-          collisions (->> pairs (group-by first) (filter (fn [[_ xs]] (< 1 (count xs)))))]
-      {:map (into {} (map (fn [[k _ v]] [k v]) pairs))
+          valid-pairs (filter (fn [[_ original _]] (valid-fragment-name-key? original)) pairs)
+          invalid-keys (mapv second (remove (fn [[_ original _]] (valid-fragment-name-key? original)) pairs))
+          collisions (->> valid-pairs (group-by first) (filter (fn [[_ xs]] (< 1 (count xs)))))]
+      {:map (into {} (map (fn [[k _ v]] [k v]) valid-pairs))
+       :invalid-keys invalid-keys
        :collisions (mapv first collisions)})))
 
 (defn fragment-required? [contract input?]
@@ -575,6 +585,12 @@
         declared-map (:map declared {})
         bound-map (:map bound {})]
     (concat
+      (for [k (:invalid-keys declared)]
+        (err :fragment-invalid-binding-name (conj base-path kind)
+             (str "Fragment " (name kind) " declaration name must be a non-blank string or keyword: " (pr-str k))))
+      (for [k (:invalid-keys bound)]
+        (err :fragment-invalid-binding-name (conj base-path kind)
+             (str "Fragment " (name kind) " binding name must be a non-blank string or keyword: " (pr-str k))))
       (for [k (:collisions declared)]
         (err :fragment-binding-name-collision (conj base-path kind k)
              (str "Fragment " (name kind) " declaration collides after name normalization: " k)))

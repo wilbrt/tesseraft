@@ -60,11 +60,11 @@ def write_project(tmp: Path, package_text=FRAGMENT, workflow_node=None, global_p
     return wf
 
 
-def lint(wf: Path, home: Path):
+def tesseraft(args, home: Path):
     env = os.environ.copy()
     env["TESSERAFT_HOME"] = str(home)
-    proc = subprocess.run(
-        ["./bin/tesseraft", "lint", str(wf), "--format", "json"],
+    return subprocess.run(
+        ["./bin/tesseraft", *args],
         cwd=ROOT,
         env=env,
         text=True,
@@ -72,6 +72,10 @@ def lint(wf: Path, home: Path):
         stderr=subprocess.PIPE,
         check=False,
     )
+
+
+def lint(wf: Path, home: Path):
+    proc = tesseraft(["lint", str(wf), "--format", "json"], home)
     assert proc.stdout, proc.stderr
     return proc.returncode, json.loads(proc.stdout)
 
@@ -171,8 +175,68 @@ def test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coerc
     with_tmp(run)
 
 
+def test_invalid_binding_names_and_normalization_collisions_are_rejected_precisely():
+    def run(tmp):
+        home = tmp / "global-home"
+        bad_pkg = FRAGMENT.replace(
+            ':repo-root {:type :string :required true}',
+            ':repo-root {:type :string :required true}\n                      7 {:type :string :required false}\n                      "repo-root" {:type :string :required false}',
+        )
+        node = ''':run
+  {:type :fragment
+   :fragment "contract-fragment"
+   :inputs {7 "bad" :repo-root "." "repo-root" "collision"}
+   :parameters {:retries 1 [] "bad"}
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}
+                 {:when {:fragment/outcome "fail"} :next :fail}]}'''
+        wf = write_project(tmp, package_text=bad_pkg, workflow_node=node)
+        status, payload = lint(wf, home)
+        got = codes(payload)
+        assert status != 0
+        assert "fragment-invalid-binding-name" in got, payload
+        assert "fragment-binding-name-collision" in got, payload
+        assert "fragment-internal-lint-failed" not in got, payload
+    with_tmp(run)
+
+
+def test_prefix_validation_rejects_dot_segments_and_windows_drive_forms():
+    def run(tmp):
+        home = tmp / "global-home"
+        unsafe = ["nested/./path", "nested/.", "C:relative", "C:/absolute", r"\\server\\share", r"nested\\..\\path"]
+        for prefix in unsafe:
+            node = f''':run
+  {{:type :fragment
+   :fragment "contract-fragment"
+   :prefix {json.dumps(prefix)}
+   :inputs {{:repo-root "."}}
+   :parameters {{:retries 1}}
+   :transitions [{{:when {{:fragment/outcome "pass"}} :next :done}}
+                 {{:when {{:fragment/outcome "fail"}} :next :fail}}]}}'''
+            wf = write_project(tmp, workflow_node=node)
+            status, payload = lint(wf, home)
+            assert status != 0, (prefix, payload)
+            assert "fragment-invalid-prefix" in codes(payload), (prefix, payload)
+    with_tmp(run)
+
+
+def test_import_allows_authoring_stub_with_required_parameter_pending():
+    def run(tmp):
+        home = tmp / "global-home"
+        wf = write_project(tmp, workflow_node=''':start {:type :terminal :status :success}''')
+        package_path = tmp / ".tesseraft/fragments/contract-fragment/fragment.edn"
+        proc = tesseraft(["fragment", "import", str(package_path), str(wf), "--as", "imported"], home)
+        assert proc.returncode == 0, proc.stderr
+        imported = wf.read_text()
+        assert ":imported" in imported, imported
+        assert ":parameters" not in imported or ":retries" not in imported, imported
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_effective_inclusion_contract_is_inspectable_and_defaults_are_merged()
     test_explicit_project_scope_does_not_fall_back_to_global()
     test_version_binding_type_name_and_prefix_diagnostics_are_distinct()
     test_wrong_scalar_literals_and_unsupported_declared_types_fail_without_coercion()
+    test_invalid_binding_names_and_normalization_collisions_are_rejected_precisely()
+    test_prefix_validation_rejects_dot_segments_and_windows_drive_forms()
+    test_import_allows_authoring_stub_with_required_parameter_pending()
