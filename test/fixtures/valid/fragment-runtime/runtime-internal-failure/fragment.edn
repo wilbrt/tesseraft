@@ -1,0 +1,11 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-internal-failure" :title "Runtime internal node failure fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :fragment {:initial :start
+            :exit [{:on :pass :produces {}}]
+            :states {:start {:type :deterministic
+                              :handler :noop/succeed
+                              :outputs {:report {:path "report.json" :required true}}
+                              :next :done}
+                     :done {:type :terminal :status :success :outcome :pass}}}}

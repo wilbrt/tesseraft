@@ -223,6 +223,27 @@
     (:next node) [{:when {:else true} :next (:next node)}]
     :else []))
 
+(defn outcome-name [x]
+  (cond
+    (keyword? x) (name x)
+    (string? x) x
+    (nil? x) nil
+    :else (str x)))
+
+(defn match-transition?
+  "The single predicate deciding whether a transition's :when matches result:
+  used both to choose the transition a node actually takes and to decide
+  whether a fragment's reached outcome is routed at all, so those two
+  questions can never disagree."
+  [result transition]
+  (let [pred (:when transition)]
+    (or (= true (:else pred))
+        (every? (fn [[k v]]
+                  (if (= k :fragment/outcome)
+                    (= (outcome-name v) (outcome-name (get result k)))
+                    (= v (get result k))))
+                pred))))
+
 (defn transition-targets [node]
   (->> (transitions node) (map :next) (remove nil?) set))
 

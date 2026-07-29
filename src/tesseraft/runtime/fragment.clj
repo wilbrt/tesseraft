@@ -17,13 +17,6 @@
 (defn- diagnostics-blocking? [diagnostics]
   (some #(= "error" (:severity %)) diagnostics))
 
-(defn- outcome-name [x]
-  (cond
-    (keyword? x) (name x)
-    (string? x) x
-    (nil? x) nil
-    :else (str x)))
-
 (defn- render-bound-value [parent-ctx v]
   (if (string? v) (spec/render-template-string v parent-ctx) v))
 
@@ -133,7 +126,7 @@
   (let [pin-path (fs/path (get-in internal-ctx [:run :dir]) "pin.json")
         package-sha (store/sha256 (slurp (:package-path inclusion)))
         pin-data {:fragment (spec/fragment-package-name pkg)
-                  :scope (outcome-name (:scope inclusion))
+                  :scope (spec/outcome-name (:scope inclusion))
                   :version (:version inclusion)
                   :package_path (:package-path inclusion)
                   :package_sha256 package-sha
@@ -171,15 +164,6 @@
   (let [state-id (get-in internal-ctx [:run :state])]
     (:outcome (get-in internal-wf [:states state-id]))))
 
-(defn- outcome-routed? [node outcome]
-  (let [target (outcome-name outcome)]
-    (boolean
-      (some (fn [tr]
-              (let [pred (:when tr)]
-                (or (= true (:else pred))
-                    (= target (outcome-name (:fragment/outcome pred))))))
-            (spec/transitions node)))))
-
 (defn finish!
   "Map the nested run's outcome onto the parent :fragment/outcome result, or
   raise one classified failure (fragment_max_rounds, fragment_internal_failure,
@@ -193,8 +177,20 @@
     (cond
       (= "done" status)
       (let [outcome (terminal-outcome internal-wf internal-ctx)
-            outcome-str (outcome-name outcome)]
-        (when (or (nil? outcome) (not (outcome-routed? node outcome)))
+            outcome-str (spec/outcome-name outcome)
+            result {:status "ok" :ok true
+                    :fragment/outcome outcome-str
+                    :outcome outcome-str
+                    :fragment (spec/fragment-package-name pkg)
+                    :internal_state finished-state
+                    :internal_rounds rounds
+                    :internal_dir internal-dir}]
+        ;; Routability is decided by the exact same predicate
+        ;; (spec/match-transition?) over the exact result finish! is about to
+        ;; return, so this can never diverge from the transition
+        ;; choose-transition later selects for this same result.
+        (when (or (nil? outcome)
+                  (not (some #(spec/match-transition? result %) (spec/transitions node))))
           (throw (ex-info "Fragment outcome is not routed by any parent transition"
                           {:error-type "fragment_outcome_unrouted"
                            :state (name state-id)
@@ -208,13 +204,7 @@
                                   :internal_state finished-state
                                   :internal_rounds rounds
                                   :internal_dir internal-dir})
-        {:status "ok" :ok true
-         :fragment/outcome outcome-str
-         :outcome outcome-str
-         :fragment (spec/fragment-package-name pkg)
-         :internal_state finished-state
-         :internal_rounds rounds
-         :internal_dir internal-dir})
+        result)
 
       (= "failed" status)
       (throw (ex-info "Fragment internal execution failed"

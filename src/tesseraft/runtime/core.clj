@@ -451,24 +451,8 @@
                              :result result})
           result)))))
 
-(defn- outcome-name [x]
-  (cond
-    (keyword? x) (name x)
-    (string? x) x
-    (nil? x) nil
-    :else (str x)))
-
-(defn match-transition? [result transition]
-  (let [pred (:when transition)]
-    (or (= true (:else pred))
-        (every? (fn [[k v]]
-                  (if (= k :fragment/outcome)
-                    (= (outcome-name v) (outcome-name (get result k)))
-                    (= v (get result k))))
-                pred))))
-
 (defn choose-transition [node result]
-  (or (some #(when (match-transition? result %) %) (spec/transitions node))
+  (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
       (throw (ex-info "No transition matched result" {:result result}))))
 
 (defn normalize-issue-path [ctx p]
@@ -673,8 +657,8 @@
     (let [result {:status "ok" :ok true
                   :approval_id (:approval_id decision)
                   :decision (:decision decision)}
-          ; match-transition? compares :when predicates against result keys.
-          tr (or (some #(when (match-transition? result %) %) (spec/transitions node))
+          ; spec/match-transition? compares :when predicates against result keys.
+          tr (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
                  (throw (ex-info "No approval transition matched the recorded decision"
                                  {:state state-id :decision (:decision decision)})))
           ctx (store/event! ctx {:event "approval.decided"

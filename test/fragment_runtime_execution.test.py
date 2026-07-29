@@ -339,6 +339,67 @@ def test_unrouted_internal_result_preserves_original_cause_instead_of_step_budge
     with_tmp(run)
 
 
+def test_fragment_outcome_unrouted_after_full_internal_execution():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-pass")
+        # No transition references :fragment/outcome at all, so lint only
+        # warns (fragment-uncovered-outcome, lint/core.clj:831) instead of
+        # blocking start -- assert-lint-ok! lints non-strict. The nested run
+        # therefore executes to completion before finish! discovers no
+        # transition would route the reached "pass" outcome, unlike the
+        # pre-execution fragment_unresolved/fragment_unsupported_node cases.
+        wf = write_workflow(tmp, "runtime-pass", '[{:when {:status "never"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        proc = resume(run_dir, home)
+        assert proc.returncode != 0, proc.stdout
+
+        nested_dir = nested_run_dir(run_dir)
+        nested_state = inspect(nested_dir, home)
+        assert nested_state["run"]["status"] == "done", nested_state
+        assert nested_state["run"]["state"] == "done", nested_state
+        nested_events = read_events(nested_dir)
+        assert any(e.get("event") == "run.finished" for e in nested_events), nested_events
+
+        events = read_events(run_dir)
+        failed = node_event(events, "node.failed")
+        result = failed["result"]
+        assert result.get("error_type") == "fragment_outcome_unrouted", result
+        assert result.get("details", {}).get("outcome") == "pass", result
+    with_tmp(run)
+
+
+def test_internal_node_failure_yields_fragment_internal_failure_not_max_rounds():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-internal-failure")
+        wf = write_workflow(tmp, "runtime-internal-failure", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        proc = resume(run_dir, home)
+        assert proc.returncode != 0, proc.stdout
+
+        # The internal :start node's own handler (:noop/succeed) ran and
+        # returned {:status "ok"}, but the fixture declares a required
+        # output it never writes, so validate-required-outputs! throws and
+        # execute-node!'s catch durably records a real internal node.failed
+        # -- distinct from run.max-rounds-exceeded and from the unrouted
+        # choose-transition throw, which records no internal node.failed.
+        nested_dir = nested_run_dir(run_dir)
+        nested_events = read_events(nested_dir)
+        nested_failed = node_event(nested_events, "node.failed", state="start")
+        assert nested_failed["result"]["message"] == "Required output missing", nested_failed
+        nested_state = nested_dir / "state.edn"
+        assert ':status "failed"' in nested_state.read_text(), nested_state.read_text()
+
+        events = read_events(run_dir)
+        failed = node_event(events, "node.failed")
+        result = failed["result"]
+        assert result.get("error_type") == "fragment_internal_failure", result
+    with_tmp(run)
+
+
 def test_bound_input_and_parameter_override_reach_nested_durable_evidence():
     def run(tmp):
         home = tmp / "home"
@@ -464,6 +525,8 @@ if __name__ == "__main__":
     test_unsupported_internal_node_type_is_rejected_before_any_internal_execution()
     test_fragment_local_max_rounds_fails_durably_without_advancing_parent_round()
     test_unrouted_internal_result_preserves_original_cause_instead_of_step_budget_message()
+    test_fragment_outcome_unrouted_after_full_internal_execution()
+    test_internal_node_failure_yields_fragment_internal_failure_not_max_rounds()
     test_bound_input_and_parameter_override_reach_nested_durable_evidence()
     test_cancel_reaps_a_process_owned_by_a_fragment_internal_run_dir()
     test_run_id_named_fragments_is_not_hidden_from_control_plane_inventory()
