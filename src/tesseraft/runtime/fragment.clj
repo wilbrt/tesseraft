@@ -86,12 +86,25 @@
 (defn internal-run-dir [parent-ctx state-id attempt]
   (str (fs/path (get-in parent-ctx [:run :dir]) "fragments" (name state-id) (str attempt))))
 
+(defn- event-mirror-descriptor
+  "Data-only descriptor threaded through the internal ctx so
+  tesseraft.runtime.store/event! can mirror every internal event into the
+  parent's own log as it happens. Plain strings/ints, so it survives
+  save-context!'s dissoc of :credential-resolver and reloads unchanged."
+  [parent-ctx state-id attempt pkg]
+  {:parent-dir (get-in parent-ctx [:run :dir])
+   :state (name state-id)
+   :attempt attempt
+   :fragment (spec/fragment-package-name pkg)})
+
 (defn internal-context
   "An isolated internal run context nested under the parent run directory.
   Inputs are the effective inputs merged under effective parameters (bound
   values win on name collision). Only project id, executor mode, runtime
   options, and redaction configuration are inherited from the parent; rounds,
-  attempts, issues, and artifacts all start fresh."
+  attempts, issues, and artifacts all start fresh. Carries an :event-mirror
+  descriptor from creation so every internal event (not just fragment.started/
+  fragment.finished) is durably visible in the parent's own log as it happens."
   [parent-ctx state-id attempt pkg internal-wf inclusion]
   (let [run-dir (internal-run-dir parent-ctx state-id attempt)
         inputs (merge (:inputs inclusion) (:parameters inclusion))
@@ -114,10 +127,108 @@
                         :version (str "sha256:" (store/sha256 (slurp (spec/fragment-package-file pkg))))
                         :defaults (:defaults internal-wf)}
              :inputs inputs
-             :run run-map}
+             :run run-map
+             :event-mirror (event-mirror-descriptor parent-ctx state-id attempt pkg)}
       (contains? parent-ctx :credential-resolver) (assoc :credential-resolver (:credential-resolver parent-ctx))
       (contains? parent-ctx :credential-secrets) (assoc :credential-secrets (:credential-secrets parent-ctx))
       (contains? parent-ctx :skip-project-credential-redaction?) (assoc :skip-project-credential-redaction? (:skip-project-credential-redaction? parent-ctx)))))
+
+(defn durable-internal-run?
+  "True when a nested run dir for this state+attempt already has a persisted
+  state.edn -- either a still-running boundary a prior process was killed
+  inside of, or one that reached its own terminal status before the parent
+  ever recorded finishing the fragment step."
+  [parent-ctx state-id attempt]
+  (fs/exists? (fs/path (internal-run-dir parent-ctx state-id attempt) "state.edn")))
+
+(def ^:private internal-terminal-statuses #{"done" "failed" "error" "cancelled"})
+
+(defn terminal-internal-run?
+  "True when the (already-reloaded) internal ctx's own run status is
+  terminal, i.e. the nested subgraph itself finished even if the parent never
+  got to see it (finish! may still not have run)."
+  [internal-ctx]
+  (contains? internal-terminal-statuses (get-in internal-ctx [:run :status])))
+
+(defn resume-internal-context
+  "Reload a durable nested run's persisted state.edn and re-attach the
+  live-only fields save-context! strips (:credential-resolver) or that the
+  parent owns and may have changed since the original pin! (:credential-
+  secrets, :skip-project-credential-redaction?, runtime options, executor
+  mode), plus a freshly rebuilt :event-mirror descriptor."
+  [parent-ctx state-id attempt pkg]
+  (let [dir (internal-run-dir parent-ctx state-id attempt)
+        reloaded (store/load-context dir)
+        owned-run-keys (select-keys (:run parent-ctx)
+                                    [:workspace-root :tesseraft-home :runs-root
+                                     :workflow-roots :project-context :executor-mode])]
+    (cond-> (update reloaded :run merge owned-run-keys)
+      (contains? parent-ctx :credential-resolver) (assoc :credential-resolver (:credential-resolver parent-ctx))
+      (contains? parent-ctx :credential-secrets) (assoc :credential-secrets (:credential-secrets parent-ctx))
+      (contains? parent-ctx :skip-project-credential-redaction?) (assoc :skip-project-credential-redaction? (:skip-project-credential-redaction? parent-ctx))
+      true (assoc :event-mirror (event-mirror-descriptor parent-ctx state-id attempt pkg)))))
+
+(defn verify-pin!
+  "Refuse to resume a nested run whose pinned package content hash no longer
+  matches the package currently on disk: continuing to execute the internal
+  subgraph against a package that has since been edited (states/transitions
+  changed) could silently corrupt a nested run in flight, rather than merely
+  changing what a fresh inclusion would do."
+  [state-id pkg inclusion internal-ctx]
+  (let [pin-path (fs/path (get-in internal-ctx [:run :dir]) "pin.json")
+        pin (store/read-json pin-path)
+        current-sha (store/sha256 (slurp (:package-path inclusion)))]
+    (when (not= (:package_sha256 pin) current-sha)
+      (throw (ex-info "Fragment package changed since this internal run was pinned"
+                      {:error-type "fragment_pin_changed"
+                       :state (name state-id)
+                       :fragment (spec/fragment-package-name pkg)
+                       :pinned_sha256 (:package_sha256 pin)
+                       :current_sha256 current-sha})))))
+
+(defn resumed!
+  "Parent-level evidence that a durable nested run is continuing from its
+  persisted boundary rather than restarting: not itself mirrored (it is
+  already a parent-native event), unlike the internal node.*/transition.*
+  events store/event! mirrors as the nested loop advances."
+  [parent-ctx state-id attempt pkg internal-ctx]
+  (store/event! parent-ctx {:event "fragment.resumed"
+                            :state (name state-id)
+                            :attempt attempt
+                            :fragment (spec/fragment-package-name pkg)
+                            :internal_dir (get-in internal-ctx [:run :dir])
+                            :internal_state (some-> (get-in internal-ctx [:run :state]) name)
+                            :internal_status (get-in internal-ctx [:run :status])}))
+
+(defn- internal-run-attempt-dirs
+  "Every fragments/<state>/<attempt> dir under the parent run that has a
+  persisted state.edn, regardless of that run's own status."
+  [parent-ctx]
+  (let [root (fs/path (get-in parent-ctx [:run :dir]) "fragments")]
+    (if-not (fs/exists? root)
+      []
+      (vec (for [state-dir (fs/list-dir root)
+                :when (fs/directory? state-dir)
+                attempt-dir (fs/list-dir state-dir)
+                :when (and (fs/directory? attempt-dir)
+                           (fs/exists? (fs/path attempt-dir "state.edn")))]
+            attempt-dir)))))
+
+(defn cancel-internal-runs!
+  "Mark every still-running nested fragment run cancelled. Each nested ctx
+  already carries its own persisted :event-mirror descriptor (set at
+  creation), so appending run.cancelled through store/event! on it mirrors a
+  fragment.run.cancelled into the parent log the same way any other internal
+  event would be, with no extra wiring here."
+  [parent-ctx]
+  (doseq [dir (internal-run-attempt-dirs parent-ctx)]
+    (let [ctx (store/load-context dir)]
+      (when-not (contains? internal-terminal-statuses (get-in ctx [:run :status]))
+        (let [cancelled (-> ctx
+                            (assoc-in [:run :status] "cancelled")
+                            (assoc-in [:run :updated-at] (store/now)))]
+          (store/event! cancelled {:event "run.cancelled"})
+          (store/save-context! cancelled))))))
 
 (defn pin!
   "Write nested pin.json evidence (identity, scope, version, package content

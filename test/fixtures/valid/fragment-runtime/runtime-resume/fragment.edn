@@ -1,0 +1,17 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-resume" :title "Runtime resume fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :assets {:prompts ["prompts/execute.md.tmpl"] :scripts ["./scripts/mark.py"]}
+ :fragment {:initial :mark
+            :exit [{:on :pass :produces {}}]
+            :states {:mark {:type :process
+                            :command ["./scripts/mark.py"]
+                            :outputs {:marks {:path "marks.txt" :required true}}
+                            :transitions [{:when {:status "pass"} :next :execute}]}
+                     :execute {:type :agent
+                               :executor :pi-cli
+                               :prompt-template "prompts/execute.md.tmpl"
+                               :outputs {:status {:path "agent/status.json" :required true}}
+                               :transitions [{:when {:status "pass"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}

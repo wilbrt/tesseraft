@@ -110,9 +110,35 @@
 (defn load-context [run-dir]
   (read-edn (fs/path run-dir "state.edn")))
 
+(defn- mirrored-event
+  "A namespaced copy of a scrubbed nested event for the parent's own log: the
+  original :event is prefixed \"fragment.\", the parent's own :state/:attempt
+  (from the descriptor) replace the nested ones, and the nested :state/:attempt
+  (when present) are preserved under :internal_state/:internal_attempt so the
+  parent log alone can reconstruct which internal node produced it."
+  [descriptor event]
+  (cond-> (-> event
+              (dissoc :state :attempt)
+              (assoc :event (str "fragment." (:event event))
+                     :state (:state descriptor)
+                     :attempt (:attempt descriptor)))
+    (contains? event :state) (assoc :internal_state (:state event))
+    (contains? event :attempt) (assoc :internal_attempt (:attempt event))
+    (:fragment descriptor) (assoc :fragment (:fragment descriptor))))
+
 (defn event! [ctx event]
-  (append-jsonl! (fs/path (get-in ctx [:run :dir]) "events.jsonl")
-                (durable-data ctx (assoc event :at (now))))
+  ;; A fragment-internal ctx carries a data-only :event-mirror descriptor
+  ;; (parent run dir, state, attempt, fragment name) set at creation and
+  ;; persisted through save-context!/reload, so the mirrored copy below is
+  ;; written into the parent's events.jsonl as the event happens -- the parent
+  ;; trace must exist even if the process dies mid-fragment, not only once the
+  ;; nested run finishes. Mirroring appends directly (not via event!), so it
+  ;; never recurses.
+  (let [scrubbed (durable-data ctx (assoc event :at (now)))]
+    (append-jsonl! (fs/path (get-in ctx [:run :dir]) "events.jsonl") scrubbed)
+    (when-let [descriptor (:event-mirror ctx)]
+      (append-jsonl! (fs/path (:parent-dir descriptor) "events.jsonl")
+                     (mirrored-event descriptor scrubbed))))
   ctx)
 
 (defn ensure-run-dirs! [ctx]

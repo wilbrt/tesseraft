@@ -2357,6 +2357,51 @@
       explicit
       (derive-attempts-from-events events))))
 
+;; fragment.started/finished/resumed are parent-native events (written
+;; directly by tesseraft.runtime.fragment, not copies store/event! mirrors),
+;; and happen to share the parent inclusion's own :state/:attempt -- exclude
+;; them explicitly rather than relying on derive-attempts-from-events'
+;; default case to ignore their stripped, non-"node.*"/"transition.*" names.
+(def ^:private fragment-native-event-names #{"fragment.started" "fragment.finished" "fragment.resumed"})
+
+(defn- fragment-mirrored-event? [event]
+  (let [event-name-str (str (event-name event))]
+    (and (str/starts-with? event-name-str "fragment.")
+         (not (contains? fragment-native-event-names event-name-str)))))
+
+(defn- unmirror-fragment-event
+  "Reverse tesseraft.runtime.store's mirroring transform: strip the
+  \"fragment.\" prefix and swap :internal_state/:internal_attempt back onto
+  :state/:attempt, reconstructing the exact internal event derive-attempts-
+  from-events would have seen reading the nested run's own events.jsonl."
+  [event]
+  (-> event
+      (assoc :event (subs (event-name event) (count "fragment.")))
+      (assoc :state (:internal_state event))
+      (assoc :attempt (:internal_attempt event))
+      (dissoc :internal_state :internal_attempt)))
+
+(defn internal-attempts-for-parent-attempt
+  "Nested attempts for one parent attempt (identified by its own :state and
+  :attempt), reconstructed from this run's own mirrored fragment.* events --
+  no separate read of the nested run dir is needed."
+  [events state attempt]
+  (->> events
+       (filter (fn [e] (and (fragment-mirrored-event? e)
+                            (= state (:state e))
+                            (= attempt (:attempt e)))))
+       (mapv unmirror-fragment-event)
+       derive-attempts-from-events))
+
+(defn attach-internal-attempts
+  "Additive: attaches :internal_attempts on a parent attempt only when a
+  fragment inclusion at that attempt actually mirrored internal events."
+  [events attempts]
+  (mapv (fn [attempt]
+          (let [internal (internal-attempts-for-parent-attempt events (:state attempt) (:attempt attempt))]
+            (cond-> attempt (seq internal) (assoc :internal_attempts internal))))
+        attempts))
+
 (def preview-limit (* 64 1024))
 (def scan-file-limit 250)
 (def max-read-size (* 1024 1024))
@@ -2474,7 +2519,7 @@
        vec))
 
 (defn scan-artifacts [run-dir]
-  (let [roots ["state.edn" "events.jsonl" "issues.json" "logs" "prompts/generated" "attempts"]]
+  (let [roots ["state.edn" "events.jsonl" "issues.json" "logs" "prompts/generated" "attempts" "fragments"]]
     (->> roots
          (mapcat (fn [root]
                    (let [p (fs/path run-dir root)]
@@ -2582,7 +2627,7 @@
              summary (run-summary sopts state-file)
              run-id (:run_id summary)
              events (read-events-file (events-file run-dir))
-             attempts (if (:error events) [] (attempts-from-context context events))
+             attempts (if (:error events) [] (attach-internal-attempts events (attempts-from-context context events)))
              artifacts (if (:error events) [] (list-artifacts* context run-dir events))
              ;; Heart-aware liveness: use the newest event :at as a fresh
              ;; activity signal in addition to state.edn's :updated_at, so a
