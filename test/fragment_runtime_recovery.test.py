@@ -417,7 +417,28 @@ def test_cancel_while_a_process_node_sleeps_cancels_both_runs_and_mirrors_it():
             assert resolved.returncode == 0, resolved.stderr
             attempts = json.loads(resolved.stdout)["run"]["attempts"]
             fragment_attempt = next(a for a in attempts if a.get("state") == "run-fragment")
-            assert fragment_attempt.get("internal_attempts"), fragment_attempt
+            internal_attempts = fragment_attempt.get("internal_attempts")
+            assert internal_attempts, fragment_attempt
+            # unmirror-fragment-event -> derive-attempts-from-events must
+            # reconstruct both internal states in execution order, with
+            # :mark's completion (finished before the cancel landed) surviving
+            # the round trip and :hang left non-terminal (killed mid-run).
+            assert [a.get("node_id") for a in internal_attempts] == ["mark", "hang"], internal_attempts
+            assert [a.get("state") for a in internal_attempts] == ["mark", "hang"], internal_attempts
+            mark_attempt, hang_attempt = internal_attempts
+            assert mark_attempt.get("status") == "ok", mark_attempt
+            assert mark_attempt.get("finished_at"), mark_attempt
+            assert not hang_attempt.get("finished_at"), hang_attempt
+
+            artifacts_resolved = control_plane(["--workspace-root", str(tmp), "artifacts", run_id], home)
+            assert artifacts_resolved.returncode == 0, artifacts_resolved.stderr
+            artifact_paths = {a["path"] for a in json.loads(artifacts_resolved.stdout)["artifacts"]}
+            for expected in (
+                "fragments/run-fragment/1/state.edn",
+                "fragments/run-fragment/1/events.jsonl",
+                "fragments/run-fragment/1/pin.json",
+            ):
+                assert expected in artifact_paths, (expected, sorted(artifact_paths))
         finally:
             if proc is not None and proc.poll() is None:
                 proc.kill()

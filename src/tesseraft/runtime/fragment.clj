@@ -322,8 +322,11 @@
   already owned by a different parent inclusion state, or that already
   exists in the parent run dir with no recorded owner at all, raises
   fragment_exit_output_conflict before anything is copied; the same state
-  re-materializing (a retry) is not a conflict. Returns a map of output name
-  to the parent-relative path actually written."
+  re-materializing (a retry) is not a conflict. Ownership is recorded before
+  the copies run, so a kill between the two leaves the index already
+  attributing the destination to this state: re-entry sees an owner match,
+  not a conflict, and re-copies. Returns a map of output name to the
+  parent-relative path actually written."
   [parent-ctx state-id pkg inclusion internal-dir outcome-str]
   (let [produces (exit-produces pkg outcome-str)
         required (required-exit-output-keys pkg)
@@ -375,15 +378,15 @@
                              :path dest-rel
                              :owner_state nil
                              :owner_fragment nil}))))
-        (doseq [{:keys [src dest-rel]} existing
-                :let [dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
-          (fs/create-dirs (fs/parent dest))
-          (fs/copy src dest {:replace-existing true}))
         (when (seq existing)
           (store/write-json! (exit-index-path parent-ctx)
                              (reduce (fn [idx {:keys [dest-rel]}]
                                        (assoc idx dest-rel {:state state-name :fragment fragment-name}))
                                      index existing)))
+        (doseq [{:keys [src dest-rel]} existing
+                :let [dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
+          (fs/create-dirs (fs/parent dest))
+          (fs/copy src dest {:replace-existing true}))
         (into {} (map (fn [{:keys [output dest-rel]}] [(name output) dest-rel])) existing)))))
 
 (defn finish!
