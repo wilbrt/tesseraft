@@ -54,3 +54,9 @@ An operator-authorized executor handoff moved subsequent Design-in-Practice agen
 FI5-DIP2 continued the preserved branch and opened PR #91 in round 4 with 10 Claude sessions, three feedback cycles, and one supervision handoff. Claude Code does not expose token/cost totals through the current executor, so record session count and stop on an explicit CLI limit failure rather than reporting invented usage.
 
 Claude review twice wrapped issues in an object and invented field aliases, while the feedback process expected the canonical top-level array. This silently emptied or degraded correction evidence and caused one no-op implementation round. Review prompts now require the exact schema fields; feedback ingestion defensively accepts the observed wrapper and normalizes common aliases. Preserve output-schema validation as a future runtime hardening opportunity.
+
+## FI6 reviewed observations
+
+FI6-DIP1 was interrupted during its first Sonnet implementation and correctly terminated as orphaned with no status artifact. Preserve partial agent-authored work as code evidence, not a fabricated node result. FI6-DIP2 reused that branch with the exact original ticket prompt and no mid-run operator prompt injection.
+
+FI6-DIP2 opened PR #92 in round 5 with 10 Claude sessions, four workflow-owned feedback cycles, and zero supervision handoffs. Focused runtime checks and repository validation passed, and Opus whole-diff review converged without operator-authored correction context. This is clean evidence for the Claude workflow; the executor still exposes session counts but not token/cost totals.
