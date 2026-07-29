@@ -126,18 +126,31 @@
                             (process-descendants root)
                             {:handles [] :enumerated true})
         descendants (:handles descendant-result)
-        handles (vec (concat (reverse descendants) (when root [root])))]
-    (doseq [handle handles]
+        ;; The runtime process can be blocked synchronously inside a process
+        ;; node's own child (e.g. mid p/shell wait): destroying that child
+        ;; first would unblock this same process to keep running and durably
+        ;; record a spurious node result before it is itself torn down.
+        ;; destroyForcibly (SIGKILL) is uncatchable and runs no process code,
+        ;; unlike destroy (SIGTERM) on a JVM, which still has to be scheduled
+        ;; and dispatched through its own shutdown handling before the process
+        ;; actually stops. Kill the root first and confirm it is gone before
+        ;; touching anything it owned, so it can never observe -- or react to
+        ;; -- a descendant's exit.
+        root-stopped? (if (and root (.isAlive root))
+                        (do (.destroyForcibly ^java.lang.ProcessHandle root)
+                            (wait-for-process-exit [root]))
+                        true)]
+    (doseq [handle (reverse descendants)]
       (when (.isAlive ^java.lang.ProcessHandle handle)
         (.destroy ^java.lang.ProcessHandle handle)))
-    (let [stopped? (if (seq handles) (wait-for-process-exit handles) true)
+    (let [descendants-stopped? (if (seq descendants) (wait-for-process-exit descendants) true)
           owned (stop-owned-processes! run-dir)]
       (fs/delete-if-exists path)
       (merge {:pid pid
               :process_found (boolean root)
               :descendants (count descendants)
               :descendants_enumerated (:enumerated descendant-result)
-              :stopped (and stopped? (:owned_processes_stopped owned))}
+              :stopped (and root-stopped? descendants-stopped? (:owned_processes_stopped owned))}
              owned))))
 
 (defn cancel! [run-dir]
@@ -160,7 +173,16 @@
                                  :owned_processes_enumerated (:owned_processes_enumerated process)
                                  :owned_processes_stopped (:owned_processes_stopped process)
                                  :stopped (:stopped process)})
-        (store/save-context! cancelled)))))
+        (store/save-context! cancelled)
+        ;; A fragment's own nested run dir is a full durable run in its own
+        ;; right: cancelling the parent must not leave it silently "running"
+        ;; forever once the owning parent process is gone. The parent's own
+        ;; "cancelled" status is already durable above, so a throw while
+        ;; cancelling a nested run (e.g. an unreadable state.edn) can never
+        ;; leave the parent's own cancellation unrecorded; cancel-internal-runs!
+        ;; itself isolates failures per nested attempt dir.
+        (fragment/cancel-internal-runs! cancelled)
+        cancelled))))
 
 (defn default-branch [inputs]
   (when-let [ticket (:ticket inputs)]
@@ -364,38 +386,59 @@
         state-count (max 1 (count (:states internal-wf)))]
     (max 200 (* 20 state-count (or max-rounds 10)))))
 
+(defn- run-internal-until-done!
+  "Run the nested internal loop to completion (or until it parks/fails),
+  reloading and returning the durably-recorded terminal internal ctx instead
+  of losing the classified cause when run-until-done! itself throws.
+  execute-node! usually already durably recorded the nested failure via
+  fail-run!/fail-max-rounds!/orphan-run! before rethrowing, marking nested
+  state.edn \"failed\"/\"done\". But choose-transition can also throw from
+  step! *outside* execute-node!'s own try/catch (e.g. no transition matches
+  the result) — nothing durably records that, so the reloaded state still
+  reads \"running\". Reloading it there would mask the real cause behind a
+  generic step-budget message, so rethrow the original throwable whenever the
+  persisted nested state is absent or was never brought to a terminal status."
+  [internal-wf internal-ctx budget]
+  (let [internal-dir (get-in internal-ctx [:run :dir])]
+    (try
+      (run-until-done! internal-wf internal-ctx budget)
+      (catch Throwable t
+        (let [reloaded (when (fs/exists? (fs/path internal-dir "state.edn"))
+                         (store/load-context internal-dir))]
+          (if (contains? #{"failed" "done"} (get-in reloaded [:run :status]))
+            reloaded
+            (throw t)))))))
+
 (defn run-fragment-node! [wf ctx state-id node]
   (let [attempt (get-in ctx [:run :attempt])
         {:keys [inclusion pkg]} (fragment/resolve-inclusion! wf ctx state-id node)]
     (fragment/assert-supported-internal-nodes! state-id pkg)
-    (let [internal-wf (fragment/internal-workflow pkg inclusion)
-          internal-ctx0 (fragment/internal-context ctx state-id attempt pkg internal-wf inclusion)]
-      (fragment/pin! ctx state-id attempt pkg inclusion internal-ctx0)
-      (let [budget (derived-fragment-step-budget internal-wf)
-            internal-dir (get-in internal-ctx0 [:run :dir])
-            internal-ctx (try
-                           (run-until-done! internal-wf internal-ctx0 budget)
-                           (catch Throwable t
-                             ;; execute-node! usually already durably recorded
-                             ;; the nested failure via fail-run!/fail-max-rounds!/
-                             ;; orphan-run! before rethrowing, marking nested
-                             ;; state.edn "failed"/"done", so reload it instead
-                             ;; of losing the classified cause. But
-                             ;; choose-transition can also throw from step!
-                             ;; *outside* execute-node!'s try/catch (e.g. no
-                             ;; transition matches the result) — nothing durably
-                             ;; records that, so the reloaded state still reads
-                             ;; "running". Reloading it there would mask the
-                             ;; real cause behind a generic step-budget message,
-                             ;; so rethrow the original throwable whenever the
-                             ;; persisted nested state is absent or was never
-                             ;; brought to a terminal status.
-                             (let [reloaded (when (fs/exists? (fs/path internal-dir "state.edn"))
-                                              (store/load-context internal-dir))]
-                               (if (contains? #{"failed" "done"} (get-in reloaded [:run :status]))
-                                 reloaded
-                                 (throw t)))))]
-        (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))
+    (let [internal-wf (fragment/internal-workflow pkg inclusion)]
+      (if (fragment/durable-internal-run? ctx state-id attempt)
+        ;; A prior process already created (and possibly progressed, or even
+        ;; fully finished) this internal run: continue from its persisted
+        ;; boundary rather than recreating it, so no completed internal effect
+        ;; is ever replayed.
+        (let [reloaded (fragment/resume-internal-context ctx state-id attempt pkg)]
+          ;; Every durable branch continues (or maps the outcome of) a nested
+          ;; run that was pinned against a specific package content hash;
+          ;; verify it before finish! reads pkg/inclusion for the terminal
+          ;; branch too, so a package edited after the nested run reached its
+          ;; own terminal status is never used to map its outcome or
+          ;; materialize its exit outputs.
+          (fragment/verify-pin! state-id pkg inclusion reloaded)
+          (if (fragment/terminal-internal-run? reloaded)
+            (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf reloaded)
+            (do
+              (fragment/resumed! ctx state-id attempt pkg reloaded)
+              (let [budget (derived-fragment-step-budget internal-wf)
+                    internal-ctx (run-internal-until-done! internal-wf reloaded budget)]
+                (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))
+        (let [internal-ctx0 (fragment/internal-context ctx state-id attempt pkg internal-wf inclusion)]
+          (fragment/pin! ctx state-id attempt pkg inclusion internal-ctx0)
+          (let [budget (derived-fragment-step-budget internal-wf)
+                internal-ctx (run-internal-until-done! internal-wf internal-ctx0 budget)]
+            (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))))
 
 (defn execute-node! [wf ctx state-id node]
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
@@ -578,6 +621,15 @@
                         events)]
     (and started? (not terminal?))))
 
+(defn resumable-fragment?
+  "True when the current node is a :fragment whose durable nested run already
+  exists: a prior process's parent-level node.started for this state+attempt
+  is not an orphan in that case, it is a fragment step continuing from its
+  own persisted boundary (run-fragment-node! decides terminal-vs-continuing)."
+  [ctx state-id attempt node]
+  (and (= :fragment (:type node))
+       (fragment/durable-internal-run? ctx state-id attempt)))
+
 (defn orphan-run! [ctx state-id attempt]
   (let [failed (-> ctx
                    (assoc-in [:run :status] "failed")
@@ -738,7 +790,8 @@
           (let [tr (choose-transition node recovered)]
             (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
             (finish-if-terminal wf (advance ctx tr recovered)))
-          (if (orphaned-current-attempt? ctx state-id attempt)
+          (if (and (orphaned-current-attempt? ctx state-id attempt)
+                   (not (resumable-fragment? ctx state-id attempt node)))
             (let [failed (orphan-run! ctx state-id attempt)]
               (throw (ex-info "Orphaned node detected: started without a terminal event"
                               {:state state-id :attempt attempt :tesseraft/already-failed true})))

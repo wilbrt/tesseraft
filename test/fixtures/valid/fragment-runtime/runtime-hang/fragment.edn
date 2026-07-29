@@ -1,0 +1,15 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-hang" :title "Runtime hang fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :assets {:scripts ["./scripts/mark.py" "./scripts/hang.py"]}
+ :fragment {:initial :mark
+            :exit [{:on :pass :produces {}}]
+            :states {:mark {:type :process
+                            :command ["./scripts/mark.py"]
+                            :outputs {:marks {:path "marks.txt" :required true}}
+                            :transitions [{:when {:status "pass"} :next :hang}]}
+                     :hang {:type :process
+                            :command ["./scripts/hang.py"]
+                            :transitions [{:when {:status "pass"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}
