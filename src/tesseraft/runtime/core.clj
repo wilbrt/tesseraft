@@ -364,14 +364,21 @@
           internal-ctx0 (fragment/internal-context ctx state-id attempt pkg internal-wf inclusion)]
       (fragment/pin! ctx state-id attempt pkg inclusion internal-ctx0)
       (let [budget (derived-fragment-step-budget internal-wf)
+            internal-dir (get-in internal-ctx0 [:run :dir])
             internal-ctx (try
                            (run-until-done! internal-wf internal-ctx0 budget)
-                           (catch Throwable _
-                             ;; execute-node! already durably recorded the
-                             ;; nested failure via fail-run!/fail-max-rounds!/
-                             ;; orphan-run! before rethrowing; reload the
-                             ;; persisted nested state instead of losing it.
-                             (store/load-context (get-in internal-ctx0 [:run :dir]))))]
+                           (catch Throwable t
+                             ;; execute-node! usually already durably recorded
+                             ;; the nested failure via fail-run!/fail-max-rounds!/
+                             ;; orphan-run! before rethrowing, so reload the
+                             ;; persisted nested state instead of losing it. But
+                             ;; if nothing was ever persisted (state.edn absent),
+                             ;; loading would mask the real cause behind an
+                             ;; unrelated file-not-found error, so rethrow the
+                             ;; original throwable instead.
+                             (if (fs/exists? (fs/path internal-dir "state.edn"))
+                               (store/load-context internal-dir)
+                               (throw t))))]
         (fragment/finish! ctx state-id attempt node pkg internal-wf internal-ctx)))))
 
 (defn execute-node! [wf ctx state-id node]
