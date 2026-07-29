@@ -245,6 +245,61 @@ def test_exit_output_materializes_at_the_declared_prefix():
     with_tmp(run)
 
 
+def test_two_inclusions_with_distinct_prefixes_both_materialize_independently():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-exit-outputs")
+        workflow = '''{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-exit-distinct-prefixes"}
+ :initial :run-fragment-a
+ :states
+ {:run-fragment-a
+  {:type :fragment
+   :fragment "runtime-exit-outputs"
+   :prefix "included/one"
+   :transitions [{:when {:fragment/outcome "pass"} :next :run-fragment-b}]}
+  :run-fragment-b
+  {:type :fragment
+   :fragment "runtime-exit-outputs"
+   :prefix "included/two"
+   :transitions [{:when {:fragment/outcome "pass"} :next :done}]}
+  :done {:type :terminal :status :success}}}
+'''
+        wf = tmp / "workflow.edn"
+        wf.write_text(workflow)
+
+        run_dir = start(tmp, home, wf)
+        proc = resume(run_dir, home)
+        assert proc.returncode == 0, proc.stderr
+        finished = json.loads(proc.stdout)["run"]
+        assert finished["state"] == "done", finished
+
+        # Both inclusions' exit artifacts stay independently readable at
+        # their own declared prefix: neither one overwrites the other.
+        projected_a = run_dir / "included" / "one" / "artifacts" / "status.json"
+        projected_b = run_dir / "included" / "two" / "artifacts" / "status.json"
+        assert projected_a.exists(), "first inclusion's exit output must be materialized"
+        assert projected_b.exists(), "second inclusion's exit output must be materialized"
+        assert read_json(projected_a) == {"status": "pass"}
+        assert read_json(projected_b) == {"status": "pass"}
+
+        events = read_events(run_dir)
+        finished_a = node_event(events, "fragment.finished", state="run-fragment-a")
+        finished_b = node_event(events, "fragment.finished", state="run-fragment-b")
+        assert finished_a["exit_outputs"] == {"status": "included/one/artifacts/status.json"}, finished_a
+        assert finished_b["exit_outputs"] == {"status": "included/two/artifacts/status.json"}, finished_b
+        failures = [e for e in events if e.get("event") == "node.failed"]
+        assert failures == [], failures
+
+        index = read_json(run_dir / "fragments" / "exit-index.json")
+        assert index == {
+            "included/one/artifacts/status.json": {"state": "run-fragment-a", "fragment": "runtime-exit-outputs"},
+            "included/two/artifacts/status.json": {"state": "run-fragment-b", "fragment": "runtime-exit-outputs"},
+        }, index
+    with_tmp(run)
+
+
 def test_two_inclusions_without_distinct_prefixes_conflict_instead_of_overwriting():
     def run(tmp):
         home = tmp / "home"
@@ -470,6 +525,7 @@ if __name__ == "__main__":
     test_runtime_process_fixture_runs_the_package_script_and_routes_the_outcome()
     test_runtime_mock_agent_fixture_renders_package_template_with_no_credentials()
     test_exit_output_materializes_at_the_declared_prefix()
+    test_two_inclusions_with_distinct_prefixes_both_materialize_independently()
     test_two_inclusions_without_distinct_prefixes_conflict_instead_of_overwriting()
     test_blank_prefix_exit_output_refuses_to_overwrite_a_preexisting_unowned_parent_file()
     test_same_inclusion_state_re_materializing_on_retry_is_not_a_conflict()

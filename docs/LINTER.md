@@ -65,6 +65,7 @@ Fragment package lint:
 - `fragment-missing-interface` — `:interface` is missing or not a map.
 - `fragment-outcome-mismatch` — `:interface :outcomes` is not a non-empty keyword set, an `:exit` references an unknown outcome, or a declared outcome has no `:exit` entry.
 - `fragment-exit-missing-output` — a required `:interface :outputs` entry is not produced on an `:exit` path.
+- `fragment-exit-invalid-produces-path` — an `:exit :produces` value is not a safe relative path.
 - `fragment-asset-missing` — a declared asset does not exist.
 - `fragment-internal-lint-failed` — (workflow-side) the fragment package itself failed lint when included. Within a single `lint-workflow` invocation this is de-duplicated per resolved file path: a fragment imported at N import sites surfaces the internal-proof failure at most once, so the importing workflow never re-proves the fragment's internal subgraph.
 
