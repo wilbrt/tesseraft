@@ -126,18 +126,31 @@
                             (process-descendants root)
                             {:handles [] :enumerated true})
         descendants (:handles descendant-result)
-        handles (vec (concat (reverse descendants) (when root [root])))]
-    (doseq [handle handles]
+        ;; The runtime process can be blocked synchronously inside a process
+        ;; node's own child (e.g. mid p/shell wait): destroying that child
+        ;; first would unblock this same process to keep running and durably
+        ;; record a spurious node result before it is itself torn down.
+        ;; destroyForcibly (SIGKILL) is uncatchable and runs no process code,
+        ;; unlike destroy (SIGTERM) on a JVM, which still has to be scheduled
+        ;; and dispatched through its own shutdown handling before the process
+        ;; actually stops. Kill the root first and confirm it is gone before
+        ;; touching anything it owned, so it can never observe -- or react to
+        ;; -- a descendant's exit.
+        root-stopped? (if (and root (.isAlive root))
+                        (do (.destroyForcibly ^java.lang.ProcessHandle root)
+                            (wait-for-process-exit [root]))
+                        true)]
+    (doseq [handle (reverse descendants)]
       (when (.isAlive ^java.lang.ProcessHandle handle)
         (.destroy ^java.lang.ProcessHandle handle)))
-    (let [stopped? (if (seq handles) (wait-for-process-exit handles) true)
+    (let [descendants-stopped? (if (seq descendants) (wait-for-process-exit descendants) true)
           owned (stop-owned-processes! run-dir)]
       (fs/delete-if-exists path)
       (merge {:pid pid
               :process_found (boolean root)
               :descendants (count descendants)
               :descendants_enumerated (:enumerated descendant-result)
-              :stopped (and stopped? (:owned_processes_stopped owned))}
+              :stopped (and root-stopped? descendants-stopped? (:owned_processes_stopped owned))}
              owned))))
 
 (defn cancel! [run-dir]
