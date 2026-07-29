@@ -6,11 +6,17 @@
     [tesseraft.executors.claude-code :as claude-code]
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
+    [tesseraft.runtime.fragment :as fragment]
     [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]
     [clojure.string :as str]))
+
+;; run-until-done! is defined near the bottom of this file (after step!) but
+;; run-fragment-node! needs to run the nested internal loop to completion as
+;; part of a single parent step, so forward-declare it here.
+(declare run-until-done!)
 
 (defn parse-input [s]
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
@@ -74,13 +80,21 @@
         (str/split (slurp (str path)) #"\u0000")
         (catch Exception _ nil)))))
 
+(defn- owned-by-run-dir? [owner marker]
+  ;; A deterministic node executing inside a fragment marks its process with
+  ;; the *nested* run dir (run-owner-env applies over the fragment's internal
+  ;; ctx), i.e. <owner>/fragments/<state>/<attempt>, not <owner> itself. Match
+  ;; that nesting so the parent run's cleanup/cancellation still reaps it.
+  (or (= owner marker)
+      (str/starts-with? marker (str owner "/fragments/"))))
+
 (defn- owned-process-handles [run-dir]
   (let [owner (normalized-run-dir run-dir)
         prefix "AGENT_RUN_DIR="
         owned? (fn [handle]
                  (some (fn [entry]
                          (when (str/starts-with? entry prefix)
-                           (= owner (normalized-run-dir (subs entry (count prefix))))))
+                           (owned-by-run-dir? owner (normalized-run-dir (subs entry (count prefix))))))
                        (linux-process-environment (.pid ^java.lang.ProcessHandle handle))))
         current-pid (.pid (java.lang.ProcessHandle/current))]
     (if-not (fs/exists? "/proc")
@@ -341,6 +355,48 @@
     (store/save-context! failed)
     failed))
 
+(defn derived-fragment-step-budget
+  "A defensive step budget for the nested internal loop, generous relative to
+  the fragment's own effective max-rounds so well-formed fragments always
+  finish (via a terminal or their own max-rounds failure) well within it."
+  [internal-wf]
+  (let [max-rounds (get-in internal-wf [:defaults :max-rounds])
+        state-count (max 1 (count (:states internal-wf)))]
+    (max 200 (* 20 state-count (or max-rounds 10)))))
+
+(defn run-fragment-node! [wf ctx state-id node]
+  (let [attempt (get-in ctx [:run :attempt])
+        {:keys [inclusion pkg]} (fragment/resolve-inclusion! wf ctx state-id node)]
+    (fragment/assert-supported-internal-nodes! state-id pkg)
+    (let [internal-wf (fragment/internal-workflow pkg inclusion)
+          internal-ctx0 (fragment/internal-context ctx state-id attempt pkg internal-wf inclusion)]
+      (fragment/pin! ctx state-id attempt pkg inclusion internal-ctx0)
+      (let [budget (derived-fragment-step-budget internal-wf)
+            internal-dir (get-in internal-ctx0 [:run :dir])
+            internal-ctx (try
+                           (run-until-done! internal-wf internal-ctx0 budget)
+                           (catch Throwable t
+                             ;; execute-node! usually already durably recorded
+                             ;; the nested failure via fail-run!/fail-max-rounds!/
+                             ;; orphan-run! before rethrowing, marking nested
+                             ;; state.edn "failed"/"done", so reload it instead
+                             ;; of losing the classified cause. But
+                             ;; choose-transition can also throw from step!
+                             ;; *outside* execute-node!'s try/catch (e.g. no
+                             ;; transition matches the result) — nothing durably
+                             ;; records that, so the reloaded state still reads
+                             ;; "running". Reloading it there would mask the
+                             ;; real cause behind a generic step-budget message,
+                             ;; so rethrow the original throwable whenever the
+                             ;; persisted nested state is absent or was never
+                             ;; brought to a terminal status.
+                             (let [reloaded (when (fs/exists? (fs/path internal-dir "state.edn"))
+                                              (store/load-context internal-dir))]
+                               (if (contains? #{"failed" "done"} (get-in reloaded [:run :status]))
+                                 reloaded
+                                 (throw t)))))]
+        (fragment/finish! ctx state-id attempt node pkg internal-wf internal-ctx)))))
+
 (defn execute-node! [wf ctx state-id node]
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
   (try
@@ -355,7 +411,8 @@
                    :timer (run-timer-node! wf ctx state-id node)
                    :approval (throw (ex-info "Approval nodes require a control plane" {:state state-id}))
                    :router {:status "ok"}
-                   :terminal {:status "ok" :terminal true})]
+                   :terminal {:status "ok" :terminal true}
+                   :fragment (run-fragment-node! wf ctx state-id node))]
       (when (external-error-result? result)
         (let [result (normalize-external-result ctx state-id result)]
           (fail-run! ctx state-id result)
@@ -394,13 +451,8 @@
                              :result result})
           result)))))
 
-(defn match-transition? [result transition]
-  (let [pred (:when transition)]
-    (or (= true (:else pred))
-        (every? (fn [[k v]] (= v (get result k))) pred))))
-
 (defn choose-transition [node result]
-  (or (some #(when (match-transition? result %) %) (spec/transitions node))
+  (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
       (throw (ex-info "No transition matched result" {:result result}))))
 
 (defn normalize-issue-path [ctx p]
@@ -605,8 +657,8 @@
     (let [result {:status "ok" :ok true
                   :approval_id (:approval_id decision)
                   :decision (:decision decision)}
-          ; match-transition? compares :when predicates against result keys.
-          tr (or (some #(when (match-transition? result %) %) (spec/transitions node))
+          ; spec/match-transition? compares :when predicates against result keys.
+          tr (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
                  (throw (ex-info "No approval transition matched the recorded decision"
                                  {:state state-id :decision (:decision decision)})))
           ctx (store/event! ctx {:event "approval.decided"

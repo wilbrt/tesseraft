@@ -2031,6 +2031,23 @@
                               (edge-from-transition from tr)))
                 :diagnostics (:diagnostics lint-result)}))))))))
 
+(defn- nested-fragment-run-state-file?
+  "True when a state.edn path lives under a `fragments/<state>/<attempt>`
+  segment that tesseraft.runtime.fragment/internal-run-dir inserts beneath a
+  parent run's own dir (root/<workflow-name>/<run-id>/fragments/...). Such a
+  nested run is not a top-level run and must not surface as its own entry in
+  the control plane's run inventory (CLI `run list`, GET /api/runs, Web UI
+  Runs table)."
+  [root p]
+  (let [rel-dirs (butlast (str/split (str (fs/relativize root p)) #"/"))]
+    ;; A top-level run lives at root/<workflow-name>/<run-id>/state.edn, so
+    ;; rel-dirs is exactly [workflow-name run-id]: both segments belong to the
+    ;; run's own identity and must never be treated as a nesting marker (a run
+    ;; whose id happens to be "fragments" is still a top-level run). Only a
+    ;; "fragments" segment at or beyond the third position indicates the
+    ;; nested-run shape internal-run-dir actually produces.
+    (boolean (some #{"fragments"} (drop 2 rel-dirs)))))
+
 (defn run-state-files
   ([options] (run-state-files options nil))
   ([options project-id]
@@ -2044,6 +2061,7 @@
            (->> (for [p (file-seq (fs/file root))
                       :when (and (.isFile p) (= "state.edn" (.getName p)))]
                   (fs/path p))
+                (remove #(nested-fragment-run-state-file? root %))
                 (sort-by str)
                 vec)))))))
 

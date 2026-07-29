@@ -1,0 +1,12 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-rounds" :title "Runtime rounds fixture" :version "0.1.0"}
+ :interface {:parameters {:max-rounds {:type :integer :default 2}}
+             :outcomes #{:looped}}
+ :fragment {:initial :loop
+            :defaults {:max-rounds 2}
+            :exit [{:on :looped :produces {}}]
+            :states {:loop {:type :router
+                            :transitions [{:when {:status "never"} :next :done}
+                                          {:when {:else true} :effects [:inc-round] :next :loop}]}
+                     :done {:type :terminal :status :success :outcome :looped}}}}

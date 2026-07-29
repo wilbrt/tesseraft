@@ -364,6 +364,16 @@ python3 test/fragment_inclusion_contract.test.py
 printf '\nChecking transactional fragment import FI5...\n'
 python3 test/fragment_import_transaction.test.py
 
+printf '\nChecking deterministic fragment runtime execution FI6...\n'
+python3 test/fragment_runtime_execution.test.py
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-pass/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-fail/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-rounds/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-timer/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-unrouted/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-bound/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-internal-failure/fragment.edn --strict
+
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json

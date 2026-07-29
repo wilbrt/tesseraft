@@ -1,0 +1,10 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-fail" :title "Runtime fail fixture" :version "0.1.0"}
+ :interface {:outcomes #{:fail}}
+ :fragment {:initial :start
+            :exit [{:on :fail :produces {}}]
+            :states {:start {:type :deterministic
+                              :handler :noop/succeed
+                              :next :done}
+                     :done {:type :terminal :status :failure :outcome :fail}}}}

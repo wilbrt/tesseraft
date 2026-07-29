@@ -1,0 +1,13 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-bound" :title "Runtime bound input/parameter fixture" :version "0.1.0"}
+ :interface {:inputs {:message {:type :string :required true}}
+             :parameters {:max-rounds {:type :integer :default 2}}
+             :outcomes #{:looped}}
+ :fragment {:initial :loop
+            :defaults {:max-rounds 2}
+            :exit [{:on :looped :produces {}}]
+            :states {:loop {:type :router
+                            :transitions [{:when {:status "never"} :next :done}
+                                          {:when {:else true} :effects [:inc-round] :next :loop}]}
+                     :done {:type :terminal :status :success :outcome :looped}}}}
