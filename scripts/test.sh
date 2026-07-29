@@ -1000,6 +1000,16 @@ bb -e '(require (quote [tesseraft.control-plane.core :as cp]))
          (assert (true? (cp/issues-artifact-has-issues? run-dir "issues-real.json")) "non-empty issues.json should be a failure")
          (spit (str run-dir "/issues-map.json") "{\"issues\":[{\"title\":\"x\"}]}")
          (assert (true? (cp/issues-artifact-has-issues? run-dir "issues-map.json")) "non-empty issues map should be a failure")
+         (.mkdirs (java.io.File. (str run-dir "/fragments/run-fragment/1")))
+         (spit (str run-dir "/fragments/run-fragment/1/issues.json") "[{\"title\":\"x\"}]")
+         (let [nested-artifact {:exists true :path "fragments/run-fragment/1/issues.json"}
+               top-artifact {:exists true :path "issues-real.json"}
+               summary {:status "done"}
+               attempts []]
+           (assert (empty? (cp/failures-from-run summary attempts [nested-artifact] run-dir))
+                   "non-empty nested fragment issues.json should not surface as a parent-run failure")
+           (assert (= 1 (count (cp/failures-from-run summary attempts [top-artifact] run-dir)))
+                   "non-empty top-level issues.json should still surface as a parent-run failure"))
          (let [old "2000-01-01T00:00:00Z"
                recent (str (java.time.Instant/now))
                summary {:status "running" :state :work :updated_at old}

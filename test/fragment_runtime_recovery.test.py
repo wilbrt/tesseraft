@@ -160,6 +160,20 @@ def wait_for(predicate, timeout=15.0, interval=0.05):
     return False
 
 
+def wait_for_pid(path, timeout=15.0, interval=0.05):
+    """Poll `path` for parseable pid content rather than mere existence: a
+    pidfile writer that O_TRUNCs before writing leaves the file existing but
+    empty for a short window, which would otherwise raise ValueError instead
+    of timing out cleanly."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            return int(path.read_text())
+        except (FileNotFoundError, ValueError):
+            time.sleep(interval)
+    return None
+
+
 def node_event(events, event, state="run-fragment"):
     matches = [e for e in events if e.get("event") == event and e.get("state") == state]
     assert matches, (event, state, events)
@@ -181,7 +195,7 @@ def pid_alive(pid):
     return True
 
 
-def write_pi_stub(path, calls_file):
+def write_pi_stub(path):
     path.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -194,7 +208,7 @@ def write_pi_stub(path, calls_file):
     path.chmod(0o755)
 
 
-def write_fast_pi_stub(path, calls_file):
+def write_fast_pi_stub(path):
     """Unlike write_pi_stub, exits immediately after writing its status
     artifact so a resume driving it runs to full completion in one call, with
     nothing to interrupt."""
@@ -222,7 +236,7 @@ def seed_completed_fragment_run(tmp, home):
 
     pi_stub = seed_root / "pi-stub.sh"
     calls_file = seed_root / "pi-calls.log"
-    write_fast_pi_stub(pi_stub, calls_file)
+    write_fast_pi_stub(pi_stub)
 
     resumed = resume(run_dir, home, extra_env={"PI_BIN": str(pi_stub), "PI_STUB_CALLS": str(calls_file)})
     assert resumed.returncode == 0, resumed.stderr
@@ -260,7 +274,7 @@ def test_forced_restart_recovers_the_interrupted_agent_node_without_reinvoking_i
 
         pi_stub = tmp / "pi-stub.sh"
         calls_file = tmp / "pi-calls.log"
-        write_pi_stub(pi_stub, calls_file)
+        write_pi_stub(pi_stub)
         extra_env = {"PI_BIN": str(pi_stub), "PI_STUB_CALLS": str(calls_file)}
 
         nested_dir = nested_run_dir(run_dir)
@@ -326,8 +340,8 @@ def test_forced_restart_during_a_process_node_orphans_the_internal_run():
         proc = resume_bg(run_dir, home)
         hang_pid = None
         try:
-            assert wait_for(lambda: hang_pid_path.exists()), "hang script never wrote its pidfile"
-            hang_pid = int(hang_pid_path.read_text())
+            hang_pid = wait_for_pid(hang_pid_path)
+            assert hang_pid is not None, "hang script never wrote its pidfile"
 
             pid = runtime_process_pid(run_dir)
             os.kill(pid, signal.SIGKILL)
@@ -373,8 +387,8 @@ def test_cancel_while_a_process_node_sleeps_cancels_both_runs_and_mirrors_it():
         proc = resume_bg(run_dir, home)
         hang_pid = None
         try:
-            assert wait_for(lambda: hang_pid_path.exists()), "hang script never wrote its pidfile"
-            hang_pid = int(hang_pid_path.read_text())
+            hang_pid = wait_for_pid(hang_pid_path)
+            assert hang_pid is not None, "hang script never wrote its pidfile"
 
             cancelled = tesseraft(["run", "cancel", "--run-dir", str(run_dir), "--format", "json"], home)
             assert cancelled.returncode == 0, cancelled.stderr

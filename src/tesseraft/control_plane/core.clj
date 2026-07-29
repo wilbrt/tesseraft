@@ -2612,6 +2612,7 @@
            {:source "attempt" :node_id (:node_id attempt) :message (or (:error attempt) "Attempt failed")})
          (for [artifact artifacts
                :when (and (:exists artifact) (re-find #"(?i)issues.*\.json$" (:path artifact)))
+               :when (not (str/starts-with? (:path artifact) "fragments/"))
                :when (issues-artifact-has-issues? run-dir (:path artifact))]
            {:source "artifact" :path (:path artifact) :message "Issues artifact present"}))))
 
