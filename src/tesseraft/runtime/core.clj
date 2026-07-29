@@ -80,13 +80,21 @@
         (str/split (slurp (str path)) #"\u0000")
         (catch Exception _ nil)))))
 
+(defn- owned-by-run-dir? [owner marker]
+  ;; A deterministic node executing inside a fragment marks its process with
+  ;; the *nested* run dir (run-owner-env applies over the fragment's internal
+  ;; ctx), i.e. <owner>/fragments/<state>/<attempt>, not <owner> itself. Match
+  ;; that nesting so the parent run's cleanup/cancellation still reaps it.
+  (or (= owner marker)
+      (str/starts-with? marker (str owner "/fragments/"))))
+
 (defn- owned-process-handles [run-dir]
   (let [owner (normalized-run-dir run-dir)
         prefix "AGENT_RUN_DIR="
         owned? (fn [handle]
                  (some (fn [entry]
                          (when (str/starts-with? entry prefix)
-                           (= owner (normalized-run-dir (subs entry (count prefix))))))
+                           (owned-by-run-dir? owner (normalized-run-dir (subs entry (count prefix))))))
                        (linux-process-environment (.pid ^java.lang.ProcessHandle handle))))
         current-pid (.pid (java.lang.ProcessHandle/current))]
     (if-not (fs/exists? "/proc")

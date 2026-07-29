@@ -100,11 +100,13 @@ def nested_run_dir(run_dir: Path, state="run-fragment", attempt=1):
     return run_dir / "fragments" / state / str(attempt)
 
 
-def start(tmp, home, wf):
-    proc = tesseraft(
-        ["run", "start", str(wf), "--workspace-root", str(tmp), "--format", "json"],
-        home,
-    )
+def start(tmp, home, wf, inputs=None, run_id=None):
+    args = ["run", "start", str(wf), "--workspace-root", str(tmp), "--format", "json"]
+    for k, v in (inputs or {}).items():
+        args += ["--input", f"{k}={v}"]
+    if run_id is not None:
+        args += ["--run-id", run_id]
+    proc = tesseraft(args, home)
     assert proc.returncode == 0, proc.stderr
     return Path(json.loads(proc.stdout)["run"]["dir"])
 
@@ -337,6 +339,123 @@ def test_unrouted_internal_result_preserves_original_cause_instead_of_step_budge
     with_tmp(run)
 
 
+def test_bound_input_and_parameter_override_reach_nested_durable_evidence():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-bound")
+        # The package's own :interface declares :message required and
+        # :max-rounds default 2; this parent node binds :message from the
+        # parent's own {{inputs.echo}} and overrides :max-rounds to 4 (not the
+        # package default), so the fragment loop keeps going past round 2.
+        workflow = '''{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-runtime-runtime-bound"}
+ :initial :run-fragment
+ :states
+ {:run-fragment
+  {:type :fragment
+   :fragment "runtime-bound"
+   :inputs {:message "{{inputs.echo}}"}
+   :parameters {:max-rounds 4}
+   :transitions [{:when {:fragment/outcome "looped"} :next :record}]}
+  :record
+  {:type :deterministic
+   :handler :noop/succeed
+   :next :done}
+  :done {:type :terminal :status :success}
+  :declared-failure {:type :terminal :status :failure}}}
+'''
+        wf = tmp / "workflow.edn"
+        wf.write_text(workflow)
+
+        run_dir = start(tmp, home, wf, inputs={"echo": "distinct-bound-value"})
+        proc = resume(run_dir, home)
+        assert proc.returncode != 0, proc.stdout
+
+        nested_dir = nested_run_dir(run_dir)
+        pin = read_json(nested_dir / "pin.json")
+        # Rendered, parent-derived value — not the raw "{{inputs.echo}}"
+        # template text — is what reaches the nested run's durable evidence.
+        assert pin["bindings"]["inputs"]["message"] == "distinct-bound-value", pin
+        assert pin["bindings"]["parameters"]["max-rounds"] == 4, pin
+
+        # The parameter override (4), not the package's own default (2),
+        # governs nested round-exhaustion behavior.
+        nested_events = read_events(nested_dir)
+        exceeded = [e for e in nested_events if e.get("event") == "run.max-rounds-exceeded"]
+        assert len(exceeded) == 1, nested_events
+        assert exceeded[0]["round"] == 5 and exceeded[0]["max_rounds"] == 4, exceeded
+    with_tmp(run)
+
+
+def test_cancel_reaps_a_process_owned_by_a_fragment_internal_run_dir():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-pass")
+        wf = write_workflow(tmp, "runtime-pass", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        # A fragment step is atomic, so this single step both fully executes
+        # the nested run to completion and leaves the *parent* run itself
+        # non-terminal (state :record, status "running") -- the exact window
+        # in which a detached process a nested :deterministic handler started
+        # must still be reachable by the parent's own cancel/cleanup.
+        midpoint = resume(run_dir, home, max_steps=1)
+        assert midpoint.returncode == 0, midpoint.stderr
+        mid_run = json.loads(midpoint.stdout)["run"]
+        assert mid_run["state"] == "record" and mid_run["status"] == "running", mid_run
+
+        nested_dir = nested_run_dir(run_dir)
+        assert nested_dir.is_dir()
+
+        # Stand in for a detached process a fragment-internal :deterministic
+        # handler would have started: run-owner-env marks it with the
+        # *nested* run dir, not the parent's (runtime/core.clj run-fragment-node!
+        # executes handlers over the nested ctx), so this reproduces the exact
+        # marker shape owned-process-handles must match against the parent.
+        env = os.environ.copy()
+        env["AGENT_RUN_DIR"] = str(nested_dir)
+        proc = subprocess.Popen(["sleep", "30"], env=env, start_new_session=True)
+        try:
+            assert proc.poll() is None, "spawned marker process exited early"
+
+            cancelled = tesseraft(["run", "cancel", "--run-dir", str(run_dir), "--format", "json"], home)
+            assert cancelled.returncode == 0, cancelled.stderr
+
+            proc.wait(timeout=5)
+            assert proc.returncode is not None, "cancel must reap a process owned by a nested fragment run dir"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+    with_tmp(run)
+
+
+def test_run_id_named_fragments_is_not_hidden_from_control_plane_inventory():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-pass")
+        wf = write_workflow(tmp, "runtime-pass", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        # A top-level run whose *run id* (not workflow name) is literally
+        # "fragments" must not be mistaken for a nested
+        # fragments/<state>/<attempt> run dir and dropped from the inventory.
+        run_dir = start(tmp, home, wf, run_id="fragments")
+        assert run_dir.name == "fragments", run_dir
+
+        proc = resume(run_dir, home)
+        assert proc.returncode == 0, proc.stderr
+
+        cp = control_plane(["--workspace-root", str(tmp), "runs"], home)
+        assert cp.returncode == 0, cp.stderr
+        runs = json.loads(cp.stdout)["runs"]
+        assert [r["run_id"] for r in runs] == ["fragments"], runs
+
+        resolved = control_plane(["--workspace-root", str(tmp), "run", "fragments"], home)
+        assert resolved.returncode == 0, resolved.stderr
+        assert json.loads(resolved.stdout)["run"]["run_id"] == "fragments", resolved.stdout
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_runtime_pass_fixture_takes_the_parent_success_route()
     test_runtime_fail_fixture_takes_the_declared_failure_route()
@@ -345,4 +464,7 @@ if __name__ == "__main__":
     test_unsupported_internal_node_type_is_rejected_before_any_internal_execution()
     test_fragment_local_max_rounds_fails_durably_without_advancing_parent_round()
     test_unrouted_internal_result_preserves_original_cause_instead_of_step_budget_message()
+    test_bound_input_and_parameter_override_reach_nested_durable_evidence()
+    test_cancel_reaps_a_process_owned_by_a_fragment_internal_run_dir()
+    test_run_id_named_fragments_is_not_hidden_from_control_plane_inventory()
     print("ok")

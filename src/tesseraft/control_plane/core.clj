@@ -2040,7 +2040,13 @@
   Runs table)."
   [root p]
   (let [rel-dirs (butlast (str/split (str (fs/relativize root p)) #"/"))]
-    (boolean (some #{"fragments"} (rest rel-dirs)))))
+    ;; A top-level run lives at root/<workflow-name>/<run-id>/state.edn, so
+    ;; rel-dirs is exactly [workflow-name run-id]: both segments belong to the
+    ;; run's own identity and must never be treated as a nesting marker (a run
+    ;; whose id happens to be "fragments" is still a top-level run). Only a
+    ;; "fragments" segment at or beyond the third position indicates the
+    ;; nested-run shape internal-run-dir actually produces.
+    (boolean (some #{"fragments"} (drop 2 rel-dirs)))))
 
 (defn run-state-files
   ([options] (run-state-files options nil))
