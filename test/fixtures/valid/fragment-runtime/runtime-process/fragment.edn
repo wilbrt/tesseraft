@@ -2,7 +2,7 @@
  :kind :fragment
  :metadata {:name "runtime-process" :title "Runtime local process fixture" :version "0.1.0"}
  :interface {:outcomes #{:pass}}
- :assets {:scripts ["scripts/run.py"]}
+ :assets {:scripts ["./scripts/run.py"]}
  :fragment {:initial :run
             :exit [{:on :pass :produces {}}]
             :states {:run {:type :process

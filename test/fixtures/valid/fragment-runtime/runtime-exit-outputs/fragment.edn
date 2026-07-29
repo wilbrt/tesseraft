@@ -3,7 +3,7 @@
  :metadata {:name "runtime-exit-outputs" :title "Runtime exit-output projection fixture" :version "0.1.0"}
  :interface {:outputs {:status {:required true}}
              :outcomes #{:pass}}
- :assets {:scripts ["scripts/write.py"]}
+ :assets {:scripts ["./scripts/write.py"]}
  :fragment {:initial :write
             :exit [{:on :pass :produces {:status "artifacts/status.json"}}]
             :states {:write {:type :process
