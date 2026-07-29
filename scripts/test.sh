@@ -373,6 +373,15 @@ python3 test/fragment_runtime_execution.test.py
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-unrouted/fragment.edn --strict
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-bound/fragment.edn --strict
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-internal-failure/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-approval/fragment.edn --strict
+
+printf '\nChecking fragment agent/process/timer runtime execution and exit-artifact projection FI7...\n'
+python3 test/fragment_runtime_nodes.test.py
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-process/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-mock-agent/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-exit-outputs/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-exit-outputs-missing/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-retry-loop/fragment.edn --strict
 
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
