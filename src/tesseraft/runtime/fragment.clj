@@ -180,9 +180,14 @@
 (defn- exit-index-path [parent-ctx]
   (str (fs/path (get-in parent-ctx [:run :dir]) "fragments" "exit-index.json")))
 
-(defn- read-exit-index [parent-ctx]
+(defn- read-exit-index
+  "Read the exit-index with string keys throughout (both the destination-path
+  keys and the owner-map keys): store/read-json keywordizes keys, which would
+  turn a `/`-bearing destination path into a namespaced keyword and never
+  match the plain string dest-rel this namespace looks it up by."
+  [parent-ctx]
   (let [p (exit-index-path parent-ctx)]
-    (if (fs/exists? p) (store/read-json p) {})))
+    (if (fs/exists? p) (json/parse-string (slurp (str p)) false) {})))
 
 (defn materialize-exit-outputs!
   "Copy every path the reached exit entry :produces from the nested run dir
@@ -217,15 +222,15 @@
           index (read-exit-index parent-ctx)]
       (doseq [{:keys [dest-rel output]} existing
               :let [owner (get index dest-rel)]]
-        (when (and owner (not= (:state owner) state-name))
+        (when (and owner (not= (get owner "state") state-name))
           (throw (ex-info "Fragment exit output path is already owned by another inclusion"
                           {:error-type "fragment_exit_output_conflict"
                            :state state-name
                            :fragment fragment-name
                            :output (name output)
                            :path dest-rel
-                           :owner_state (:state owner)
-                           :owner_fragment (:fragment owner)}))))
+                           :owner_state (get owner "state")
+                           :owner_fragment (get owner "fragment")}))))
       (doseq [{:keys [src dest-rel]} existing
               :let [dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
         (fs/create-dirs (fs/parent dest))
