@@ -75,7 +75,7 @@ FI4-DIP1 opened PR #90 in round 3 with six sessions and $6.27 recorded cost. Two
 
 FI5-DIP1 preserved three implementation commits but became terminal when an interrupted process-validation attempt was correctly classified as orphaned. An operator-authorized executor handoff moved subsequent Design-in-Practice agent nodes to Claude Code. FI5-DIP2 continued the branch and opened PR #91 in round 4 with ten Claude sessions, three feedback cycles, and one supervision handoff. Claude review artifact shape exposed a correction-handoff gap; prompts now require canonical issue arrays and feedback defensively normalizes observed wrappers/aliases.
 
-FI6-DIP1 was interrupted during implementation and preserved as an orphaned run plus WIP branch commit. FI6-DIP2 reused the branch with the exact original ticket prompt and no mid-run operator prompt injection, opening PR #92 in round 5 with ten Claude sessions, four workflow-owned feedback cycles, and no supervision. These observations are versioned in the package's prior-run lessons.
+FI6-DIP1 was interrupted during implementation and preserved as an orphaned run plus WIP branch commit. FI6-DIP2 reused the branch with the exact original ticket prompt and no mid-run operator prompt injection, opening PR #92 in round 5 with ten Claude sessions, four workflow-owned feedback cycles, and no supervision. FI7-DIP1 opened PR #93 in round 5 with nine Claude sessions, four workflow-owned feedback cycles, and no supervision or operator prompt injection. These observations are versioned in the package's prior-run lessons.
 
 ## Safe checks
 

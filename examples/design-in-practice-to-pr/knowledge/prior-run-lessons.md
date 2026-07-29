@@ -60,3 +60,7 @@ Claude review twice wrapped issues in an object and invented field aliases, whil
 FI6-DIP1 was interrupted during its first Sonnet implementation and correctly terminated as orphaned with no status artifact. Preserve partial agent-authored work as code evidence, not a fabricated node result. FI6-DIP2 reused that branch with the exact original ticket prompt and no mid-run operator prompt injection.
 
 FI6-DIP2 opened PR #92 in round 5 with 10 Claude sessions, four workflow-owned feedback cycles, and zero supervision handoffs. Focused runtime checks and repository validation passed, and Opus whole-diff review converged without operator-authored correction context. This is clean evidence for the Claude workflow; the executor still exposes session counts but not token/cost totals.
+
+## FI7-DIP1 reviewed observations
+
+FI7-DIP1 opened PR #93 in round 5 with 9 Claude sessions, four workflow-owned feedback cycles, and zero supervision handoffs. The run progressed from focused validation failures through semantic review corrections using only authored feedback transitions; no operator prompt was injected. Claude did not report a usage limit.
