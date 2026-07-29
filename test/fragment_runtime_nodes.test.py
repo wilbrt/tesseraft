@@ -43,6 +43,17 @@ def tesseraft(args, home):
     )
 
 
+def bb_eval(expr):
+    return subprocess.run(
+        ["bb", "-e", expr],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
 def stage_fragment(tmp, name):
     """Copy the whole checked-in fixture directory (fragment.edn plus any
     package-relative assets: scripts, prompts) so package-relative resolution
@@ -284,6 +295,117 @@ def test_two_inclusions_without_distinct_prefixes_conflict_instead_of_overwritin
     with_tmp(run)
 
 
+def test_blank_prefix_exit_output_refuses_to_overwrite_a_preexisting_unowned_parent_file():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-exit-outputs")
+        wf = write_workflow(tmp, "runtime-exit-outputs", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        # A parent-owned artifact already occupies the fragment's unprefixed
+        # exit-output destination before the inclusion ever runs -- no entry
+        # for it exists yet in fragments/exit-index.json.
+        preexisting = run_dir / "artifacts" / "status.json"
+        preexisting.parent.mkdir(parents=True, exist_ok=True)
+        preexisting.write_text(json.dumps({"status": "parent-owned"}))
+
+        proc = resume(run_dir, home)
+        assert proc.returncode != 0, proc.stdout
+
+        assert read_json(preexisting) == {"status": "parent-owned"}, "pre-existing parent artifact must be untouched"
+
+        events = read_events(run_dir)
+        failed = node_event(events, "node.failed")
+        result = failed["result"]
+        assert result.get("error_type") == "fragment_exit_output_conflict", result
+        details = result.get("details") or {}
+        assert details.get("owner_state") is None, result
+        assert details.get("owner_fragment") is None, result
+
+        assert not (run_dir / "fragments" / "exit-index.json").exists()
+    with_tmp(run)
+
+
+def test_same_inclusion_state_re_materializing_on_retry_is_not_a_conflict():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-exit-outputs")
+        workflow = '''{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "fragment-exit-retry-same-state"}
+ :initial :run-fragment
+ :states
+ {:run-fragment
+  {:type :fragment
+   :fragment "runtime-exit-outputs"
+   :transitions [{:when {:fragment/outcome "pass"} :next :run-fragment}]}
+  :done {:type :terminal :status :success}}}
+'''
+        wf = tmp / "workflow.edn"
+        wf.write_text(workflow)
+
+        run_dir = start(tmp, home, wf)
+        # A parent loop back into the same fragment inclusion state: the
+        # fragment always routes "pass" to itself, so two steps re-enter
+        # :run-fragment a second time as its own retry, not a new inclusion.
+        proc = resume(run_dir, home, max_steps=2)
+        assert proc.returncode == 0, proc.stderr
+        running = json.loads(proc.stdout)["run"]
+        assert running["status"] == "running", running
+
+        projected = run_dir / "artifacts" / "status.json"
+        assert read_json(projected) == {"status": "pass"}
+
+        events = read_events(run_dir)
+        finishes = [e for e in events if e.get("event") == "fragment.finished" and e.get("state") == "run-fragment"]
+        assert len(finishes) == 2, events
+        failures = [e for e in events if e.get("event") == "node.failed" and e.get("state") == "run-fragment"]
+        assert failures == [], failures
+
+        # Ownership stays with the one inclusion state across both attempts;
+        # inverting the same-state exemption would have raised
+        # fragment_exit_output_conflict on the second attempt instead.
+        index = read_json(run_dir / "fragments" / "exit-index.json")
+        assert index == {"artifacts/status.json": {"state": "run-fragment", "fragment": "runtime-exit-outputs"}}, index
+
+        nested_2 = nested_run_dir(run_dir, state="run-fragment", attempt=2)
+        assert read_json(nested_2 / "artifacts" / "status.json") == {"status": "pass"}
+    with_tmp(run)
+
+
+def test_materialize_exit_outputs_rejects_an_unsafe_produces_path_before_any_copy():
+    def run(tmp):
+        parent_dir = tmp / "parent"
+        parent_dir.mkdir()
+        nested_dir = tmp / "nested"
+        nested_dir.mkdir()
+        # Calls the runtime function directly (bypassing lint entirely) to
+        # prove the durable runtime refusal holds even for a package that
+        # predates the fragment-exit-invalid-produces-path lint rule.
+        expr = (
+            '(require (quote [tesseraft.runtime.fragment :as fragment]))\n'
+            '(let [pkg {:metadata {:name "exit-unsafe-produces-fixture"}\n'
+            '           :interface {:outputs {}}\n'
+            '           :fragment {:exit [{:on :pass :produces {:status "../escape.json"}}]}}]\n'
+            '  (try\n'
+            '    (fragment/materialize-exit-outputs!\n'
+            '      {:run {:dir "' + str(parent_dir) + '"}}\n'
+            '      :run-fragment\n'
+            '      pkg\n'
+            '      {:prefix nil}\n'
+            '      "' + str(nested_dir) + '"\n'
+            '      "pass")\n'
+            '    (println "no-error")\n'
+            '    (catch clojure.lang.ExceptionInfo e\n'
+            '      (println (:error-type (ex-data e))))))\n'
+        )
+        proc = bb_eval(expr)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "fragment_exit_output_invalid_path", (proc.stdout, proc.stderr)
+        assert list(parent_dir.iterdir()) == [], "nothing may be copied when a produces path is unsafe"
+    with_tmp(run)
+
+
 def test_missing_required_exit_output_fails_durably_without_routing_the_parent():
     def run(tmp):
         home = tmp / "home"
@@ -349,6 +471,9 @@ if __name__ == "__main__":
     test_runtime_mock_agent_fixture_renders_package_template_with_no_credentials()
     test_exit_output_materializes_at_the_declared_prefix()
     test_two_inclusions_without_distinct_prefixes_conflict_instead_of_overwriting()
+    test_blank_prefix_exit_output_refuses_to_overwrite_a_preexisting_unowned_parent_file()
+    test_same_inclusion_state_re_materializing_on_retry_is_not_a_conflict()
+    test_materialize_exit_outputs_rejects_an_unsafe_produces_path_before_any_copy()
     test_missing_required_exit_output_fails_durably_without_routing_the_parent()
     test_bounded_retry_loop_terminates_at_its_own_max_rounds_without_moving_the_parent_round()
     print("ok")

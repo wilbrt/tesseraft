@@ -464,6 +464,7 @@ check_invalid_fragment fragment-unreachable-outcome fragment-unreachable-outcome
 check_invalid_fragment fragment-nested-fragment nested-fragment '["fragment","states","run-tests","type"]'
 check_invalid_fragment fragment-unreachable-nested-fragment nested-fragment '["fragment","states","unreachable-child","type"]'
 check_invalid_fragment fragment-unsafe-asset invalid-asset-path
+check_invalid_fragment fragment-exit-unsafe-produces fragment-exit-invalid-produces-path
 check_invalid_fragment fragment-missing-required-input fragment-missing-interface
 # P1.4 internal-subgraph proof coverage: the fragment's internal subgraph is
 # proven once by lint-fragment-package. These fixtures exercise the checks

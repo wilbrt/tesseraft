@@ -193,10 +193,15 @@
   "Copy every path the reached exit entry :produces from the nested run dir
   into the parent run dir at the inclusion's declared :prefix (a blank prefix
   projects onto the identical relative path, matching lint's
-  prefix-resource-path so the two never disagree). A key required by
+  prefix-resource-path so the two never disagree). A :produces value that
+  fails spec/safe-relative-path? raises fragment_exit_output_invalid_path
+  before anything is read or copied, so a package predating the matching
+  fragment-interface-checks lint rule still cannot read from above the
+  nested run dir or write above the parent run dir. A key required by
   :interface :outputs whose file the nested run never wrote raises
   fragment_exit_output_missing before anything is copied. A destination path
-  already owned by a different parent inclusion state raises
+  already owned by a different parent inclusion state, or that already
+  exists in the parent run dir with no recorded owner at all, raises
   fragment_exit_output_conflict before anything is copied; the same state
   re-materializing (a retry) is not a conflict. Returns a map of output name
   to the parent-relative path actually written."
@@ -205,42 +210,62 @@
         required (required-exit-output-keys pkg)
         prefix (:prefix inclusion)
         fragment-name (spec/fragment-package-name pkg)
-        state-name (name state-id)
-        entries (for [[output-key rel-path] produces]
-                  {:output output-key
-                   :src (str (fs/path internal-dir rel-path))
-                   :dest-rel (lint/prefix-resource-path prefix rel-path)
-                   :required? (contains? required output-key)})]
-    (doseq [{:keys [output src required?]} entries
-            :when (and required? (not (fs/exists? src)))]
-      (throw (ex-info "Fragment exit did not produce a required output"
-                      {:error-type "fragment_exit_output_missing"
+        state-name (name state-id)]
+    (doseq [[output-key rel-path] produces
+            :when (not (spec/safe-relative-path? rel-path))]
+      (throw (ex-info "Fragment exit produces an unsafe path"
+                      {:error-type "fragment_exit_output_invalid_path"
                        :state state-name
                        :fragment fragment-name
-                       :output (name output)})))
-    (let [existing (filter #(fs/exists? (:src %)) entries)
-          index (read-exit-index parent-ctx)]
-      (doseq [{:keys [dest-rel output]} existing
-              :let [owner (get index dest-rel)]]
-        (when (and owner (not= (get owner "state") state-name))
-          (throw (ex-info "Fragment exit output path is already owned by another inclusion"
-                          {:error-type "fragment_exit_output_conflict"
-                           :state state-name
-                           :fragment fragment-name
-                           :output (name output)
-                           :path dest-rel
-                           :owner_state (get owner "state")
-                           :owner_fragment (get owner "fragment")}))))
-      (doseq [{:keys [src dest-rel]} existing
-              :let [dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
-        (fs/create-dirs (fs/parent dest))
-        (fs/copy src dest {:replace-existing true}))
-      (when (seq existing)
-        (store/write-json! (exit-index-path parent-ctx)
-                           (reduce (fn [idx {:keys [dest-rel]}]
-                                     (assoc idx dest-rel {:state state-name :fragment fragment-name}))
-                                   index existing)))
-      (into {} (map (fn [{:keys [output dest-rel]}] [(name output) dest-rel])) existing))))
+                       :output (name output-key)
+                       :path rel-path})))
+    (let [entries (for [[output-key rel-path] produces]
+                    {:output output-key
+                     :src (str (fs/path internal-dir rel-path))
+                     :dest-rel (lint/prefix-resource-path prefix rel-path)
+                     :required? (contains? required output-key)})]
+      (doseq [{:keys [output src required?]} entries
+              :when (and required? (not (fs/exists? src)))]
+        (throw (ex-info "Fragment exit did not produce a required output"
+                        {:error-type "fragment_exit_output_missing"
+                         :state state-name
+                         :fragment fragment-name
+                         :output (name output)})))
+      (let [existing (filter #(fs/exists? (:src %)) entries)
+            index (read-exit-index parent-ctx)]
+        (doseq [{:keys [dest-rel output]} existing
+                :let [owner (get index dest-rel)
+                      dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
+          (cond
+            (and owner (not= (get owner "state") state-name))
+            (throw (ex-info "Fragment exit output path is already owned by another inclusion"
+                            {:error-type "fragment_exit_output_conflict"
+                             :state state-name
+                             :fragment fragment-name
+                             :output (name output)
+                             :path dest-rel
+                             :owner_state (get owner "state")
+                             :owner_fragment (get owner "fragment")}))
+
+            (and (nil? owner) (fs/exists? dest))
+            (throw (ex-info "Fragment exit output path already exists outside any recorded fragment ownership"
+                            {:error-type "fragment_exit_output_conflict"
+                             :state state-name
+                             :fragment fragment-name
+                             :output (name output)
+                             :path dest-rel
+                             :owner_state nil
+                             :owner_fragment nil}))))
+        (doseq [{:keys [src dest-rel]} existing
+                :let [dest (str (fs/path (get-in parent-ctx [:run :dir]) dest-rel))]]
+          (fs/create-dirs (fs/parent dest))
+          (fs/copy src dest {:replace-existing true}))
+        (when (seq existing)
+          (store/write-json! (exit-index-path parent-ctx)
+                             (reduce (fn [idx {:keys [dest-rel]}]
+                                       (assoc idx dest-rel {:state state-name :fragment fragment-name}))
+                                     index existing)))
+        (into {} (map (fn [{:keys [output dest-rel]}] [(name output) dest-rel])) existing)))))
 
 (defn finish!
   "Map the nested run's outcome onto the parent :fragment/outcome result, or
@@ -266,9 +291,11 @@
                     :internal_rounds rounds
                     :internal_dir internal-dir}]
         ;; Routability is decided by the exact same predicate
-        ;; (spec/match-transition?) over the exact result finish! is about to
-        ;; return, so this can never diverge from the transition
-        ;; choose-transition later selects for this same result.
+        ;; (spec/match-transition?) over a result the returned one only
+        ;; extends (:exit_outputs is assoc'd on below, after this check);
+        ;; match-transition? reads only keys named by a transition's :when,
+        ;; so adding a key is monotone and can neither un-match nor promote
+        ;; the transition choose-transition later selects for this result.
         (when (or (nil? outcome)
                   (not (some #(spec/match-transition? result %) (spec/transitions node))))
           (throw (ex-info "Fragment outcome is not routed by any parent transition"
