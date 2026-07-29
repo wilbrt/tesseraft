@@ -370,6 +370,7 @@ python3 test/fragment_runtime_execution.test.py
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-fail/fragment.edn --strict
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-rounds/fragment.edn --strict
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-timer/fragment.edn --strict
+./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-unrouted/fragment.edn --strict
 
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn

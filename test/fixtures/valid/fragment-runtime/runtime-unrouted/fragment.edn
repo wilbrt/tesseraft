@@ -1,0 +1,10 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-unrouted" :title "Runtime unrouted internal fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :fragment {:initial :start
+            :exit [{:on :pass :produces {}}]
+            :states {:start {:type :deterministic
+                              :handler :noop/succeed
+                              :transitions [{:when {:status "unreachable"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}

@@ -6,7 +6,7 @@ Version: `tesseraft.fragment/v1`
 
 Self-contained fragments are portable **multi-node subgraph** packages with a declared boundary contract. A fragment owns its internal graph and assets; an importing workflow owns the inclusion state id, bindings, outgoing transitions, and eventual path namespace.
 
-> **Current safety boundary:** fragment packages can be read, linted, discovered, and imported as complete lint-valid boundary inclusions. A workflow containing `{:type :fragment}` runs when the fragment's reachable internal states are limited to `:deterministic`, `:router`, and `:terminal`: the runner pins the resolved package, executes the internal subgraph in an isolated nested context, and maps the reached terminal outcome onto the parent `:fragment/outcome` transition. A fragment whose reachable internal graph reaches an `:agent`, `:process`, `:timer`, `:approval`, or nested `:fragment` node fails durably and cleanly with `fragment_unsupported_node` before any internal state runs — lint accepts these node types structurally, but the runtime does not execute them yet. Do not use those node kinds inside a fragment in production workflows yet.
+> **Current safety boundary:** fragment packages can be read, linted, discovered, and imported as complete lint-valid boundary inclusions. A workflow containing `{:type :fragment}` runs when the fragment's reachable internal states are limited to `:deterministic`, `:router`, and `:terminal`: the runner pins the resolved package, executes the internal subgraph in an isolated nested context, and maps the reached terminal outcome onto the parent `:fragment/outcome` transition. A fragment whose reachable internal graph reaches an `:agent`, `:process`, `:timer`, or `:approval` node fails durably and cleanly with `fragment_unsupported_node` before any internal state runs — lint accepts these node types structurally, but the runtime does not execute them yet. A nested `:fragment` state is rejected earlier and separately: package lint treats any `:fragment` state as a structural error, so an inclusion whose package contains one fails durably with `fragment_unresolved` at resolution, before the unsupported-node scan ever runs. Do not use those node kinds inside a fragment in production workflows yet.
 
 This document distinguishes the implemented P1.4 surface from the target executable contract. The ordered implementation prompts are in [FRAGMENT_IMPLEMENTATION_PROMPTS.md](FRAGMENT_IMPLEMENTATION_PROMPTS.md).
 
@@ -29,7 +29,8 @@ This document distinguishes the implemented P1.4 surface from the target executa
 | Parameter, version, and prefix semantics | Implemented for static workflow lint; version/inputs/parameters are re-resolved and bound into the nested run at execution |
 | Boundary resource projection into workflow lint | Implemented for static workflow lint; no exposed-artifact copying at runtime yet |
 | Runtime fragment execution | Implemented for reachable internal graphs limited to `:deterministic`/`:router`/`:terminal`; pin, isolated nested context, fragment-local rounds, terminal-outcome mapping, durable nested state/events |
-| Runtime execution of agent/process/timer/approval/nested-fragment internal nodes | Not implemented; rejected durably as `fragment_unsupported_node` before any internal execution |
+| Runtime execution of agent/process/timer/approval internal nodes | Not implemented; rejected durably as `fragment_unsupported_node` before any internal execution |
+| Runtime execution of nested `:fragment` internal nodes | Not implemented; package lint rejects any nested `:fragment` state structurally, so the inclusion fails durably as `fragment_unresolved` at resolution |
 | Public fragment control-plane API / Studio catalog | Not implemented |
 | Fragment gallery | Deferred (roadmap P1.5) |
 | Fragment export/extraction | Deferred (roadmap P4.3) |
@@ -241,8 +242,8 @@ Import is not runtime composition.
 
 Stepping a `{:type :fragment}` node now:
 
-1. re-resolves and re-lints the inclusion against the live package on disk (the pin check happens per execution, not once at parent lint time), failing durably with `fragment_unresolved` if the package is missing or no longer valid;
-2. rejects a reachable internal node type this runtime cannot execute (`:agent`, `:process`, `:timer`, `:approval`, nested `:fragment`) with `fragment_unsupported_node`, before any internal state runs;
+1. re-resolves and re-lints the inclusion against the live package on disk (the pin check happens per execution, not once at parent lint time), failing durably with `fragment_unresolved` if the package is missing or no longer valid — package lint treats any nested `:fragment` state as a structural error, so a package containing one is rejected here;
+2. rejects a reachable internal node type this runtime cannot execute (`:agent`, `:process`, `:timer`, `:approval`) with `fragment_unsupported_node`, before any internal state runs;
 3. renders bound inputs/effective parameters against the parent context and pins package identity, scope, version, and content hash into a durable nested `pin.json`, alongside a parent `fragment.started` event;
 4. runs the internal `:deterministic`/`:router`/`:terminal` subgraph to completion in an isolated nested run directory (`fragments/<state>/<attempt>` under the parent run) via the same handler/transition machinery as top-level workflows, honoring the package's own (or an overriding effective parameter's) `:max-rounds`;
 5. maps the reached terminal's declared outcome onto the parent's `:fragment/outcome` transition, or fails durably and classifiably (`fragment_max_rounds`, `fragment_internal_failure`, `fragment_outcome_unrouted`) if the nested run does not reach a routed terminal;
@@ -252,7 +253,7 @@ A fragment node is atomic within FI6: the whole nested run executes inside a sin
 
 Not yet implemented:
 
-- executing `:agent`, `:process`, `:timer`, or `:approval` internal nodes, or nested fragments;
+- executing `:agent`, `:process`, `:timer`, or `:approval` internal nodes (rejected as `fragment_unsupported_node`), or nested fragments (rejected earlier, as `fragment_unresolved`, by package lint);
 - namespaced prompt/schema/command asset resolution and mock executor behavior inside a fragment;
 - exposed exit-output artifact projection/copying to the parent (`:prefix` runtime namespacing);
 - nested pause/resume, approvals, cancellation, and orphan recovery (FI8);
@@ -271,17 +272,18 @@ examples/fragments/test-fix-loop/
 
 It proves package lint and import scaffolding. It does **not** prove runtime behavior; its deterministic `lint` and `test` nodes use `:noop/succeed`, and the package is never executed as a fragment.
 
-Runtime behavior is proved by four fixtures under `test/fixtures/valid/fragment-runtime/`:
+Runtime behavior is proved by five fixtures under `test/fixtures/valid/fragment-runtime/`:
 
 ```text
 test/fixtures/valid/fragment-runtime/
-  runtime-pass/fragment.edn    ; single deterministic state, terminal outcome :pass
-  runtime-fail/fragment.edn    ; single deterministic state, terminal outcome :fail
-  runtime-rounds/fragment.edn  ; router self-loop that exhausts its own :max-rounds
-  runtime-timer/fragment.edn   ; a :timer internal state (lint-valid, runtime-unsupported)
+  runtime-pass/fragment.edn      ; single deterministic state, terminal outcome :pass
+  runtime-fail/fragment.edn      ; single deterministic state, terminal outcome :fail
+  runtime-rounds/fragment.edn    ; router self-loop that exhausts its own :max-rounds
+  runtime-timer/fragment.edn     ; a :timer internal state (lint-valid, runtime-unsupported)
+  runtime-unrouted/fragment.edn  ; a deterministic state whose :transitions never match its handler's result
 ```
 
-`test/fragment_runtime_execution.test.py` stages each fixture into a temp project's `.tesseraft/fragments/<name>/`, wraps it in a small parent workflow, and drives `./bin/tesseraft run start|resume|inspect` as separate processes. It asserts: the parent routes on the declared pass/fail outcome; a fragment step is atomic (`resume --max-steps 1` completes the whole nested run, inspectable via a fresh `inspect` call and via raw `state.edn`/`events.jsonl`/`pin.json` reads) while the parent keeps stepping afterward; a package deleted after `start` fails durably with `fragment_unresolved` and creates no nested run directory; the timer fixture fails durably with `fragment_unsupported_node` before any internal `node.started`; and the rounds fixture fails durably with `fragment_max_rounds` without advancing the parent's own round. `scripts/test.sh` also strict-lints all four fixtures.
+`test/fragment_runtime_execution.test.py` stages each fixture into a temp project's `.tesseraft/fragments/<name>/`, wraps it in a small parent workflow, and drives `./bin/tesseraft run start|resume|inspect` as separate processes. It asserts: the parent routes on the declared pass/fail outcome; a fragment step is atomic (`resume --max-steps 1` completes the whole nested run, inspectable via a fresh `inspect` call and via raw `state.edn`/`events.jsonl`/`pin.json` reads) while the parent keeps stepping afterward; a package deleted after `start` fails durably with `fragment_unresolved` and creates no nested run directory; the timer fixture fails durably with `fragment_unsupported_node` before any internal `node.started`; the rounds fixture fails durably with `fragment_max_rounds` without advancing the parent's own round; and the unrouted fixture — whose internal node finishes but matches no transition, a failure raised by `choose-transition` outside `execute-node!`'s own try/catch — propagates its original cause (`"No transition matched result"`) into the parent's `node.failed` result rather than being reported as fragment step-budget exhaustion, while the nested run itself is left durably `"running"` with no internal `node.failed`. `scripts/test.sh` also strict-lints all five fixtures.
 
 Focused tests in `scripts/test.sh` cover valid lint, strict lint, malformed interfaces/exits/assets, internal graph checks, inclusion input/outcome diagnostics, and authoring import. The import assertion checks that a boundary node was written, not that the resulting workflow is complete or runnable.
 

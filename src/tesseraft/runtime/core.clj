@@ -370,15 +370,23 @@
                            (catch Throwable t
                              ;; execute-node! usually already durably recorded
                              ;; the nested failure via fail-run!/fail-max-rounds!/
-                             ;; orphan-run! before rethrowing, so reload the
-                             ;; persisted nested state instead of losing it. But
-                             ;; if nothing was ever persisted (state.edn absent),
-                             ;; loading would mask the real cause behind an
-                             ;; unrelated file-not-found error, so rethrow the
-                             ;; original throwable instead.
-                             (if (fs/exists? (fs/path internal-dir "state.edn"))
-                               (store/load-context internal-dir)
-                               (throw t))))]
+                             ;; orphan-run! before rethrowing, marking nested
+                             ;; state.edn "failed"/"done", so reload it instead
+                             ;; of losing the classified cause. But
+                             ;; choose-transition can also throw from step!
+                             ;; *outside* execute-node!'s try/catch (e.g. no
+                             ;; transition matches the result) — nothing durably
+                             ;; records that, so the reloaded state still reads
+                             ;; "running". Reloading it there would mask the
+                             ;; real cause behind a generic step-budget message,
+                             ;; so rethrow the original throwable whenever the
+                             ;; persisted nested state is absent or was never
+                             ;; brought to a terminal status.
+                             (let [reloaded (when (fs/exists? (fs/path internal-dir "state.edn"))
+                                              (store/load-context internal-dir))]
+                               (if (contains? #{"failed" "done"} (get-in reloaded [:run :status]))
+                                 reloaded
+                                 (throw t)))))]
         (fragment/finish! ctx state-id attempt node pkg internal-wf internal-ctx)))))
 
 (defn execute-node! [wf ctx state-id node]

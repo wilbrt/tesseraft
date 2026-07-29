@@ -40,6 +40,20 @@ def tesseraft(args, home):
     )
 
 
+def control_plane(args, home):
+    env = os.environ.copy()
+    env["TESSERAFT_HOME"] = str(home)
+    return subprocess.run(
+        [str(ROOT / "bin" / "tesseraft"), "control-plane", *args],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
 def stage_fragment(tmp, name):
     src = FIXTURES / name / "fragment.edn"
     dest_dir = tmp / ".tesseraft" / "fragments" / name
@@ -201,6 +215,14 @@ def test_resume_and_inspect_expose_durable_nested_evidence_across_processes():
         finished = json.loads(final.stdout)["run"]
         assert finished["state"] == "done", finished
         assert finished["status"] == "done", finished
+
+        # The nested fragment run's own state.edn lives under the parent run
+        # dir (fragments/<state>/<attempt>/state.edn) and must not surface as
+        # a second, phantom entry in the control plane's run inventory.
+        cp = control_plane(["runs", "--workspace-root", str(tmp)], home)
+        assert cp.returncode == 0, cp.stderr
+        runs = json.loads(cp.stdout)["runs"]
+        assert len(runs) == 1, runs
     with_tmp(run)
 
 
@@ -275,6 +297,42 @@ def test_fragment_local_max_rounds_fails_durably_without_advancing_parent_round(
     with_tmp(run)
 
 
+def test_unrouted_internal_result_preserves_original_cause_instead_of_step_budget_message():
+    def run(tmp):
+        home = tmp / "home"
+        stage_fragment(tmp, "runtime-unrouted")
+        wf = write_workflow(tmp, "runtime-unrouted", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        proc = resume(run_dir, home)
+        assert proc.returncode != 0, proc.stdout
+
+        # The internal :start node itself finished fine (:noop/succeed
+        # returned {:status "ok"}); it is choose-transition, called from
+        # step! *after* execute-node! returns, that finds no transition
+        # whose :when matches that result and throws. Nothing durably
+        # records this inside the nested run: no internal node.failed, and
+        # the nested run never reaches a terminal status.
+        nested_dir = nested_run_dir(run_dir)
+        nested_events = read_events(nested_dir)
+        assert any(e.get("event") == "node.finished" and e.get("state") == "start" for e in nested_events), nested_events
+        assert not any(e.get("event") == "node.failed" for e in nested_events), nested_events
+        nested_state = nested_dir / "state.edn"
+        assert nested_state.exists()
+        assert ':status "running"' in nested_state.read_text(), nested_state.read_text()
+
+        # The parent must see the real cause, not a masked step-budget
+        # message: the original "No transition matched result" propagates
+        # out of the nested run and into the parent's own node.failed.
+        events = read_events(run_dir)
+        failed = node_event(events, "node.failed")
+        result = failed["result"]
+        assert result.get("message") == "No transition matched result", result
+        assert result.get("error_type") != "fragment_internal_failure", result
+        assert "step budget" not in (result.get("message") or ""), result
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_runtime_pass_fixture_takes_the_parent_success_route()
     test_runtime_fail_fixture_takes_the_declared_failure_route()
@@ -282,4 +340,5 @@ if __name__ == "__main__":
     test_deleted_package_yields_durable_fragment_unresolved_with_no_nested_execution()
     test_unsupported_internal_node_type_is_rejected_before_any_internal_execution()
     test_fragment_local_max_rounds_fails_durably_without_advancing_parent_round()
+    test_unrouted_internal_result_preserves_original_cause_instead_of_step_budget_message()
     print("ok")
