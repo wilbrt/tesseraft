@@ -219,7 +219,11 @@ def test_resume_and_inspect_expose_durable_nested_evidence_across_processes():
         # The nested fragment run's own state.edn lives under the parent run
         # dir (fragments/<state>/<attempt>/state.edn) and must not surface as
         # a second, phantom entry in the control plane's run inventory.
-        cp = control_plane(["runs", "--workspace-root", str(tmp)], home)
+        # control-plane's top-level options (--workspace-root among them) are
+        # only consumed *before* the command word; a fresh process passing it
+        # after "runs" would fall back to the cwd-relative default and leak
+        # unrelated runs from the repo's own .agent-runs.
+        cp = control_plane(["--workspace-root", str(tmp), "runs"], home)
         assert cp.returncode == 0, cp.stderr
         runs = json.loads(cp.stdout)["runs"]
         assert len(runs) == 1, runs
