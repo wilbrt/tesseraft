@@ -6,11 +6,17 @@
     [tesseraft.executors.claude-code :as claude-code]
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
+    [tesseraft.runtime.fragment :as fragment]
     [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]
     [clojure.string :as str]))
+
+;; run-until-done! is defined near the bottom of this file (after step!) but
+;; run-fragment-node! needs to run the nested internal loop to completion as
+;; part of a single parent step, so forward-declare it here.
+(declare run-until-done!)
 
 (defn parse-input [s]
   (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
@@ -341,6 +347,33 @@
     (store/save-context! failed)
     failed))
 
+(defn derived-fragment-step-budget
+  "A defensive step budget for the nested internal loop, generous relative to
+  the fragment's own effective max-rounds so well-formed fragments always
+  finish (via a terminal or their own max-rounds failure) well within it."
+  [internal-wf]
+  (let [max-rounds (get-in internal-wf [:defaults :max-rounds])
+        state-count (max 1 (count (:states internal-wf)))]
+    (max 200 (* 20 state-count (or max-rounds 10)))))
+
+(defn run-fragment-node! [wf ctx state-id node]
+  (let [attempt (get-in ctx [:run :attempt])
+        {:keys [inclusion pkg]} (fragment/resolve-inclusion! wf ctx state-id node)]
+    (fragment/assert-supported-internal-nodes! state-id pkg)
+    (let [internal-wf (fragment/internal-workflow pkg inclusion)
+          internal-ctx0 (fragment/internal-context ctx state-id attempt pkg internal-wf inclusion)]
+      (fragment/pin! ctx state-id attempt pkg inclusion internal-ctx0)
+      (let [budget (derived-fragment-step-budget internal-wf)
+            internal-ctx (try
+                           (run-until-done! internal-wf internal-ctx0 budget)
+                           (catch Throwable _
+                             ;; execute-node! already durably recorded the
+                             ;; nested failure via fail-run!/fail-max-rounds!/
+                             ;; orphan-run! before rethrowing; reload the
+                             ;; persisted nested state instead of losing it.
+                             (store/load-context (get-in internal-ctx0 [:run :dir]))))]
+        (fragment/finish! ctx state-id attempt node pkg internal-wf internal-ctx)))))
+
 (defn execute-node! [wf ctx state-id node]
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
   (try
@@ -355,7 +388,8 @@
                    :timer (run-timer-node! wf ctx state-id node)
                    :approval (throw (ex-info "Approval nodes require a control plane" {:state state-id}))
                    :router {:status "ok"}
-                   :terminal {:status "ok" :terminal true})]
+                   :terminal {:status "ok" :terminal true}
+                   :fragment (run-fragment-node! wf ctx state-id node))]
       (when (external-error-result? result)
         (let [result (normalize-external-result ctx state-id result)]
           (fail-run! ctx state-id result)
@@ -394,10 +428,21 @@
                              :result result})
           result)))))
 
+(defn- outcome-name [x]
+  (cond
+    (keyword? x) (name x)
+    (string? x) x
+    (nil? x) nil
+    :else (str x)))
+
 (defn match-transition? [result transition]
   (let [pred (:when transition)]
     (or (= true (:else pred))
-        (every? (fn [[k v]] (= v (get result k))) pred))))
+        (every? (fn [[k v]]
+                  (if (= k :fragment/outcome)
+                    (= (outcome-name v) (outcome-name (get result k)))
+                    (= v (get result k))))
+                pred))))
 
 (defn choose-transition [node result]
   (or (some #(when (match-transition? result %) %) (spec/transitions node))

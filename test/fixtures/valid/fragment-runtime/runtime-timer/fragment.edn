@@ -1,0 +1,8 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-timer" :title "Runtime timer fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :fragment {:initial :wait
+            :exit [{:on :pass :produces {}}]
+            :states {:wait {:type :timer :duration "1s" :next :done}
+                     :done {:type :terminal :status :success :outcome :pass}}}}
