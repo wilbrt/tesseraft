@@ -395,7 +395,7 @@
                                (if (contains? #{"failed" "done"} (get-in reloaded [:run :status]))
                                  reloaded
                                  (throw t)))))]
-        (fragment/finish! ctx state-id attempt node pkg internal-wf internal-ctx)))))
+        (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))
 
 (defn execute-node! [wf ctx state-id node]
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})

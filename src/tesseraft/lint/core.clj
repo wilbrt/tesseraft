@@ -1352,7 +1352,12 @@
                    (let [produces (set (keys (:produces e {})))]
                      (for [ro required-outputs :when (not (contains? produces ro))]
                        (err :fragment-exit-missing-output [:fragment :exit idx :produces ro]
-                            (str "Required output " ro " is not produced on exit path " (:on e))))))))))))
+                            (str "Required output " ro " is not produced on exit path " (:on e)))))))
+          (apply concat
+                 (for [[idx e] (map-indexed vector exit)]
+                   (for [[k v] (:produces e {}) :when (not (spec/safe-relative-path? v))]
+                     (err :fragment-exit-invalid-produces-path [:fragment :exit idx :produces k]
+                          (str "Exit :produces path for " k " must be a safe relative path: " (pr-str v)))))))))))
 (defn fragment-referenced-assets [fragment]
   (set (remove nil?
                (mapcat

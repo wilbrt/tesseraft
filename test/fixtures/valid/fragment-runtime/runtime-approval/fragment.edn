@@ -1,0 +1,13 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-approval" :title "Runtime approval fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :fragment {:initial :gate
+            :exit [{:on :pass :produces {}}]
+            :states {:gate {:type :approval
+                            :message "Approve?"
+                            :timeout "1m"
+                            :transitions [{:when {:decision "approve"} :next :done}
+                                          {:when {:decision "changes-requested"} :next :declined}]}
+                     :done {:type :terminal :status :success :outcome :pass}
+                     :declined {:type :terminal :status :failure :outcome :pass}}}}

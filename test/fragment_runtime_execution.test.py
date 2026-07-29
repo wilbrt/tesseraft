@@ -255,8 +255,8 @@ def test_deleted_package_yields_durable_fragment_unresolved_with_no_nested_execu
 def test_unsupported_internal_node_type_is_rejected_before_any_internal_execution():
     def run(tmp):
         home = tmp / "home"
-        stage_fragment(tmp, "runtime-timer")
-        wf = write_workflow(tmp, "runtime-timer", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        stage_fragment(tmp, "runtime-approval")
+        wf = write_workflow(tmp, "runtime-approval", '[{:when {:fragment/outcome "pass"} :next :record}]')
         run_dir = start(tmp, home, wf)
 
         proc = resume(run_dir, home)

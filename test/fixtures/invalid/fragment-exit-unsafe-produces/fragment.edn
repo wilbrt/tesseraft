@@ -1,0 +1,15 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "exit-unsafe-produces-fixture"}
+ :interface {:outputs {:status {:required true}}
+             :outcomes #{:pass}}
+ :fragment {:initial :work
+            ;; The :status produces value escapes the nested run dir with a
+            ;; parent-segment; fragment-interface-checks must reject this
+            ;; before it ever reaches runtime materialization.
+            :exit [{:on :pass :produces {:status "../escape/status.json"}}]
+            :states {:work {:type :deterministic :handler :noop/succeed
+                            :runtime {:timeout "1m"}
+                            :outputs {:status {:path "status.json" :required true}}
+                            :transitions [{:when {:status "ok"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}

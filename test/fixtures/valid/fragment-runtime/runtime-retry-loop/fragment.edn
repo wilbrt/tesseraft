@@ -1,0 +1,14 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-retry-loop" :title "Runtime bounded retry-loop fixture" :version "0.1.0"}
+ :interface {:parameters {:max-rounds {:type :integer :default 3}}
+             :outcomes #{:looped}}
+ :assets {:scripts ["./scripts/retry.py"]}
+ :fragment {:initial :retry
+            :defaults {:max-rounds 3}
+            :exit [{:on :looped :produces {}}]
+            :states {:retry {:type :process
+                             :command ["./scripts/retry.py"]
+                             :transitions [{:when {:status "pass"} :next :done}
+                                           {:when {:status "fail"} :effects [:inc-round] :next :retry}]}
+                     :done {:type :terminal :status :success :outcome :looped}}}}

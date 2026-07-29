@@ -1,0 +1,12 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-process" :title "Runtime local process fixture" :version "0.1.0"}
+ :interface {:outcomes #{:pass}}
+ :assets {:scripts ["./scripts/run.py"]}
+ :fragment {:initial :run
+            :exit [{:on :pass :produces {}}]
+            :states {:run {:type :process
+                           :command ["./scripts/run.py"]
+                           :outputs {:result {:path "process/result.json" :required true}}
+                           :transitions [{:when {:status "pass"} :next :done}]}
+                     :done {:type :terminal :status :success :outcome :pass}}}}

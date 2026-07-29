@@ -1,0 +1,11 @@
+{:api-version "tesseraft.fragment/v1"
+ :kind :fragment
+ :metadata {:name "runtime-exit-outputs-missing" :title "Runtime exit-output missing-artifact fixture" :version "0.1.0"}
+ :interface {:outputs {:status {:required true}}
+             :outcomes #{:pass}}
+ :fragment {:initial :start
+            :exit [{:on :pass :produces {:status "status.json"}}]
+            :states {:start {:type :deterministic
+                             :handler :noop/succeed
+                             :next :done}
+                     :done {:type :terminal :status :success :outcome :pass}}}}
