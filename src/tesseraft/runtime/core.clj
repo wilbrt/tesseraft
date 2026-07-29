@@ -160,11 +160,16 @@
                                  :owned_processes_enumerated (:owned_processes_enumerated process)
                                  :owned_processes_stopped (:owned_processes_stopped process)
                                  :stopped (:stopped process)})
+        (store/save-context! cancelled)
         ;; A fragment's own nested run dir is a full durable run in its own
         ;; right: cancelling the parent must not leave it silently "running"
-        ;; forever once the owning parent process is gone.
+        ;; forever once the owning parent process is gone. The parent's own
+        ;; "cancelled" status is already durable above, so a throw while
+        ;; cancelling a nested run (e.g. an unreadable state.edn) can never
+        ;; leave the parent's own cancellation unrecorded; cancel-internal-runs!
+        ;; itself isolates failures per nested attempt dir.
         (fragment/cancel-internal-runs! cancelled)
-        (store/save-context! cancelled)))))
+        cancelled))))
 
 (defn default-branch [inputs]
   (when-let [ticket (:ticket inputs)]
@@ -402,10 +407,16 @@
         ;; boundary rather than recreating it, so no completed internal effect
         ;; is ever replayed.
         (let [reloaded (fragment/resume-internal-context ctx state-id attempt pkg)]
+          ;; Every durable branch continues (or maps the outcome of) a nested
+          ;; run that was pinned against a specific package content hash;
+          ;; verify it before finish! reads pkg/inclusion for the terminal
+          ;; branch too, so a package edited after the nested run reached its
+          ;; own terminal status is never used to map its outcome or
+          ;; materialize its exit outputs.
+          (fragment/verify-pin! state-id pkg inclusion reloaded)
           (if (fragment/terminal-internal-run? reloaded)
             (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf reloaded)
             (do
-              (fragment/verify-pin! state-id pkg inclusion reloaded)
               (fragment/resumed! ctx state-id attempt pkg reloaded)
               (let [budget (derived-fragment-step-budget internal-wf)
                     internal-ctx (run-internal-until-done! internal-wf reloaded budget)]

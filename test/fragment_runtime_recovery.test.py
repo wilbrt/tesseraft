@@ -194,6 +194,63 @@ def write_pi_stub(path, calls_file):
     path.chmod(0o755)
 
 
+def write_fast_pi_stub(path, calls_file):
+    """Unlike write_pi_stub, exits immediately after writing its status
+    artifact so a resume driving it runs to full completion in one call, with
+    nothing to interrupt."""
+    path.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'echo call >> "$PI_STUB_CALLS"\n'
+        'mkdir -p "$AGENT_RUN_DIR/agent"\n'
+        'printf \'{"status":"pass","ok":true}\' > "$AGENT_RUN_DIR/agent/status.json"\n'
+    )
+    path.chmod(0o755)
+
+
+def seed_completed_fragment_run(tmp, home):
+    """Run the runtime-resume fixture to full, uninterrupted completion once
+    (its own isolated workspace under tmp/seed) and return the resulting real
+    nested attempt directory (state.edn, pin.json, events.jsonl, marks.txt),
+    for tests that need a *different* parent run to see an already-terminal
+    nested run the very first time it inspects that state+attempt."""
+    seed_root = tmp / "seed"
+    seed_root.mkdir(parents=True, exist_ok=True)
+    stage_fragment(seed_root, "runtime-resume")
+    wf = write_workflow(seed_root, "runtime-resume", '[{:when {:fragment/outcome "pass"} :next :record}]')
+    run_dir = start(seed_root, home, wf)
+
+    pi_stub = seed_root / "pi-stub.sh"
+    calls_file = seed_root / "pi-calls.log"
+    write_fast_pi_stub(pi_stub, calls_file)
+
+    resumed = resume(run_dir, home, extra_env={"PI_BIN": str(pi_stub), "PI_STUB_CALLS": str(calls_file)})
+    assert resumed.returncode == 0, resumed.stderr
+    finished = json.loads(resumed.stdout)["run"]
+    assert finished["status"] == "done", finished
+
+    return nested_run_dir(run_dir)
+
+
+def clone_completed_nested_run(seed_dir: Path, dest_dir: Path):
+    """Place a copy of a real completed nested run at dest_dir, standing in
+    for what a genuine interruption between the nested run reaching its own
+    terminal status and the parent recording finish! would leave on disk: a
+    fragments/<state>/<attempt>/ directory that is already durably terminal
+    even though the destination parent run has never executed that fragment
+    step. The seed's own absolute nested-run-dir path is embedded in its
+    state.edn/pin.json/events.jsonl (:run :dir, :internal_dir, ...), so it is
+    rewritten to dest_dir's path everywhere it appears."""
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(seed_dir, dest_dir)
+    old, new = str(seed_dir), str(dest_dir)
+    for path in dest_dir.rglob("*"):
+        if path.is_file():
+            text = path.read_text()
+            if old in text:
+                path.write_text(text.replace(old, new))
+
+
 def test_forced_restart_recovers_the_interrupted_agent_node_without_reinvoking_it():
     def run(tmp):
         home = tmp / "home"
@@ -356,8 +413,79 @@ def test_cancel_while_a_process_node_sleeps_cancels_both_runs_and_mirrors_it():
     with_tmp(run)
 
 
+def test_resuming_an_already_done_nested_run_completes_via_finish_without_reexecuting_it():
+    def run(tmp):
+        home = tmp / "home"
+        seed_nested_dir = seed_completed_fragment_run(tmp, home)
+
+        stage_fragment(tmp, "runtime-resume")
+        wf = write_workflow(tmp, "runtime-resume", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        nested_dir = nested_run_dir(run_dir)
+        clone_completed_nested_run(seed_nested_dir, nested_dir)
+        nested_events_before = read_events(nested_dir)
+
+        # This run's own parent-level state.edn has never executed the
+        # fragment step: run-fragment-node! must take the durable-terminal
+        # branch (straight to finish!) the very first time it looks, not the
+        # fresh path -- there is no PI_BIN configured here, so a fresh
+        # re-invocation of :execute would fail loudly.
+        resumed = resume(run_dir, home)
+        assert resumed.returncode == 0, resumed.stderr
+        finished = json.loads(resumed.stdout)["run"]
+        assert finished["state"] == "done", finished
+        assert finished["status"] == "done", finished
+
+        # No internal node re-ran: the nested run's own event log is
+        # byte-for-byte unchanged by this resume.
+        assert read_events(nested_dir) == nested_events_before, (nested_events_before, read_events(nested_dir))
+        assert (nested_dir / "marks.txt").read_text().splitlines() == ["mark"]
+
+        events = read_events(run_dir)
+        node_event(events, "fragment.finished")
+        # fragment.resumed is only emitted on the durable *non-terminal*
+        # branch; the terminal branch never continues the nested loop.
+        assert not [e for e in events if e.get("event") == "fragment.resumed"], events
+    with_tmp(run)
+
+
+def test_resuming_a_nested_run_whose_package_changed_since_pin_fails_with_fragment_pin_changed():
+    def run(tmp):
+        home = tmp / "home"
+        seed_nested_dir = seed_completed_fragment_run(tmp, home)
+
+        fragment_edn = stage_fragment(tmp, "runtime-resume")
+        wf = write_workflow(tmp, "runtime-resume", '[{:when {:fragment/outcome "pass"} :next :record}]')
+        run_dir = start(tmp, home, wf)
+
+        nested_dir = nested_run_dir(run_dir)
+        clone_completed_nested_run(seed_nested_dir, nested_dir)
+
+        # The package this run-dir resolves against has changed since the
+        # nested run was pinned (still the seed's own pin.json), even though
+        # states/transitions/outputs are untouched.
+        fragment_edn.write_text(fragment_edn.read_text() + "\n;; edited after pin\n")
+
+        resumed = resume(run_dir, home)
+        assert resumed.returncode != 0, resumed.stdout
+
+        assert ':status "failed"' in (run_dir / "state.edn").read_text()
+
+        events = read_events(run_dir)
+        failed = node_event(events, "node.failed")
+        assert failed["result"].get("error_type") == "fragment_pin_changed", failed
+
+        # Refused before mapping the outcome or touching the nested run again.
+        assert not [e for e in events if e.get("event") == "fragment.finished"], events
+        assert (nested_dir / "marks.txt").read_text().splitlines() == ["mark"]
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_forced_restart_recovers_the_interrupted_agent_node_without_reinvoking_it()
     test_forced_restart_during_a_process_node_orphans_the_internal_run()
     test_cancel_while_a_process_node_sleeps_cancels_both_runs_and_mirrors_it()
+    test_resuming_an_already_done_nested_run_completes_via_finish_without_reexecuting_it()
+    test_resuming_a_nested_run_whose_package_changed_since_pin_fails_with_fragment_pin_changed()
     print("ok")

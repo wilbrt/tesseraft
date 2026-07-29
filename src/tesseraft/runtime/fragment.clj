@@ -219,16 +219,24 @@
   already carries its own persisted :event-mirror descriptor (set at
   creation), so appending run.cancelled through store/event! on it mirrors a
   fragment.run.cancelled into the parent log the same way any other internal
-  event would be, with no extra wiring here."
+  event would be, with no extra wiring here. Each attempt dir is cancelled
+  independently: a throw reading or writing one dir's state (e.g. an
+  unreadable/truncated state.edn) must not stop the remaining nested runs
+  from being cancelled, and the caller has already durably recorded the
+  parent's own cancellation before calling this."
   [parent-ctx]
   (doseq [dir (internal-run-attempt-dirs parent-ctx)]
-    (let [ctx (store/load-context dir)]
-      (when-not (contains? internal-terminal-statuses (get-in ctx [:run :status]))
-        (let [cancelled (-> ctx
-                            (assoc-in [:run :status] "cancelled")
-                            (assoc-in [:run :updated-at] (store/now)))]
-          (store/event! cancelled {:event "run.cancelled"})
-          (store/save-context! cancelled))))))
+    (try
+      (let [ctx (store/load-context dir)]
+        (when-not (contains? internal-terminal-statuses (get-in ctx [:run :status]))
+          (let [cancelled (-> ctx
+                              (assoc-in [:run :status] "cancelled")
+                              (assoc-in [:run :updated-at] (store/now)))]
+            (store/event! cancelled {:event "run.cancelled"})
+            (store/save-context! cancelled))))
+      (catch Throwable t
+        (binding [*out* *err*]
+          (println "cancel-internal-runs!: failed to cancel nested run" (str dir) "-" (.getMessage t)))))))
 
 (defn pin!
   "Write nested pin.json evidence (identity, scope, version, package content
