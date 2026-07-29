@@ -64,3 +64,7 @@ FI6-DIP2 opened PR #92 in round 5 with 10 Claude sessions, four workflow-owned f
 ## FI7-DIP1 reviewed observations
 
 FI7-DIP1 opened PR #93 in round 5 with 9 Claude sessions, four workflow-owned feedback cycles, and zero supervision handoffs. The run progressed from focused validation failures through semantic review corrections using only authored feedback transitions; no operator prompt was injected. Claude did not report a usage limit.
+
+## FI8-DIP1 reviewed observations
+
+FI8-DIP1 opened PR #94 in round 5 with 10 Claude sessions, four workflow-owned feedback cycles, and zero supervision handoffs. Deterministic recovery/cancellation tests and whole-diff review converged through authored transitions only; no operator prompt was injected and Claude did not report a usage limit.
