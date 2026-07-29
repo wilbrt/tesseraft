@@ -9,6 +9,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "examples" / "design-in-practice-to-pr"
 WORKFLOW = PACKAGE / "workflow.edn"
+FALLBACK_WORKFLOW = PACKAGE / "workflow-openai-fallback.edn"
 SCRIPTS = PACKAGE / "scripts"
 
 
@@ -28,6 +29,24 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertTrue(report["ok"])
         self.assertEqual(report["diagnostics"], [])
+
+    def test_openai_fallback_lints_and_has_explicit_executor_provenance(self):
+        result = subprocess.run(
+            [str(ROOT / "bin" / "tesseraft"), "lint", str(FALLBACK_WORKFLOW), "--format", "json", "--strict"],
+            cwd=ROOT, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["diagnostics"], [])
+        workflow = FALLBACK_WORKFLOW.read_text()
+        self.assertIn(':name "design-in-practice-to-pr-openai-fallback"', workflow)
+        self.assertIn(':execution-profile {:type :string :default "openai-pi-fallback"}', workflow)
+        self.assertEqual(workflow.count(':executor :pi-cli'), 4)
+        self.assertEqual(workflow.count(':provider "openai-codex"'), 4)
+        self.assertEqual(workflow.count(':model "gpt-5.6-sol"'), 3)
+        self.assertEqual(workflow.count(':model "gpt-5.5"'), 1)
+        self.assertNotIn(':executor :claude-code', workflow)
 
     def test_graph_is_bounded_deterministic_first_and_has_no_pr_agent(self):
         workflow = WORKFLOW.read_text()
@@ -236,12 +255,13 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             claude_sessions = run_dir / "claude-sessions"
             claude_sessions.mkdir()
             (claude_sessions / "design.txt").write_text("claude-code session marker\n")
-            request = {"run": {"id": "learning", "round": 3, "status": "blocked"}, "paths": {"run_dir": str(run_dir)}, "node": {"id": "record-learning"}}
+            request = {"run": {"id": "learning", "round": 3, "status": "blocked"}, "inputs": {"execution-profile": "openai-pi-fallback"}, "paths": {"run_dir": str(run_dir)}, "node": {"id": "record-learning"}}
             result = self.invoke("record_learning.py", request)
             self.assertEqual(result.returncode, 0, result.stderr)
             response = json.loads(result.stdout)
             self.assertFalse(response["pr_created"])
             summary = json.loads((run_dir / "learning/run-summary.json").read_text())
+            self.assertEqual(summary["execution_profile"], "openai-pi-fallback")
             self.assertEqual(summary["usage"]["sessions"], 2)
             self.assertEqual(summary["usage"]["pi_sessions"], 1)
             self.assertEqual(summary["usage"]["claude_sessions"], 1)

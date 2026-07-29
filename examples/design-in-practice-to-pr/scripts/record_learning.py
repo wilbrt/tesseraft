@@ -65,6 +65,7 @@ def main() -> None:
         "version": 1,
         "run_id": run.get("id"),
         "workflow": "design-in-practice-to-pr",
+        "execution_profile": request.get("inputs", {}).get("execution-profile", "unspecified"),
         "round": run.get("round"),
         "status_at_recording": run.get("status"),
         "pr_created": pr_created,
