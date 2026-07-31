@@ -190,16 +190,16 @@
   (let [ctx (store/load-context run-dir)
         status (get-in ctx [:run :status])]
     (when-not (retry-allowed-status? status)
-      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state"
+      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state (retry_requires_failed_or_cancelled)"
                       {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
     (when (live-runtime-process? run-dir)
-      (throw (ex-info "Run cannot be retried while owned by a live process"
+      (throw (ex-info "Run cannot be retried while owned by a live process (retry_live_process)"
                       {:run-dir run-dir :error "retry_live_process"})))
     (let [current-sha (current-workflow-sha ctx)
           pinned-sha (pinned-workflow-sha ctx)
           pinned-version (get-in ctx [:workflow :version])]
       (when (and (not repin) current-sha pinned-sha (not= pinned-sha current-sha))
-        (throw (ex-info "Workflow content changed since this run was pinned"
+        (throw (ex-info "Workflow content changed since this run was pinned (retry_pin_mismatch)"
                         {:run-dir run-dir
                          :error "retry_pin_mismatch"
                          :pinned pinned-version
