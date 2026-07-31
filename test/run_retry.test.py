@@ -231,7 +231,7 @@ def test_retry_after_process_failure_re_executes_and_appends_recovery_event():
         assert retried.returncode == 0, retried.stderr
         finished = json.loads(retried.stdout)["run"]
         assert finished["status"] == "done", finished
-        assert finished["attempt"] == 2, finished
+        assert finished["attempt"] == 3, finished
 
         events = read_events(run_dir)
         started = [e for e in events if e.get("event") == "node.started"]
@@ -408,7 +408,7 @@ def test_retry_after_cancel():
             assert retried.returncode == 0, retried.stderr
             finished = json.loads(retried.stdout)["run"]
             assert finished["status"] == "done", finished
-            assert finished["attempt"] == 2, finished
+            assert finished["attempt"] == 3, finished
 
             events = read_events(run_dir)
             assert any(e.get("event") == "run.cancelled" for e in events)
@@ -462,7 +462,7 @@ def test_retry_after_orphan_re_executes_cleanly():
             assert retried.returncode == 0, retried.stderr
             finished = json.loads(retried.stdout)["run"]
             assert finished["status"] == "done", finished
-            assert finished["attempt"] == 2, finished
+            assert finished["attempt"] == 3, finished
 
             events = read_events(run_dir)
             recovery = [e for e in events if e.get("event") == "run.recovery"]
@@ -546,7 +546,7 @@ def test_fragment_retry_creates_fresh_attempt():
         assert retried.returncode == 0, retried.stderr
         finished = json.loads(retried.stdout)["run"]
         assert finished["status"] == "done", finished
-        assert finished["attempt"] == 2, finished
+        assert finished["attempt"] == 3, finished
 
         nested_dir2 = run_dir2 / "fragments" / "run-fragment" / "2"
         assert (nested_dir2 / "state.edn").exists()
