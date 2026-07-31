@@ -237,3 +237,62 @@ git worktree list
 git worktree remove <path>
 git branch -d <branch>
 ```
+
+## Recovering failed runs
+
+A workflow run reaches a terminal state when something external to the workflow
+itself breaks: a process exits nonzero, a node times out, the runner process is
+killed mid-node, the round budget is exhausted, or an operator explicitly
+cancels the run. Once a run is `"failed"` or `"cancelled"`, `step` and `resume`
+refuse to drive it again. Use `run retry` to continue the run's durable lineage:
+
+```bash
+./bin/tesseraft run retry --run-dir .agent-runs/<workflow>/<run-id> \
+  [--max-steps <n>] [--reason "..."] [--repin]
+```
+
+`retry` will:
+
+- Refuse unless the run is `"failed"` or `"cancelled"`.
+- Refuse if a live process still owns the run (`runtime-process.json` with a
+  live pid). Cancel or wait for that process first.
+- Re-hash the workflow file and refuse if it has changed since the run was
+  pinned, unless `--repin` is given. `--repin` records the old and new hashes
+  in a `run.recovery` audit event and proceeds.
+- Bump the run's `attempt` counter by one, so every new node execution is keyed
+  by a fresh `(state, attempt)` pair. This keeps the event-log proof trace
+  intact: no duplicate `node.started` for the same pair, and orphan detection
+  keeps working unchanged.
+- Append a durable `run.recovery` event carrying the prior status, prior state,
+  prior and new attempt, the operator reason, and the last terminal evidence
+  (`node.failed`, `node.orphaned`, `run.max-rounds-exceeded`, or `run.cancelled`).
+- Then drive the run exactly like `resume` with the bounded `--max-steps` budget.
+
+### Triage table
+
+| Last durable evidence | Diagnosis | Action |
+| --- | --- | --- |
+| `node.failed` with `error_type` `process_exit` / `timeout` / `malformed_output` / `missing` artifact | Transient infrastructure or a missing dependency; inspect `logs/` and the recorded error. | Fix the cause, then `run retry`. |
+| `node.orphaned` | The runner process was killed while a node was in flight. | First verify the external world: check `git worktree list`, GitHub/PR state, artifact presence, and any side effects the node may have already performed. If the side effects did not complete, run `run retry`. If they did complete for an agent node, you may place the expected status artifact and run `step`; otherwise document the manual caveat. |
+| `run.max-rounds-exceeded` | The workflow is not converging within the configured round budget. | Retry only after changing the approach (workflow, inputs, or problem framing). Without a change, the run will re-fail immediately. |
+| `run.cancelled` | Operator cancelled the run. | Safe to retry. Owned processes were reaped at cancel time. |
+| Status `"running"` with liveness `stale` or `orphaned` | The runner process died but the run was never marked terminal. | Run `run cancel` first to mark the run and nested fragment runs cancelled, then `run retry`. |
+
+### Guarantees and caveats
+
+- **Attempt-bump uniqueness**: retry always increments `run.attempt`, so a
+  retried node starts a fresh attempt. Fragment nodes therefore create a fresh
+  nested run at the new attempt; within that new attempt, the existing
+  `durable-internal-run?` / `resumable-fragment?` resume machinery still applies.
+- **Pin check**: retry refuses to run a pinned workflow against changed workflow
+  source unless you explicitly `--repin` and record the hash change.
+- **Single-writer**: retry refuses when a live process owns the run dir, so two
+  runners never mutate the same run simultaneously.
+- **Declared `status: fail`**: a workflow node that intentionally returns
+  `"status":"fail"` is a workflow outcome, not a runtime failure. It drives a
+  normal transition and may loop back into the workflow. It does not by itself
+  make the run `"failed"` or eligible for retry.
+
+See `SPEC.md` §13 for the normative retry semantics and
+`docs/CONTROL_PLANE_API.md` for how the same single-writer model applies to
+future control-plane retry/resume/cancel endpoints.

@@ -392,6 +392,9 @@ python3 test/fragment_runtime_recovery.test.py
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-resume/fragment.edn --strict
 ./bin/tesseraft fragment lint test/fixtures/valid/fragment-runtime/runtime-hang/fragment.edn --strict
 
+printf '\nChecking run retry recovery for failed and cancelled runs...\n'
+python3 test/run_retry.test.py
+
 printf '\nLinting self-contained fragment fixture...\n'
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn
 ./bin/tesseraft fragment lint examples/fragments/test-fix-loop/fragment.edn --format json >/tmp/tesseraft-fragment-lint.json
