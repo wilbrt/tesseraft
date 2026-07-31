@@ -174,6 +174,14 @@
     (when (string? version)
       (second (str/split version #":" 2)))))
 
+(defn read-run-events [ctx]
+  (let [p (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
+    (when (fs/exists? p)
+      (->> (str/split-lines (slurp (str p)))
+           (remove str/blank?)
+           (keep #(try (json/parse-string % true) (catch Throwable _ nil)))
+           vec))))
+
 (defn last-terminal-evidence [ctx]
   (let [events (read-run-events ctx)]
     (last (filter #(contains? #{"node.failed" "node.orphaned" "run.max-rounds-exceeded" "run.cancelled"} (:event %)) events))))
@@ -660,14 +668,6 @@
       (finally
         (reset! active? false)
         (future-cancel worker)))))
-
-(defn read-run-events [ctx]
-  (let [p (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
-    (when (fs/exists? p)
-      (->> (str/split-lines (slurp (str p)))
-           (remove str/blank?)
-           (keep #(try (json/parse-string % true) (catch Throwable _ nil)))
-           vec))))
 
 (defn orphaned-current-attempt? [ctx state-id attempt]
   "True if the events.jsonl shows a node.started for this state+attempt with no
