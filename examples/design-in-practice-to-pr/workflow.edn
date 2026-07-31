@@ -45,8 +45,10 @@
   :design
   {:type :agent
    :title "Describe, diagnose, delimit, choose direction, and design"
-   :executor :claude-code
-   :model "claude-opus-5"
+   :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
+   :thinking "high"
    :prompt-template "prompts/design.md.tmpl"
    :prompt-output "prompts/generated/design-{{run.attempt}}.md"
    :session-name "design-in-practice-design-{{run.attempt}}"
@@ -83,8 +85,9 @@
   :implement
   {:type :agent
    :title "Implement or correct current evidence"
-   :executor :claude-code
-   :model "claude-sonnet-5"
+   :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k2.7-code"
    :prompt-template "prompts/implement.md.tmpl"
    :prompt-output "prompts/generated/implement-{{run.round}}.md"
    :session-name "design-in-practice-implement-{{run.round}}"
@@ -112,8 +115,10 @@
   :review
   {:type :agent
    :title "Independently review the complete current diff"
-   :executor :claude-code
-   :model "claude-opus-5"
+   :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
+   :thinking "high"
    :prompt-template "prompts/review.md.tmpl"
    :prompt-output "prompts/generated/review-{{run.round}}.md"
    :session-name "design-in-practice-review-{{run.round}}"
@@ -142,8 +147,10 @@
   :supervisor
   {:type :agent
    :title "Inspect stalled correction evidence"
-   :executor :claude-code
-   :model "claude-opus-5"
+   :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
+   :thinking "high"
    :prompt-template "prompts/supervisor.md.tmpl"
    :prompt-output "prompts/generated/supervisor-{{run.round}}.md"
    :session-name "design-in-practice-supervisor-{{run.round}}"
