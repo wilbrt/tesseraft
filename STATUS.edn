@@ -54,6 +54,10 @@
    {:status :implemented
     :summary "Read-only provider-neutral `:work-tracker/fetch-item` boundary for Plane, Jira, and GitHub Issues: resolves the selected run project's persisted `connections.work-tracker`, records that selected Tesseraft project separately from provider remote scope, uses only the project-scoped tracker credential ref, performs injectable bounded read requests, rejects malformed provider refs/config and GitHub PR payloads, and persists versioned normalized work-item artifacts without raw provider payloads or secrets. Mock mode remains offline. Legacy Jira ticket fetch and GitHub code-host/PR behavior remain independent."
     :evidence ["src/tesseraft/work_tracker/runtime.clj" "src/tesseraft/work_tracker/plane.clj" "src/tesseraft/work_tracker/jira.clj" "src/tesseraft/work_tracker/github_issues.clj" "src/tesseraft/adapters/builtin.clj :work-tracker/fetch-item" "schemas/normalized-work-item.schema.json" "test/work-tracker-read.test.js" "test/work-tracker-read-adapters.test.js" "test/fixtures/valid/work-tracker-fetch/workflow.edn" "scripts/test.sh WT5/WT6 blocks"]}
+   :design-in-practice-to-pr
+   {:status :implemented
+    :summary "Problem-grounded prompt-to-PR workflow with compact design reasoning, tiered deterministic validation, current-only correction evidence, progress-triggered supervision, deterministic PR assembly, and run-learning telemetry."
+    :evidence ["examples/design-in-practice-to-pr/workflow.edn" "examples/design-in-practice-to-pr/scripts/" "examples/design-in-practice-to-pr/knowledge/prior-run-lessons.md" "docs/DESIGN_IN_PRACTICE_TO_PR.md" "test/design-in-practice-workflow.test.py"]}
    :mock-executor
    {:status :implemented
     :summary "Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state."

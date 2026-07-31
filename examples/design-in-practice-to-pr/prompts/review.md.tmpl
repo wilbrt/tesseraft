@@ -1,0 +1,36 @@
+Fresh Claude Code session: INDEPENDENT SEMANTIC CODE REVIEW.
+
+Inputs:
+- Original prompt: {{run.dir}}/prompt/prompt.md
+- Problem-grounded design: {{run.dir}}/design/brief.md
+- Current implementation summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Passing deterministic validation summary: {{run.dir}}/validation/summary-{{run.round}}.json
+- Full deterministic report: {{run.dir}}/validation/report-{{run.round}}.md
+- Base branch: {{inputs.base-branch}}
+
+The current working directory is the isolated implementation worktree.
+
+Goal:
+Review the complete current base-branch diff for correctness, security, regressions, scope, compatibility, maintainability, and test adequacy.
+
+Testing policy:
+- Testing is NOT your job. Do NOT run tests, lint, builds, type checks, `bb`, or `npm`.
+- Deterministic validation already passed. Verify its durable evidence; never reinterpret failure as success.
+
+Rules:
+- Inspect the actual diff and relevant source, tests, callers, contracts, and docs.
+- Compare against the problem, selected direction, scope, non-goals, and user objectives—not merely the implementation summary.
+- Report all supported actionable findings visible in the current diff, ordered by severity.
+- Do not repeat stale findings, demand optional process ceremony, or invent unsupported concerns.
+- Do not edit source, tests, workflow definitions, or commits.
+- Write issues only when status is fail; use severities blocker, major, minor, or nit.
+- The issues file MUST be a top-level JSON array. Do not wrap it in an object such as `{\"issues\": [...]}`. Every issue object must use the configured schema fields: `source`, `severity`, `title`, `details`, and `acceptance_criteria`; do not invent aliases such as `detail`, `summary`, or `suggestion`.
+
+Write:
+- {{run.dir}}/review/report-{{run.round}}.md
+- {{run.dir}}/review/status-{{run.round}}.json
+- On failure only, {{run.dir}}/review/issues-{{run.round}}.json
+
+Statuses:
+{"status":"pass","summary":"current diff is ready for PR","issues_file":null}
+{"status":"fail","summary":"current diff has actionable review findings","issues_file":"review/issues-{{run.round}}.json"}

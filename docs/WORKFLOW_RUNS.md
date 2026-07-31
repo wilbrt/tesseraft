@@ -7,6 +7,7 @@ This guide covers the side-effecting implementation workflows:
 - `examples/playwright-code-review-loop/workflow.edn`
 - `examples/deterministic-code-review-loop/workflow.edn`
 - `examples/supervised-deterministic-code-review-loop/workflow.edn`
+- `examples/design-in-practice-to-pr/workflow.edn`
 - `examples/canon-tdd-to-pr/workflow.edn`
 - `examples/focused-tdd-to-pr/workflow.edn`
 
@@ -35,6 +36,7 @@ bb test
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
+./bin/tesseraft lint examples/design-in-practice-to-pr/workflow.edn --strict
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ```
@@ -103,6 +105,16 @@ Playwright gates behave like the deterministic workflow. After every third
 failed correction cycle, a source-read-only supervisor inspects recent durable
 reports, summaries, issues, and logs, then writes `supervision/current.md` for
 the next implementation attempt.
+
+The Design in Practice variant uses
+`examples/design-in-practice-to-pr/workflow.edn` and
+`.agent-runs/design-in-practice-to-pr/<id>`. It derives a tiered deterministic
+validation plan during design, short-circuits cheap checks before expensive
+ones, supplies correction agents only compact current evidence, and invokes
+supervision when failure/work fingerprints repeat. Its first two steps are
+safe deterministic intake/context collection; design invokes Pi, worktree
+creation is the first Git side effect, and `create-pr` is the push/GitHub
+boundary. See [DESIGN_IN_PRACTICE_TO_PR.md](DESIGN_IN_PRACTICE_TO_PR.md).
 
 ## Inspecting run state and artifacts
 

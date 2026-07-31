@@ -49,7 +49,7 @@ Run the safe smoke checks with:
 bb test
 ```
 
-This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
+This lints the smoke, prompt-to-pr, worktree-to-pr, code-review-loop, Playwright code-review-loop, deterministic code-review-loop, supervised deterministic loop, Design in Practice to PR, Canon TDD, focused TDD, and jira-to-pr example workflows, runs the local smoke workflow plus a mock executor dry run, verifies invalid fixtures fail lint, and runs the Web UI server/component suites. It does not run Pi, Playwright, Jira, GitHub, or hosted-service workflows.
 
 The Playwright browser gate builds and serves the production Web UI on
 localhost, then runs Chromium coverage for workflow inspection and isolated
@@ -93,6 +93,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 - `examples/playwright-code-review-loop/workflow.edn` — code-review-loop variant that replaces agentic regression testing with a deterministic `npm run web:e2e` gate in the implementation worktree.
 - `examples/deterministic-code-review-loop/workflow.edn` — strict deterministic-first variant: agents design/implement/review only and **run no tests**; two deterministic `:process` gates (`bb test`, then Playwright) enforce pass before code review, using the `pi-cli` executor with OpenAI Codex models (`gpt-5.6-sol` for design/review, `gpt-5.5` for implementation).
 - `examples/supervised-deterministic-code-review-loop/workflow.edn` — deterministic-first variant with a COAX-style, source-read-only supervisor after every three failed correction cycles. The supervisor inspects recent reports/logs and writes a durable direction consumed by the next implementation attempt.
+- `examples/design-in-practice-to-pr/workflow.edn` — problem-grounded prompt-to-PR workflow with one compact Describe/Diagnose/Delimit/Direction/Design session, tiered deterministic validation, current-only correction evidence, progress-triggered supervision, deterministic PR assembly, and run-learning telemetry. See [`docs/DESIGN_IN_PRACTICE_TO_PR.md`](docs/DESIGN_IN_PRACTICE_TO_PR.md).
 - `examples/canon-tdd-to-pr/workflow.edn` — agile use case, one-scenario-at-a-time Canon TDD in an isolated worktree, deterministic validation, regression/review repair, and PR creation. See [`docs/CANON_TDD_WORKFLOW.md`](docs/CANON_TDD_WORKFLOW.md).
 - `examples/focused-tdd-to-pr/workflow.edn` — lightweight focused TDD inside one coherent implementation state, followed by deterministic repository validation, independent whole-diff review, direct current-only correction cycles, and PR creation. See [`docs/FOCUSED_TDD_WORKFLOW.md`](docs/FOCUSED_TDD_WORKFLOW.md).
 - `examples/mock-run-workflow/workflow.edn` — side-effect-free implementation/review workflow for runner and UI testing.
@@ -104,6 +105,7 @@ Mock mode is opt-in; default execution still uses each workflow's real executor 
 ./bin/tesseraft lint examples/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/playwright-code-review-loop/workflow.edn
+./bin/tesseraft lint examples/design-in-practice-to-pr/workflow.edn --strict
 ./bin/tesseraft lint examples/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/focused-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/pr-housekeeping/workflow.edn
@@ -170,6 +172,8 @@ Implemented:
   _Evidence:_ src/tesseraft/runtime/fragment.clj durable-internal-run?/resume-internal-context/verify-pin!/resumed!/cancel-internal-runs!, src/tesseraft/runtime/core.clj run-fragment-node!/resumable-fragment?/cancel!, src/tesseraft/runtime/store.clj event!/mirrored-event, src/tesseraft/control_plane/core.clj attach-internal-attempts/internal-attempts-for-parent-attempt/scan-artifacts, test/fixtures/valid/fragment-runtime/{runtime-resume,runtime-hang}/fragment.edn, test/fragment_runtime_recovery.test.py, docs/FRAGMENTS.md#runtime-behavior, scripts/test.sh FI8
 - **work-tracker-plane-read** (implemented) — Read-only provider-neutral `:work-tracker/fetch-item` boundary for Plane, Jira, and GitHub Issues: resolves the selected run project's persisted `connections.work-tracker`, records that selected Tesseraft project separately from provider remote scope, uses only the project-scoped tracker credential ref, performs injectable bounded read requests, rejects malformed provider refs/config and GitHub PR payloads, and persists versioned normalized work-item artifacts without raw provider payloads or secrets. Mock mode remains offline. Legacy Jira ticket fetch and GitHub code-host/PR behavior remain independent.
   _Evidence:_ src/tesseraft/work_tracker/runtime.clj, src/tesseraft/work_tracker/plane.clj, src/tesseraft/work_tracker/jira.clj, src/tesseraft/work_tracker/github_issues.clj, src/tesseraft/adapters/builtin.clj :work-tracker/fetch-item, schemas/normalized-work-item.schema.json, test/work-tracker-read.test.js, test/work-tracker-read-adapters.test.js, test/fixtures/valid/work-tracker-fetch/workflow.edn, scripts/test.sh WT5/WT6 blocks
+- **design-in-practice-to-pr** (implemented) — Problem-grounded prompt-to-PR workflow with compact design reasoning, tiered deterministic validation, current-only correction evidence, progress-triggered supervision, deterministic PR assembly, and run-learning telemetry.
+  _Evidence:_ examples/design-in-practice-to-pr/workflow.edn, examples/design-in-practice-to-pr/scripts/, examples/design-in-practice-to-pr/knowledge/prior-run-lessons.md, docs/DESIGN_IN_PRACTICE_TO_PR.md, test/design-in-practice-workflow.test.py
 - **node-packaging-system** (implemented) — Self-contained node package import/export via `bb node`.
   _Evidence:_ src/tesseraft/node/cli.clj, docs/NODES.md, docs/PACKAGES.md, bb.edn :node
 - **mock-executor** (implemented) — Runner-level mock/dry-run mode: opt-in `--executor mock` execution that renders prompts and writes passing placeholder artifacts, with deterministic mock results for Jira/Git/GitHub/Pinga side-effect handlers; executor-mode persisted in run state.
