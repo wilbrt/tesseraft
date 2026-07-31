@@ -657,6 +657,20 @@ boundaries:
   bound to localhost?
 - What concurrency/idempotency model should retry, resume, cancel/abort, and
   approval decisions use?
+
+  **Resolution (for retry/resume/cancel):** a single writer owns each run
+  directory at any time. The runtime records its pid in
+  `runtime-process.json` when it starts driving a run and removes it on exit.
+  Resume, retry, and cancel all refuse to proceed if that file names a live
+  pid. Cancel first stops the live process (and its descendants), then marks the
+  run cancelled, then best-effort cancels nested fragment runs. Retry is only
+  allowed from terminal `"failed"` or `"cancelled"` status; it bumps the run
+  attempt, appends a `run.recovery` audit event, and takes ownership of the run
+  dir by writing its own pid. This makes retry/resume/cancel mutually exclusive
+  per run. The CLI implements this today; a future `POST /api/runs/{id}/retry`
+  endpoint will use the same single-writer contract and is intentionally not
+  built in this slice.
+
 - How will a later DB-backed control plane preserve this contract while
   replacing file-backed persistence?
 - How should mock executor mode be represented in run state and API responses?

@@ -153,6 +153,71 @@
               :stopped (and root-stopped? descendants-stopped? (:owned_processes_stopped owned))}
              owned))))
 
+(defn retry-allowed-status? [status]
+  (contains? #{"failed" "cancelled"} status))
+
+(defn- live-runtime-process? [run-dir]
+  (let [path (runtime-process-path run-dir)
+        record (when (fs/exists? path) (store/read-json path))
+        pid (:pid record)]
+    (when (and (integer? pid) (pos? pid))
+      (when-let [handle (some-> (java.lang.ProcessHandle/of (long pid)) (.orElse nil))]
+        (.isAlive handle)))))
+
+(defn- current-workflow-sha [ctx]
+  (let [wf-file (get-in ctx [:workflow :file])]
+    (when (and wf-file (fs/exists? wf-file))
+      (store/sha256 (slurp wf-file)))))
+
+(defn- pinned-workflow-sha [ctx]
+  (when-let [version (get-in ctx [:workflow :version])]
+    (when (string? version)
+      (second (str/split version #":" 2)))))
+
+(defn last-terminal-evidence [ctx]
+  (let [events (read-run-events ctx)]
+    (last (filter #(contains? #{"node.failed" "node.orphaned" "run.max-rounds-exceeded" "run.cancelled"} (:event %)) events))))
+
+(defn retry! [run-dir {:keys [reason repin]}]
+  (let [ctx (store/load-context run-dir)
+        status (get-in ctx [:run :status])]
+    (when-not (retry-allowed-status? status)
+      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state"
+                      {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
+    (when (live-runtime-process? run-dir)
+      (throw (ex-info "Run cannot be retried while owned by a live process"
+                      {:run-dir run-dir :error "retry_live_process"})))
+    (let [current-sha (current-workflow-sha ctx)
+          pinned-sha (pinned-workflow-sha ctx)
+          pinned-version (get-in ctx [:workflow :version])]
+      (when (and (not repin) current-sha pinned-sha (not= pinned-sha current-sha))
+        (throw (ex-info "Workflow content changed since this run was pinned"
+                        {:run-dir run-dir
+                         :error "retry_pin_mismatch"
+                         :pinned pinned-version
+                         :current (str "sha256:" current-sha)})))
+      (let [prior-attempt (get-in ctx [:run :attempt])
+            new-attempt (inc prior-attempt)
+            prior-state (get-in ctx [:run :state])
+            running (-> ctx
+                        (assoc-in [:run :status] "running")
+                        (assoc-in [:run :attempt] new-attempt)
+                        (assoc-in [:run :updated-at] (store/now)))
+            repin-data (when (and repin pinned-sha current-sha (not= pinned-sha current-sha))
+                         {:old_hash pinned-sha :new_hash current-sha})
+            prior-evidence (last-terminal-evidence ctx)]
+        (store/save-context! running)
+        (store/event! running (cond-> {:event "run.recovery"
+                                         :prior_status status
+                                         :prior_state (some-> prior-state name)
+                                         :prior_attempt prior-attempt
+                                         :new_attempt new-attempt
+                                         :reason reason
+                                         :repin repin-data
+                                         :at (store/now)}
+                                  prior-evidence (assoc :prior_evidence prior-evidence)))
+        running))))
+
 (defn cancel! [run-dir]
   (let [before (store/load-context run-dir)]
     (if (terminal-run? before)

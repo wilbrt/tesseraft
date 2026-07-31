@@ -188,6 +188,23 @@ Supported declared workflow outcomes include `pass`, `fail`, `actions_needed`, `
 
 `status: error` is reserved for normalized runtime/external failure evidence in the reference runner. External failures include missing dependencies or credentials, subprocess crashes or nonzero exits, malformed process output, timeouts, sandbox/network/environment failures, unknown handlers/executors, and required artifacts not being produced. External failures append durable `node.failed` evidence, mark the node attempt and run failed, preserve diagnostics such as logs/prompts/exit codes, and require explicit recovery, resume, or retry semantics rather than normal transition selection.
 
+The reference runner implements explicit retry through a `run retry` command and
+a runtime `retry!` operation. A run may be retried only when its status is
+`"failed"` or `"cancelled"`. Retry performs an audited transition back to
+`"running"`: it bumps `run.attempt` by one, appends a `run.recovery` event
+recording the prior status, prior state, prior and new attempt, an optional
+operator reason, and the last terminal evidence (`node.failed`,
+`node.orphaned`, `run.max-rounds-exceeded`, or `run.cancelled`) where available.
+Retry refuses to proceed when a live process owns the run directory
+(`runtime-process.json` with a live pid) and refuses when the workflow source
+has changed since the run was pinned unless the operator explicitly supplies
+`--repin`, in which case the old and new content hashes are recorded in the
+audit event. After reopening the run, retry drives it exactly like resume with
+a bounded step budget. The attempt bump guarantees that the retried node's
+`(state, attempt)` pair is unique in the event log, preserving the §17
+invariant that a started node is always closed by a terminal event and keeping
+orphan detection valid.
+
 ## 14. Standard issues artifact
 
 ```json

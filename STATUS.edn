@@ -30,6 +30,10 @@
    {:status :implemented
     :summary "Interrupted-agent recovery + orphan detection with node.recovered events."
     :evidence ["scripts/test.sh recovery fixture" "src/tesseraft/runtime/core.clj"]}
+   :run-retry-recovery
+   {:status :implemented
+    :summary "Explicit audited `run retry` recovery for terminal failed/cancelled workflow runs: CLI subcommand with --run-dir/--max-steps/--reason/--repin, runtime retry! that refuses non-terminal/live-pid/pin-mismatch states, bumps run.attempt for unique (state, attempt) event-log pairs, appends a durable run.recovery event summarizing prior terminal evidence, and drives the run like resume. Pin check enforces immutable workflow versions; --repin records old/new sha256 hashes. Single-writer guard mirrors cancel!/resume via runtime-process.json pid liveness. Fragment nodes start fresh nested runs at the new attempt while preserving within-attempt durable-internal-run? resume; agent-artifact recovery takes precedence on the retried step. Operator runbook documents triage for node.failed/node.orphaned/run.max-rounds-exceeded/run.cancelled/stale-running cases."
+    :evidence ["src/tesseraft/runtime/core.clj retry!/last-terminal-evidence/retry-allowed-status?/live-runtime-process?" "src/tesseraft/runtime/cli.clj retry command" "test/run_retry.test.py" "scripts/test.sh run retry block" "docs/WORKFLOW_RUNS.md Recovering failed runs" "SPEC.md §13 retry semantics" "docs/CONTROL_PLANE_API.md concurrency/idempotency answer"]}
    :routeapi-architecture
    {:status :implemented
     :summary "Declarative routeApi mapping /api paths to control-plane commands."
