@@ -189,12 +189,16 @@
 (defn retry! [run-dir {:keys [reason repin]}]
   (let [ctx (store/load-context run-dir)
         status (get-in ctx [:run :status])]
-    (when-not (retry-allowed-status? status)
-      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state (retry_requires_failed_or_cancelled)"
-                      {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
+    ;; Single-writer guard comes first: a live runtime-process.json marker
+    ;; means an executing runner owns this run dir, regardless of whether the
+    ;; persisted status is running, failed, or cancelled. Recovery must never
+    ;; race an executing runner.
     (when (live-runtime-process? run-dir)
       (throw (ex-info "Run cannot be retried while owned by a live process (retry_live_process)"
                       {:run-dir run-dir :error "retry_live_process"})))
+    (when-not (retry-allowed-status? status)
+      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state (retry_requires_failed_or_cancelled)"
+                      {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
     (let [current-sha (current-workflow-sha ctx)
           pinned-sha (pinned-workflow-sha ctx)
           pinned-version (get-in ctx [:workflow :version])]
