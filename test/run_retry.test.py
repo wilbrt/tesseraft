@@ -214,7 +214,7 @@ def test_retry_after_process_failure_re_executes_and_appends_recovery_event():
         states = (
             "{:boom {:type :process :title \"Failing process\" :command [\"bash\" \"-lc\" \"python3 "
             + str(script).replace("\\", "\\\\")
-            + \"\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
         )
         wf = write_workflow(tmp, states)
         run_dir = start(tmp, home, wf)
@@ -312,7 +312,7 @@ def test_retry_refuses_live_process():
         states = (
             "{:boom {:type :process :title \"Hang\" :command [\"bash\" \"-lc\" \"python3 "
             + str(script).replace("\\", "\\\\")
-            + \"\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
         )
         wf = write_workflow(tmp, states)
         run_dir = start(tmp, home, wf)
@@ -350,7 +350,7 @@ def test_retry_refuses_pin_mismatch_and_repin_proceeds():
         states = (
             "{:boom {:type :process :title \"Failing process\" :command [\"bash\" \"-lc\" \"python3 "
             + str(script).replace("\\", "\\\\")
-            + \"\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
         )
         wf = write_workflow(tmp, states)
         run_dir = start(tmp, home, wf)
@@ -386,7 +386,7 @@ def test_retry_after_cancel():
         states = (
             "{:boom {:type :process :title \"Hang\" :command [\"bash\" \"-lc\" \"python3 "
             + str(script).replace("\\", "\\\\")
-            + \"\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
         )
         wf = write_workflow(tmp, states)
         run_dir = start(tmp, home, wf)
@@ -433,7 +433,7 @@ def test_retry_after_orphan_re_executes_cleanly():
         states = (
             "{:boom {:type :process :title \"Hang\" :command [\"bash\" \"-lc\" \"python3 "
             + str(script).replace("\\", "\\\\")
-            + \"\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
         )
         wf = write_workflow(tmp, states)
         run_dir = start(tmp, home, wf)
