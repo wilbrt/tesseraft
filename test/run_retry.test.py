@@ -526,7 +526,7 @@ def test_fragment_retry_creates_fresh_attempt():
 
         pi_stub = tmp / "pi-stub.sh"
         calls_file = tmp / "pi-calls.log"
-        write_pi_stub(pi_stub, fail_first=True)
+        write_pi_stub(pi_stub, fail_first=False)
         extra_env = {"PI_BIN": str(pi_stub), "PI_STUB_CALLS": str(calls_file)}
 
         # Run the fragment once to completion (FAIL_FIRST unset -> succeeds).
