@@ -169,6 +169,22 @@
     (when (and wf-file (fs/exists? wf-file))
       (store/sha256 (slurp wf-file)))))
 
+(defn- assert-pinned-workflow-readable! [ctx]
+  (let [wf-file (get-in ctx [:workflow :file])
+        run-dir (get-in ctx [:run :dir])]
+    (when (str/blank? wf-file)
+      (throw (ex-info "Pinned workflow file is missing from run context (retry_missing_workflow_file)"
+                      {:run-dir run-dir :error "retry_missing_workflow_file"})))
+    (when-not (fs/exists? wf-file)
+      (throw (ex-info "Pinned workflow file does not exist (retry_missing_workflow_file)"
+                      {:run-dir run-dir :error "retry_missing_workflow_file" :file wf-file})))
+    (try
+      (spec/read-workflow wf-file)
+      (catch Throwable t
+        (throw (ex-info "Pinned workflow file is unreadable (retry_unreadable_workflow_file)"
+                        {:run-dir run-dir :error "retry_unreadable_workflow_file" :file wf-file}
+                        t))))))
+
 (defn- pinned-workflow-sha [ctx]
   (when-let [version (get-in ctx [:workflow :version])]
     (when (string? version)
@@ -199,6 +215,7 @@
     (when-not (retry-allowed-status? status)
       (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state (retry_requires_failed_or_cancelled)"
                       {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
+    (assert-pinned-workflow-readable! ctx)
     (let [current-sha (current-workflow-sha ctx)
           pinned-sha (pinned-workflow-sha ctx)
           pinned-version (get-in ctx [:workflow :version])]

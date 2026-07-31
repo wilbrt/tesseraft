@@ -582,11 +582,107 @@ def write_fragment_workflow(tmp, fragment_name):
     return path
 
 
+def test_retry_refuses_blocked():
+    def run(tmp):
+        home = tmp / "home"
+        states = (
+            "{:approve {:type :approval :message \"Approve?\" :artifact {:path \"approve/artifact.txt\"}"
+            " :transitions [{:when {:decision \"yes\"} :next :done}]}"
+            " :done {:type :terminal :status :success}}"
+        )
+        wf = write_workflow(tmp, states, state_id="approve", name="blocked-fixture")
+        run_dir = start(tmp, home, wf)
+
+        blocked = step(run_dir, home)
+        assert blocked.returncode == 0, blocked.stderr
+        assert json.loads(blocked.stdout)["run"]["status"] == "blocked"
+
+        events_before = read_events(run_dir)
+        state_before = (run_dir / "state.edn").read_text()
+
+        rejected = retry(run_dir, home)
+        assert rejected.returncode != 0, rejected.stdout
+        assert "retry_requires_failed_or_cancelled" in rejected.stderr, rejected.stderr
+
+        assert (run_dir / "state.edn").read_text() == state_before
+        assert read_events(run_dir) == events_before
+
+    with_tmp(run)
+
+
+def test_retry_refuses_missing_workflow_file():
+    def run(tmp):
+        home = tmp / "home"
+        script = tmp / "attempt.py"
+        write_attempt_script(script)
+        states = (
+            "{:boom {:type :process :title \"Failing process\" :command [\"bash\" \"-lc\" \"python3 "
+            + str(script).replace("\\", "\\\\")
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+        )
+        wf = write_workflow(tmp, states)
+        run_dir = start(tmp, home, wf)
+
+        failed = step(run_dir, home)
+        assert failed.returncode != 0, failed.stdout
+        assert ':status "failed"' in (run_dir / "state.edn").read_text()
+
+        wf.unlink()
+        assert not wf.exists()
+
+        events_before = read_events(run_dir)
+        state_before = (run_dir / "state.edn").read_text()
+
+        rejected = retry(run_dir, home)
+        assert rejected.returncode != 0, rejected.stdout
+        assert "retry_missing_workflow_file" in rejected.stderr, rejected.stderr
+
+        assert (run_dir / "state.edn").read_text() == state_before
+        assert read_events(run_dir) == events_before
+
+    with_tmp(run)
+
+
+def test_retry_refuses_unreadable_workflow_file():
+    def run(tmp):
+        home = tmp / "home"
+        script = tmp / "attempt.py"
+        write_attempt_script(script)
+        states = (
+            "{:boom {:type :process :title \"Failing process\" :command [\"bash\" \"-lc\" \"python3 "
+            + str(script).replace("\\", "\\\\")
+            + "\"] :runtime {:timeout \"10s\"} :next :done} :done {:type :terminal :status :success}}"
+        )
+        wf = write_workflow(tmp, states)
+        run_dir = start(tmp, home, wf)
+
+        failed = step(run_dir, home)
+        assert failed.returncode != 0, failed.stdout
+        assert ':status "failed"' in (run_dir / "state.edn").read_text()
+
+        wf.write_text("this is not valid edn {:broken")
+
+        events_before = read_events(run_dir)
+        state_before = (run_dir / "state.edn").read_text()
+
+        rejected = retry(run_dir, home)
+        assert rejected.returncode != 0, rejected.stdout
+        assert "retry_unreadable_workflow_file" in rejected.stderr, rejected.stderr
+
+        assert (run_dir / "state.edn").read_text() == state_before
+        assert read_events(run_dir) == events_before
+
+    with_tmp(run)
+
+
 if __name__ == "__main__":
     test_retry_after_process_failure_re_executes_and_appends_recovery_event()
     test_retry_refuses_running()
     test_retry_refuses_done()
     test_retry_refuses_live_process()
+    test_retry_refuses_blocked()
+    test_retry_refuses_missing_workflow_file()
+    test_retry_refuses_unreadable_workflow_file()
     test_retry_refuses_pin_mismatch_and_repin_proceeds()
     test_retry_after_cancel()
     test_retry_after_orphan_re_executes_cleanly()
