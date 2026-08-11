@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="0.1.0"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+VERSION="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$ROOT_DIR/package.json")"
+if [[ -z "$VERSION" ]]; then
+  echo "tesseraft: package version is missing" >&2
+  exit 1
+fi
 cmd="${1:-}"
 case "$cmd" in
   --version|version)
@@ -17,28 +22,39 @@ case "$cmd" in
     ;;
   node)
     shift
-    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     exec bb --config "$ROOT_DIR/bb.edn" node "$@"
     ;;
   fragment)
     shift
-    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     exec bb --config "$ROOT_DIR/bb.edn" fragment "$@"
     ;;
   control-plane)
     shift
-    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     exec bb --config "$ROOT_DIR/bb.edn" control-plane "$@"
+    ;;
+  migrate)
+    shift
+    exec bb --config "$ROOT_DIR/bb.edn" migrate "$@"
     ;;
   web)
     shift
-    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     SERVER="$ROOT_DIR/web/dist-server/server.js"
     if [[ ! -f "$SERVER" ]]; then
       echo "Web UI server is not built. Run: npm run web:build" >&2
       exit 1
     fi
     exec node "$SERVER" "$@"
+    ;;
+  doctor)
+    shift
+    profile="core"
+    if [[ "${1:-}" == "--profile" ]]; then
+      [[ -n "${2:-}" ]] || { echo "Missing value for --profile" >&2; exit 2; }
+      profile="$2"
+      shift 2
+    fi
+    [[ "$#" -eq 0 ]] || { echo "Usage: tesseraft doctor [--profile core|web|test|e2e]" >&2; exit 2; }
+    exec "$ROOT_DIR/scripts/check_deps.sh" "$profile"
     ;;
   ""|-h|--help|help)
     echo "Usage: tesseraft <command> [args]"
@@ -48,13 +64,15 @@ case "$cmd" in
     echo "  run       Run or inspect workflow executions"
     echo "  node      Validate and manage self-contained node packages"
     echo "  fragment  Validate and manage self-contained fragment packages"
-    echo "  control-plane  Inspect workflows and runs via the read-only local API"
-    echo "  web       Serve the local read-only Web UI"
+    echo "  control-plane  Inspect and mutate projects, workflows, settings, and runs"
+    echo "  migrate   Inspect or apply project, credential, and workflow migrations"
+    echo "  web       Serve the local Web console and project-scoped API"
+    echo "  doctor    Verify pinned dependencies for a core, web, test, or e2e profile"
     echo "  version   Print version information"
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Usage: tesseraft <lint|run|node|fragment|control-plane|web|version> [args]" >&2
+    echo "Usage: tesseraft <lint|run|node|fragment|control-plane|migrate|web|doctor|version> [args]" >&2
     exit 2
     ;;
 esac

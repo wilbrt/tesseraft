@@ -1,0 +1,42 @@
+{:version 1
+ :deprecations
+ [{:id :workflow-handler/jira-fetch-ticket
+   :category :deprecated-workflow-behavior
+   :replacement :work-tracker/fetch-item
+   :introduced "2026-08-10"
+   :removal-condition "all maintained workflows and migration fixtures use normalized work items"}
+  {:id :settings/raw-github-token
+   :category :persisted-legacy-data
+   :replacement :credentials/credential-ref
+   :introduced "2026-08-10"
+   :removal-condition "credential migration is applied and legacy settings readers are migration-only"}
+  {:id :settings/raw-jira-token
+   :category :persisted-legacy-data
+   :replacement :credentials/credential-ref
+   :introduced "2026-08-10"
+   :removal-condition "credential migration is applied and legacy settings readers are migration-only"}
+  {:id :project/connections-jira
+   :category :persisted-legacy-data
+   :replacement :project/connections-work-tracker
+   :introduced "2026-08-10"
+   :removal-condition "project descriptor v2 migration coverage is complete"}
+  {:id :project/connections-github
+   :category :persisted-legacy-data
+   :replacement :project/connections-code-host
+   :introduced "2026-08-10"
+   :removal-condition "project descriptor v2 migration coverage is complete"}
+  {:id :project/descriptor-v1
+   :category :persisted-legacy-data
+   :replacement :project/descriptor-v2
+   :introduced "2026-08-10"
+   :removal-condition "v2 dry-run/apply migration is idempotent and conflict-tested"}
+  {:id :api/unscoped-project-routes
+   :category :deprecated-api-behavior
+   :replacement :api/project-scoped-routes
+   :introduced "2026-08-10"
+   :removal-condition "all maintained Web and CLI clients use project-scoped routes"}
+  {:id :command/tesseraft-lint
+   :category :command-alias
+   :replacement :command/tesseraft-lint-subcommand
+   :introduced "2026-08-10"
+   :removal-condition "none; direct delegating aliases may remain"}]}

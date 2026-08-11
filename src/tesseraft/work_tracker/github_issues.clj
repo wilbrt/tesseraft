@@ -3,16 +3,15 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [tesseraft.runtime.store :as store]
-    [tesseraft.work-tracker.plane :as plane])
+    [tesseraft.work-tracker.errors :as errors]
+    [tesseraft.work-tracker.http :as http])
   (:import
-    [java.net URI URLEncoder]
-    [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse HttpResponse$BodyHandlers HttpTimeoutException]
-    [java.time Duration]))
+    [java.net URLEncoder]))
 
 (def ^:dynamic *http-request* nil)
 
-(def default-timeout-ms plane/default-timeout-ms)
-(def max-timeout-ms plane/max-timeout-ms)
+(def default-timeout-ms http/default-timeout-ms)
+(def max-timeout-ms http/max-timeout-ms)
 
 (defn- present-string [v]
   (when (string? v) (not-empty (str/trim v))))
@@ -20,39 +19,19 @@
 (defn- encode-segment [s]
   (-> (URLEncoder/encode (str s) "UTF-8") (str/replace "+" "%20")))
 
-(defn- response-headers-map [headers]
-  (cond
-    (map? headers) headers
-    headers (into {} (for [[k vs] (.map headers)] [(str k) (first vs)]))
-    :else {}))
-
-(defn production-http-request [{:keys [method url headers timeout-ms]}]
-  (let [timeout (Duration/ofMillis (long (or timeout-ms default-timeout-ms)))
-        client (-> (HttpClient/newBuilder) (.connectTimeout timeout) (.build))
-        builder (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout timeout)
-                    (.method (or method "GET") (HttpRequest$BodyPublishers/noBody)))]
-    (doseq [[k v] headers] (.header builder (str k) (str v)))
-    (let [response (.send client (.build builder) (HttpResponse$BodyHandlers/ofString))]
-      {:status (.statusCode response)
-       :headers (response-headers-map (.headers response))
-       :body (.body response)})))
+(def production-http-request http/production-request)
 
 (defn- http-request [request]
-  (try
-    ((or *http-request* production-http-request) request)
-    (catch HttpTimeoutException _ {:error :timeout})
-    (catch Throwable _ {:error :transport})))
+  (http/request *http-request* request))
 
 (defn- response-value [response k]
-  (or (get response k) (get response (name k))))
+  (http/response-value response k))
 
 (defn- http-status [response]
-  (let [status (response-value response :status)]
-    (when (integer? status) status)))
+  (http/status response))
 
 (defn- header-value [headers name]
-  (some (fn [[k v]] (when (= (str/lower-case (str k)) (str/lower-case name)) (str v))) headers))
+  (http/header-value headers name))
 
 (defn- safe-token [v max-len]
   (when-let [s (present-string v)]
@@ -73,18 +52,12 @@
           s))))
 
 (defn- safe-rate-limit-metadata [headers]
-  (let [remaining (bounded-int-string (header-value headers "X-RateLimit-Remaining") 1000000000)
-        reset (bounded-int-string (header-value headers "X-RateLimit-Reset") 4102444800)
-        retry (safe-retry-token (header-value headers "Retry-After"))]
-    (cond-> {}
-      remaining (assoc :remaining remaining)
-      reset (assoc :reset reset)
-      retry (assoc :retry_after retry))))
+  (http/rate-limit-metadata headers))
 
 (defn- failure
   ([category message] (failure category message {}))
   ([category message details]
-   (merge {:ok false :status "error" :provider "github-issues" :category category :message message} details)))
+   (errors/failure "github-issues" category message details)))
 
 (defn- parse-timeout-ms [v]
   (try
@@ -96,8 +69,7 @@
     (catch Throwable _ nil)))
 
 (defn- bounded-timeout-ms [v]
-  (when-let [parsed (parse-timeout-ms v)]
-    (when (pos? parsed) (min max-timeout-ms (long parsed)))))
+  (http/bounded-timeout-ms v))
 
 (defn- repository? [s]
   (boolean (when-let [r (present-string s)] (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" r))))

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=80,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tesseraft-test-support"
+version = "0.1.0"
+description = "Declared Python dependencies for Tesseraft contract and integration tests"
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema==4.26.0",
+  "pytest==9.1.1",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["*.test.py"]
+pythonpath = ["test"]
+addopts = ["-ra", "--import-mode=importlib"]

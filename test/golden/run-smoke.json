@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "state": "done",
+  "round": 1,
+  "attempt": 2,
+  "events": [
+    {"event": "project.resolved"},
+    {"event": "run.started"},
+    {"event": "node.started", "state": "start", "attempt": 1},
+    {"event": "node.finished", "state": "start", "attempt": 1},
+    {"event": "transition.selected", "from": "start", "to": "done"},
+    {"event": "run.finished", "state": "done"}
+  ]
+}

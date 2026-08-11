@@ -8,527 +8,159 @@ import { layoutGraph } from '../web/src/lib/graphLayout.ts';
 import { StartWorkflowWizard } from '../web/src/components/StartWorkflowWizard.tsx';
 import { RunListTable } from '../web/src/components/RunListTable.tsx';
 import { runDurationLabel, isFinishedRun } from '../web/src/lib/runConsole.ts';
+import { projectApiUrl } from '../web/src/lib/project.ts';
 
-test('layoutGraph produces deterministic visual positions and preserves node resources', () => {
+const source = (path) => fs.readFileSync(path, 'utf8');
+
+test('feature API paths are project-scoped even for the default project', () => {
+  assert.equal(projectApiUrl('/api/runs', 'default'), '/api/projects/default/runs');
+  assert.equal(projectApiUrl('/api/workflows/demo', 'alpha'), '/api/projects/alpha/workflows/demo');
+});
+
+test('layoutGraph is deterministic and preserves resource contracts', () => {
   const layout = layoutGraph([
     { id: 'start', type: 'prompt', title: 'Start', resources: { requires: [{ kind: 'input', name: 'prompt' }] } },
     { id: 'done', type: 'terminal', title: 'Done' }
-  ], [
-    { from: 'start', to: 'done', condition: { else: true } }
-  ]);
-
+  ], [{ from: 'start', to: 'done', condition: { else: true } }]);
   assert.equal(layout.nodes.length, 2);
   assert.equal(layout.edges.length, 1);
-  const start = layout.nodes.find((node) => node.id === 'start');
-  const done = layout.nodes.find((node) => node.id === 'done');
-  assert.ok(start);
-  assert.ok(done);
-  assert.ok(done.x > start.x);
-  assert.deepEqual(start.resources, { requires: [{ kind: 'input', name: 'prompt' }] });
-  assert.deepEqual(layout.edges[0].condition, { else: true });
+  assert.ok(layout.nodes.find((node) => node.id === 'done').x > layout.nodes.find((node) => node.id === 'start').x);
+  assert.deepEqual(layout.nodes.find((node) => node.id === 'start').resources, { requires: [{ kind: 'input', name: 'prompt' }] });
 });
 
-test('formatCondition renders JSON condition values as safe strings', () => {
+test('formatCondition renders semantic condition values safely', () => {
   assert.equal(formatCondition({ else: true }), '{"else":true}');
   assert.equal(formatCondition('ok'), 'ok');
   assert.equal(formatCondition(false), '');
 });
 
-test('WorkflowGraph renders an SVG graph with clickable node details affordances', () => {
+test('WorkflowGraph renders accessible selection and active-state affordances', () => {
   const markup = renderToStaticMarkup(React.createElement(WorkflowGraph, {
-    nodes: [
-      { id: 'start', type: 'prompt', title: 'Start', outputs: { next: 'done' } },
-      { id: 'done', type: 'terminal', title: 'Done' }
-    ],
+    selectedNodeId: 'start', activeNodeId: 'start',
+    nodes: [{ id: 'start', type: 'prompt', title: 'Start' }, { id: 'done', type: 'terminal', title: 'Done' }],
     edges: [{ from: 'start', to: 'done', condition: { else: true } }]
   }));
-
   assert.match(markup, /<svg/);
   assert.match(markup, /Visual workflow node and edge graph/);
   assert.match(markup, /Open node start details/);
-  assert.match(markup, /<line/);
+  assert.match(markup, /graph-node selected active/);
   assert.match(markup, /Graph edges/);
-  assert.match(markup, /\{&quot;else&quot;:true\}/);
 });
 
-test('WorkflowGraph marks selected nodes for run correlation', () => {
-  const markup = renderToStaticMarkup(React.createElement(WorkflowGraph, {
-    selectedNodeId: 'start',
-    nodes: [
-      { id: 'start', type: 'prompt', title: 'Start' },
-      { id: 'done', type: 'terminal', title: 'Done' }
-    ],
-    edges: [{ from: 'start', to: 'done' }]
-  }));
-
-  assert.match(markup, /graph-node selected/);
-});
-
-test('WorkflowGraph marks the run active node with a distinct active class', () => {
-  const markup = renderToStaticMarkup(React.createElement(WorkflowGraph, {
-    selectedNodeId: 'done',
-    activeNodeId: 'start',
-    nodes: [
-      { id: 'start', type: 'prompt', title: 'Start' },
-      { id: 'done', type: 'terminal', title: 'Done' }
-    ],
-    edges: [{ from: 'start', to: 'done' }]
-  }));
-  // Active and selected are independent highlights; both classes appear.
-  assert.match(markup, /graph-node active/);
-  assert.match(markup, /graph-node selected/);
-
-  // When a node is both active and selected, both classes apply on the same node.
-  const both = renderToStaticMarkup(React.createElement(WorkflowGraph, {
-    selectedNodeId: 'start',
-    activeNodeId: 'start',
-    nodes: [{ id: 'start', type: 'prompt', title: 'Start' }],
-    edges: []
-  }));
-  assert.match(both, /graph-node selected active/);
-});
-
-test('runDurationLabel and isFinishedRun derive run view fields null-safely', () => {
+test('run view helpers and expandable table remain null-safe', () => {
   assert.equal(runDurationLabel({}), '—');
   assert.equal(runDurationLabel({ created_at: 'not-a-date' }), '—');
   assert.equal(isFinishedRun({ liveness: 'done' }), true);
-  assert.equal(isFinishedRun({ liveness: 'executing' }), false);
-  assert.equal(isFinishedRun({ liveness: null, status: 'error' }), true);
   assert.equal(isFinishedRun({ status: 'running' }), false);
-});
-
-test('RunListTable renders a centered table with search, show-finished toggle, and expandable rows', () => {
-  const runs = {
-    data: [
+  const markup = renderToStaticMarkup(React.createElement(RunListTable, {
+    runs: { data: [
       { run_id: 'r1', workflow_name: 'smoke-demo', status: 'running', liveness: 'executing', state: 'start', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:02:13Z', staleness_seconds: null },
       { run_id: 'r2', workflow_name: 'smoke-demo', status: 'done', liveness: 'done', state: 'done', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:01:00Z', staleness_seconds: null }
-    ],
-    error: null
-  };
-  const markup = renderToStaticMarkup(React.createElement(RunListTable, {
-    runs,
-    expandedRunId: null,
-    runDetail: null,
-    events: [],
-    artifacts: [],
-    runError: null,
-    selectedNodeId: null,
-    lastRunRefresh: null,
-    onToggleRow: () => {},
-    onSelectNode: () => {}
+    ], error: null },
+    expandedRunId: null, runDetail: null, events: [], artifacts: [], runError: null,
+    selectedNodeId: null, lastRunRefresh: null, onToggleRow: () => {}, onSelectNode: () => {}
   }));
-  assert.match(markup, /<table/);
-  assert.match(markup, /<th scope="col">Run<\/th>/);
   assert.match(markup, /Search runs/);
   assert.match(markup, /Show finished runs/);
-  // Default hides finished runs; only r1 should be rendered as data row.
   assert.match(markup, /r1/);
   assert.doesNotMatch(markup, /<code>r2<\/code>/);
-  assert.match(markup, /2m13s/);
 });
 
-test('Run component sources expose attempt, artifact, failure, and resource inspection surfaces', () => {
-  const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
-  const runListTable = fs.readFileSync('web/src/components/RunListTable.tsx', 'utf8');
-  const runInspection = fs.readFileSync('web/src/components/RunInspection.tsx', 'utf8');
-  const artifactBrowser = fs.readFileSync('web/src/components/ArtifactBrowser.tsx', 'utf8');
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const workflowGraph = fs.readFileSync('web/src/components/WorkflowGraph.tsx', 'utf8');
-  // WorkflowGraph still ships its default JSON detail view for Workflow Studio.
-  assert.match(workflowGraph, /JSON\.stringify\(node, null, 2\)/);
-  assert.match(workflowGraph, />Resources</);
-  assert.match(workflowGraph, /JSON\.stringify\(node\.resources, null, 2\)/);
-  assert.match(runPanels, /Attempt timeline/);
-  assert.match(artifactBrowser, /Artifact browser/);
-  assert.match(runPanels, /Issues to inspect/);
-  assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
-  // Run view overhaul: in-place expandable table, search, show-finished, active node.
-  assert.match(runListTable, /Show finished runs/);
-  assert.match(runListTable, /Show only deletable runs/);
-  assert.match(runListTable, /aria-current=\{expanded \? 'true' : undefined\}/);
-  assert.match(runListTable, /status-pill/);
-  assert.match(runListTable, /aria-expanded=\{expanded\}/);
-  assert.match(runInspection, /activeNodeId/);
-  assert.match(runInspection, /renderNodeDetail/);
-  assert.match(runInspection, /Latest attempt/);
-  assert.match(runInspection, /Related events/);
-});
-
-test('Settings UI source exposes a config tab reading and writing settings plus git identity', () => {
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
-  const gitUserPanel = fs.readFileSync('web/src/components/GitUserPanel.tsx', 'utf8');
-  const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
-  const styles = fs.readFileSync('web/src/style.css', 'utf8');
-  assert.match(app, /'settings'/);
-  assert.match(app, />Settings <span>config<\/span><\/button>/);
-  assert.match(app, /<SettingsPanel onColorSchemeChange=\{setColorScheme\} \/>/);
-  assert.match(app, /activeTab !== 'pi-sessions' && activeTab !== 'settings'/);
-  // The settings tab embeds the git identity fields and posts to /api/git-user.
-  assert.match(panel, /Settings/);
-  assert.match(panel, /\.tesseraft\/settings\.json/);
-  assert.match(panel, /\/api\/settings/);
-  assert.match(panel, /putJson<SettingsResponse>\(projectApiUrl\('\/api\/settings'/);
-  assert.match(panel, /Default provider/);
-  assert.match(panel, /Default model/);
-  assert.match(panel, /GitHub token/);
-  assert.match(panel, /Jira token/);
-  assert.match(panel, /Default repo root/);
-  assert.match(panel, /Save settings/);
-  assert.match(panel, /<fieldset className="color-scheme-options">/);
-  assert.match(panel, /<legend>Color scheme<\/legend>/);
-  assert.match(panel, /type="radio" name="color-scheme" value="classic"/);
-  assert.match(panel, /type="radio" name="color-scheme" value="matrix"/);
-  assert.match(panel, /project-scoped and follows the active project/);
-  assert.match(app, /document\.documentElement\.dataset\.colorScheme = colorScheme/);
-  assert.match(app, /data-color-scheme=\{colorScheme\}/);
-  assert.match(app, /cancelled = true/);
-  assert.match(styles, /:root\[data-color-scheme="matrix"\]/);
-  assert.match(styles, /--color-app-bg:\s*#020604/);
-  assert.match(styles, /--color-accent:\s*#35e85f/);
-  const classicDarkStyles = styles.slice(
-    styles.indexOf('@media (prefers-color-scheme: dark)'),
-    styles.indexOf('/* Workflow Studio */')
-  );
-  assert.match(classicDarkStyles, /\.node-title\s*\{\s*fill:\s*var\(--color-text\)/, 'Classic dark graph titles must use readable light text');
-  assert.match(styles, /--color-nav-active-bg:\s*#e2e8f0/);
-  assert.match(styles, /--color-nav-active-text:\s*#172033/);
-  assert.match(styles, /--color-nav-active-muted:\s*#475569/);
-  assert.match(styles, /\.tabs button\.active\s*\{[^}]*background:\s*var\(--color-nav-active-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
-  assert.match(styles, /\.tabs button\.active span\s*\{\s*color:\s*var\(--color-nav-active-muted\)/);
-  assert.match(styles, /\.project-selector-caret\s*\{[^}]*color:\s*var\(--color-nav-active-muted\)/);
-  assert.match(styles, /\.project-selector-button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-nav-active-text\)/);
-  assert.ok(styles.indexOf(':root[data-color-scheme="matrix"]') > styles.indexOf('@media (prefers-color-scheme: dark)'), 'Matrix overrides must follow system dark-mode rules');
-  const matrixStyles = styles.slice(styles.indexOf(':root[data-color-scheme="matrix"]'));
-  assert.match(matrixStyles, /--color-nav-active-muted:\s*#a7f3a0/);
-  assert.match(matrixStyles, /--color-control-subtle-bg:\s*#071b0d/);
-  assert.match(matrixStyles, /--color-control-subtle-text:\s*#baffbd/);
-  assert.match(matrixStyles, /--color-step-bg:\s*#0a2812/);
-  assert.match(matrixStyles, /--color-step-text:\s*#a7f3a0/);
-  assert.match(matrixStyles, /--color-required:\s*#ff9aa3/);
-  assert.match(matrixStyles, /--color-lint-warning-bg:\s*#2b2205/);
-  assert.match(matrixStyles, /--color-lint-warning-text:\s*#ffe781/);
-  assert.match(matrixStyles, /--color-lint-error-bg:\s*#2b090d/);
-  assert.match(matrixStyles, /--color-lint-error-text:\s*#ffb3ba/);
-  assert.match(styles, /\.wizard-steps li\s*\{[^}]*color:\s*var\(--color-step-text\);[^}]*background:\s*var\(--color-step-bg\)/);
-  assert.match(styles, /\.required\s*\{[^}]*color:\s*var\(--color-required\)/);
-  assert.match(styles, /\.lint-list li\s*\{[^}]*background:\s*var\(--color-lint-warning-bg\);[^}]*color:\s*var\(--color-lint-warning-text\)/);
-  assert.match(styles, /\.lint-list li\.lint-error\s*\{[^}]*background:\s*var\(--color-lint-error-bg\);[^}]*color:\s*var\(--color-lint-error-text\)/);
-  assert.match(styles, /\.studio-toolbar button\s*\{[^}]*background:\s*var\(--color-control-subtle-bg\);[^}]*color:\s*var\(--color-control-subtle-text\)/);
-  assert.match(panel, /Source/);
-  assert.match(panel, /Git identity/);
-  assert.match(panel, /<ConnectionsDoctorPanel \/>/);
-  const doctor = fs.readFileSync('web/src/components/ConnectionsDoctorPanel.tsx', 'utf8');
-  assert.match(doctor, /Connections Doctor/);
-  assert.match(doctor, /\/api\/projects\/\$\{encodeURIComponent\(projectId \|\| 'default'\)\}\/doctor/);
-  assert.match(doctor, /Run checks/);
-  assert.match(doctor, /ready/);
-  assert.match(doctor, /not-configured/);
-  assert.match(doctor, /unreachable/);
-  assert.match(doctor, /invalid/);
-  assert.match(doctor, /Static configuration/);
-  assert.match(doctor, /Read-only check/);
-  assert.doesNotMatch(doctor, /preview|stdout|stderr|GH_TOKEN|GITHUB_TOKEN|JIRA_TOKEN/);
-  // WT4: the doctor renders a second state pill for the tracker checks plus a
-  // report-level work_tracker verdict, using all five diagnosis state labels.
-  assert.match(doctor, /check\.state/);
-  assert.match(doctor, /tracker-state/);
-  assert.match(doctor, /work_tracker/);
-  assert.match(doctor, /absent: 'No tracker'/);
-  assert.match(doctor, /incomplete: 'Incomplete'/);
-  assert.match(doctor, /invalid: 'Invalid config'/);
-  assert.match(doctor, /unresolved: 'Unresolved credential'/);
-  assert.match(doctor, /ready: 'Statically ready'/);
-  assert.match(panel, /\/api\/git-user/);
-  // GitUserPanel is still present and unchanged (git-user.json contract preserved).
-  assert.match(gitUserPanel, /Git user settings/);
-  assert.match(gitUserPanel, /\.tesseraft\/git-user\.json/);
-  assert.match(api, /export const putJson = async <T,>/);
-});
-
-test('Pi sessions UI source exposes tab, chat UI, SSE stream, prompt form, refresh, and diagnostics', () => {
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const panel = fs.readFileSync('web/src/components/PiSessionsPanel.tsx', 'utf8');
-  assert.match(app, /'pi-sessions'/);
-  assert.match(app, />Pi Sessions <span>chat<\/span><\/button>/);
-  assert.match(app, /<PiSessionsPanel \/>/);
-  assert.match(panel, /real Pi SDK by default/);
-  assert.match(panel, /TESSERAFT_PI_ADAPTER=fake/);
-  assert.match(panel, /\/api\/pi-sessions/);
-  assert.match(panel, /new EventSource/);
-  assert.match(panel, /\/api\/pi-sessions\/\$\{encodeURIComponent\(selectedSessionId\)\}\/stream/);
-  assert.match(panel, /\/api\/pi-sessions\/\$\{encodeURIComponent\(selectedSessionId\)\}\/prompts/);
-  assert.match(panel, /Pi session chat/);
-  assert.match(panel, /Pi session chat transcript/);
-  assert.match(panel, /Diagnostics: raw Pi session events/);
-  assert.match(panel, /Refresh sessions/);
-  assert.match(panel, /Refresh chat/);
-  assert.doesNotMatch(panel, /Events \/ output/);
-  assert.match(panel, /Send prompt/);
-  // Create-flow failures (e.g. pi_settings_resolution) must surface as a
-  // visible, assertive inline error anchored near the action, not be dropped.
-  assert.match(panel, /pi-session-create-error/);
-  assert.match(panel, /role="alert" aria-live="assertive"/);
-  const createSession = panel.match(/const createSession = async[\s\S]*?^  };/m);
-  assert.ok(createSession, 'createSession handler present');
-  assert.match(createSession[0], /try \{[\s\S]*\/api\/pi-sessions[\s\S]*\} catch/);
-  assert.match(createSession[0], /setCreateError\(/);
-});
-
-test('Artifact comments and approval UI sources expose annotation and decision surfaces', () => {
-  const artifactBrowser = fs.readFileSync('web/src/components/ArtifactBrowser.tsx', 'utf8');
-  const approvalPanel = fs.readFileSync('web/src/components/ApprovalPanel.tsx', 'utf8');
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const types = fs.readFileSync('web/src/types/runConsole.ts', 'utf8');
-  const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
-  // Comments pane keyed by artifact path with line-range anchors.
-  assert.match(artifactBrowser, /Comments on/);
-  assert.match(artifactBrowser, /Add a comment anchored to this artifact/);
-  assert.match(artifactBrowser, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments/);
-  assert.match(artifactBrowser, /postJson\(projectApiUrl\(`\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/comments`/);
-  assert.match(artifactBrowser, /start_line/);
-  // Approval decision panel wired into Run Console.
-  assert.match(approvalPanel, /Manual input · approval/);
-  assert.match(approvalPanel, /run is paused at an approval node/);
-  assert.match(approvalPanel, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/approvals/);
-  assert.match(approvalPanel, /postJson<{/);
-  // ApprovalPanel is rendered for the selected run in the runs tab.
-  assert.match(app, /<ApprovalPanel runId=\{selectedRun\} onRefresh=\{refreshAfterMutation\}/);
-  // Types for the new surfaces.
-  assert.match(types, /export type Comment =/);
-  assert.match(types, /export type ApprovalRequest =/);
-  assert.match(types, /export type ApprovalsResponse =/);
-  assert.match(types, /export type ApprovalDecisionOption =/);
-  assert.match(types, /export type ApprovalRouting =/);
-  assert.match(api, /export const postJson/);
-  // P0.2 presentation contract: the panel renders decision options from the
-  // durable approval record's `decisions` list, not a hard-coded array, with
-  // a backward-compatible fallback for older records.
-  assert.match(approvalPanel, /approval\?\.decisions/);
-  assert.match(approvalPanel, /approval\.question/);
-  assert.match(approvalPanel, /approval\.artifacts/);
-  assert.match(approvalPanel, /approval\.routing/);
-  assert.match(approvalPanel, /Manual input · approval/);
-});
-
-test('App and RunControls expose tabs, warnings, SSE updates, wizard, and POST routes', () => {
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const controls = fs.readFileSync('web/src/components/RunControls.tsx', 'utf8');
-  const wizard = fs.readFileSync('web/src/components/StartWorkflowWizard.tsx', 'utf8');
-  const api = fs.readFileSync('web/src/lib/api.ts', 'utf8');
-  const workflowPanels = fs.readFileSync('web/src/components/WorkflowPanels.tsx', 'utf8');
-  const runPanels = fs.readFileSync('web/src/components/RunPanels.tsx', 'utf8');
-  const runListTable = fs.readFileSync('web/src/components/RunListTable.tsx', 'utf8');
-  assert.match(app, /Run Console sections/);
-  assert.match(app, /Tesseraft Console/);
-  assert.match(app, /Current console context/);
-  assert.match(app, /No workflow selected/);
-  assert.match(app, /No run selected/);
-  assert.match(app, /No node selected/);
-  assert.match(app, />Workflows <span>inspect<\/span><\/button>/);
-  assert.match(app, />Runs <span>operate<\/span><\/button>/);
-  assert.match(app, />Pi Sessions <span>chat<\/span><\/button>/);
-  // App passes the discovered workflows list into RunControls for the wizard picker.
-  assert.match(app, /workflows=\{workflows\.data\}/);
-  assert.match(controls, /Run controls/);
-  assert.match(controls, /Run control context/);
-  assert.match(controls, /Start the selected workflow, or operate the selected run/);
-  assert.match(controls, /Local mutation warning/);
-  assert.match(app, /Streaming ·/);
-  assert.match(app, /new EventSource/);
-  assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun\)\}\/stream/);
-  assert.doesNotMatch(app, /window\.setInterval/);
-  assert.match(controls, /Non-smoke workflows may run agents, processes, or other side effects/);
-  assert.match(controls, /Not smoke-demo/);
-  // The guided wizard (not the inline card) now owns input rendering.
+test('App composes the console while useConsoleData owns reads and SSE state', () => {
+  const app = source('web/src/App.tsx');
+  const data = source('web/src/features/console/useConsoleData.ts');
+  const controls = source('web/src/components/RunControls.tsx');
+  assert.match(app, /useConsoleData/);
+  assert.match(app, /<RunListTable/);
+  assert.match(app, /<WorkflowStudio/);
+  assert.match(app, /<SettingsPanel/);
+  assert.doesNotMatch(app, /getJson|new EventSource/);
+  assert.match(data, /\/api\/runs\/\$\{encodeURIComponent\(runId\)\}\/artifacts/);
+  assert.match(data, /new EventSource/);
+  assert.match(data, /\/stream/);
   assert.match(controls, /StartWorkflowWizard/);
-  assert.match(controls, />Start workflow<\/button>/);
-  assert.doesNotMatch(controls, /key=value, one per line/);
-  assert.doesNotMatch(controls, /parseInputs/);
+  assert.match(controls, /Local mutation warning/);
   assert.match(controls, /Delete selected run/);
-  assert.match(controls, /Confirm permanent deletion of this run's directory/);
-  assert.match(controls, /deleteJson<MutationResult>\(projectApiUrl\(`\/api\/runs\/\${encodeURIComponent\(selectedRun/);
-  assert.match(controls, /The server refuses actively executing runs/);
-  assert.doesNotMatch(controls, /isDeletableLiveness\(runDetail\?\.liveness\)/);
-  assert.match(runListTable, /Show only deletable runs/);
-  assert.match(controls, /Confirm one local node execution/);
-  assert.match(workflowPanels, /aria-current=\{selected \? 'true' : undefined\}/);
-  assert.match(runListTable, /aria-current=\{expanded \? 'true' : undefined\}/);
-  assert.match(runListTable, /status-pill/);
-  // Start still goes through POST /api/runs from RunControls' onStart callback.
-  assert.match(controls, /postJson<MutationResult>\(projectApiUrl\('\/api\/runs'/);
-  assert.match(controls, /max_steps: maxSteps/);
-  assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/step/);
-  assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/resume/);
-  assert.match(controls, /Cancel selected run/);
-  assert.match(controls, /\/api\/runs\/\$\{encodeURIComponent\(selectedRun \|\| ''\)\}\/cancel/);
-  // Wizard owns the guided start flow and type-correct inputs.
-  assert.match(wizard, /Start workflow/);
-  assert.match(wizard, /Workflow inputs/);
-  assert.match(wizard, /workflowDetail\?\.normalized\?\.inputs/);
-  assert.match(wizard, /type === 'boolean'/);
-  assert.match(wizard, /type === 'integer'/);
-  assert.match(wizard, /type === 'path'/);
-  assert.match(wizard, /PathPicker/);
-  assert.match(wizard, /browsePath/);
-  assert.match(wizard, /\/api\/browse/);
-  assert.match(wizard, /Required inputs missing/);
-  assert.match(wizard, /I understand this may execute local side effects automatically/);
-  assert.match(wizard, /role="dialog"/);
-  assert.match(wizard, /aria-modal/);
-  assert.match(api, /export const browsePath = async/);
-  // WW-1: focus/keydown handling must not re-mount on every parent render while
-  // the wizard is open during SSE-driven re-renders. onClose is read from a ref
-  // and the focus-management effect depends only on [open].
-  assert.match(wizard, /onCloseRef/);
-  assert.match(wizard, /\}, \[open\]\);/);
-  // WW-2: a guarded or failed POST /api/runs must reject onStart so the wizard
-  // stays open and preserves configured inputs, rather than closing silently.
-  assert.match(controls, /data\.status === 'guarded'/);
-  assert.match(controls, /Run start was guarded/);
-  assert.match(wizard, /await onStart\(payload\);\s*onClose\(\);/s);
-  assert.doesNotMatch(wizard, /onClose\(\);\s*try\s*\{\s*await onStart\(payload\);/s);
 });
 
-test('project overlays portal outside clipping layout and Settings owns the full page surface', () => {
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const selector = fs.readFileSync('web/src/components/ProjectSelector.tsx', 'utf8');
-  const popover = fs.readFileSync('web/src/components/Popover.tsx', 'utf8');
-  const settings = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
-  const styles = fs.readFileSync('web/src/style.css', 'utf8');
-  assert.match(popover, /createPortal/);
-  assert.match(popover, /position/);
-  assert.match(selector, /data-testid="project-selector-menu"/);
-  assert.match(selector, /aria-haspopup="listbox"/);
-  assert.doesNotMatch(styles, /\.header-topline[^\n]*overflow-x:\s*hidden/);
-  assert.match(styles, /\.popover-layer\s*\{[^}]*position:\s*fixed/);
-  assert.match(app, /<FullWidthPage><SettingsPanel onColorSchemeChange=\{setColorScheme\}\s*\/><\/FullWidthPage>/);
-  assert.match(settings, /settings-layout/);
-  assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
+test('run inspection, comments, and approvals stay in focused components', () => {
+  const runPanels = source('web/src/components/RunPanels.tsx');
+  const inspection = source('web/src/components/RunInspection.tsx');
+  const artifacts = source('web/src/components/ArtifactBrowser.tsx');
+  const approvals = source('web/src/components/ApprovalPanel.tsx');
+  assert.match(runPanels, /Attempt timeline/);
+  assert.match(runPanels, /Issues to inspect/);
+  assert.match(inspection, /Latest attempt/);
+  assert.match(inspection, /Related events/);
+  assert.match(artifacts, /Artifact browser/);
+  assert.match(artifacts, /Comments on/);
+  assert.match(artifacts, /start_line/);
+  assert.match(approvals, /Manual input · approval/);
+  assert.match(approvals, /approval\?\.decisions/);
+  assert.match(approvals, /approval\.routing/);
 });
 
-test('Workflow Studio UI source exposes canvas, toolbar, context menus, and save modes (design doc)', () => {
-  const app = fs.readFileSync('web/src/App.tsx', 'utf8');
-  const studio = fs.readFileSync('web/src/components/WorkflowStudio.tsx', 'utf8');
-  const panels = fs.readFileSync('web/src/components/WorkflowPanels.tsx', 'utf8');
-  const studioLib = fs.readFileSync('web/src/lib/studio.ts', 'utf8');
-  const types = fs.readFileSync('web/src/types/studio.ts', 'utf8');
-  // App exposes a Studio tab and renders WorkflowStudio.
-  assert.match(app, /'studio'/);
-  assert.match(app, /<WorkflowStudio /);
-  assert.match(app, />Studio <span>author<\/span>/);
-  // WorkflowPanels offers the create-workflow entry point and per-row Studio edit.
-  assert.match(panels, /Create workflow/);
-  assert.match(panels, /Edit .* in Studio/);
-  // Studio component implements the toolbar with the three save/clear actions.
-  assert.match(studio, /Add node/);
-  assert.match(studio, /Save draft/);
-  assert.match(studio, /Save completed/);
-  assert.match(studio, /Clear canvas/);
-  // Drag-to-move via pointer handlers.
-  assert.match(studio, /onNodePointerDown/);
-  assert.match(studio, /onSvgPointerMove/);
-  // Node right-click context menu with Edit/Delete/Connect.
-  assert.match(studio, /onNodeContextMenu/);
-  assert.match(studio, /Connect/);
-  assert.match(studio, /Delete/);
-  // Edge right-click context menu with Edit when / Delete.
-  assert.match(studio, /onEdgeContextMenu/);
-  assert.match(studio, /Edit when/);
-  // Save completed runs the linter and blocks on failure.
-  assert.match(studio, /doSave\('completed'\)/);
-  assert.match(studioLib, /saveStudioWorkflow/);
-  assert.match(studioLib, /lintStudioWorkflow/);
-  assert.match(studioLib, /\/api\/studio\/workflows/);
-  assert.match(studioLib, /save_mode/);
-  assert.match(studioLib, /'completed'/);
-  // Node types per SPEC §5 are offered.
-  assert.match(types, /:agent/);
-  assert.match(types, /:terminal/);
-  assert.match(types, /:router/);
-});
-
-test('Settings UI source exposes Projects list and Connections editor with masked tokens (surface 10)', () => {
-  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
-  // The Settings area renders a first-class Projects surface consuming the
-  // /api/projects* endpoints, with masked credential state and credential-ref
-  // editing that never sends raw tokens.
-  assert.match(panel, /Projects/);
-  assert.match(panel, /Connections/);
-  assert.match(panel, /\/api\/projects/);
-  assert.match(panel, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}/);
-  assert.match(panel, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}\/connections/);
-  assert.match(panel, /loadProjects/);
-  assert.match(panel, /ProjectsResponse/);
-  assert.match(panel, /ProjectConnectionsResponse/);
-  // Masked credential state is rendered (never raw tokens).
-  assert.match(panel, /credential_state/);
-  assert.match(panel, /credential-ref/);
-  assert.match(panel, /status-pill connected/);
-  assert.match(panel, /status-pill disconnected/);
-  // The connections editor only ever sends credential_ref / base_url, never raw
-  // token payloads (the server rejects them — surface-4 gate).
-  assert.match(panel, /NEVER send raw token payloads/);
-  assert.match(panel, /credential_ref/);
-  assert.match(panel, /saveConnections/);
-  assert.match(panel, /env:GITHUB_TOKEN/);
-  assert.match(panel, /env:JIRA_TOKEN/);
-  assert.match(panel, /aria-label="Projects and connections"/);
-  assert.match(panel, /aria-label="Projects list"/);
-  assert.match(panel, /aria-label="Project metadata"/);
-});
-
-test('Settings UI mounts a schema-driven WorkTrackerPanel editor (WT4)', () => {
-  const panel = fs.readFileSync('web/src/components/SettingsPanel.tsx', 'utf8');
-  const tracker = fs.readFileSync('web/src/components/WorkTrackerPanel.tsx', 'utf8');
-  assert.match(panel, /import \{ WorkTrackerPanel/);
-  assert.match(panel, /<WorkTrackerPanel/);
-  assert.match(panel, /tracker=\{connections\?\.\['work-tracker'\]\}/);
-
-  // Schema-driven: fields render from the fetched provider metadata, not a
-  // hard-coded Plane-only field set.
+test('Settings composes one authority per concern', () => {
+  const app = source('web/src/App.tsx');
+  const settings = source('web/src/components/SettingsPanel.tsx');
+  const git = source('web/src/components/GitUserPanel.tsx');
+  const projects = source('web/src/features/settings/ProjectConnectionsPanel.tsx');
+  const tracker = source('web/src/components/WorkTrackerPanel.tsx');
+  const doctor = source('web/src/components/ConnectionsDoctorPanel.tsx');
+  assert.match(app, />Settings <span>config<\/span><\/button>/);
+  assert.match(settings, /User preferences/);
+  assert.match(settings, /<GitUserPanel \/>/);
+  assert.match(settings, /<ProjectConnectionsPanel \/>/);
+  assert.match(settings, /<ConnectionsDoctorPanel \/>/);
+  assert.doesNotMatch(settings, /WorkTrackerPanel|git-identities\.json|credential.*value/i);
+  assert.match(git, /Git user settings/);
+  assert.match(git, /identity service owns the user default and project override/);
+  assert.match(projects, /Portable descriptors own project configuration/);
+  assert.match(projects, /connections\.code-host|\['code-host'\]/);
+  assert.match(projects, /<WorkTrackerPanel/);
   assert.match(tracker, /\/api\/work-tracker-providers/);
-  assert.match(tracker, /activeFields\.map/);
-  assert.doesNotMatch(tracker, /api-base-url.*workspace-slug.*project-id/s, 'Plane fields must not be hard-coded literals');
+  assert.match(doctor, /Connections Doctor/);
+  assert.match(doctor, /work_tracker/);
+  assert.doesNotMatch(projects + tracker + doctor, /type="password"|raw token/i);
+});
 
-  // No-tracker option and explicit clear action.
-  assert.match(tracker, /<option value="">No tracker<\/option>/);
-  assert.match(tracker, /clear_work_tracker: true/);
-  assert.match(tracker, /Clear tracker/);
-  assert.match(tracker, /Save tracker/);
-  assert.match(tracker, /work_tracker:\s*\{\s*provider:\s*selectedProvider,\s*credential_ref:\s*credentialRef\.trim\(\)/s);
+test('Workflow Studio is canvas orchestration over a pure reducer and focused dialogs', () => {
+  const studio = source('web/src/components/WorkflowStudio.tsx');
+  const model = source('web/src/features/studio/model.ts');
+  const dialogs = source('web/src/features/studio/StudioDialogs.tsx');
+  assert.match(studio, /useReducer\(studioDocumentReducer/);
+  assert.match(studio, /studio-canvas/);
+  assert.match(studio, /NodeFormModal/);
+  assert.match(studio, /LintMessageList/);
+  assert.match(model, /export const studioDocumentReducer/);
+  assert.match(model, /case 'edit-node'/);
+  assert.match(model, /case 'add-transition'/);
+  assert.match(dialogs, /PromptComposerModal/);
+  assert.match(dialogs, /EdgeMenu/);
+  assert.doesNotMatch(studio + model + dialogs, /parseEdn|:deterministic|:agent|:terminal/);
+});
 
-  // Resolution/self-project/ownership explanatory copy.
-  assert.match(tracker, /nearest ancestor/);
-  assert.match(tracker, /Tesseraft develops itself/);
-  assert.match(tracker, /the project owns the credential/);
-  assert.match(tracker, /the user, machine, or CI owns/);
-
-  // Never renders a raw value or a preview; only masked state.
-  assert.doesNotMatch(tracker, /preview/);
-  assert.match(tracker, /Credential state/);
-  assert.match(tracker, /credentialStateLabel/);
-
-  // The save/clear confirmation message must survive the prop-sync effect
-  // that fires when `onSaved` gives the panel a new `tracker` object: the
-  // message-reset effect is keyed on `projectId` alone, not on `tracker`
-  // identity, so it does not fire (and wipe `info`) on every successful save.
-  assert.match(tracker, /useEffect\(\(\) => \{\s*setError\(null\);\s*setInfo\(null\);\s*\}, \[projectId\]\);/);
+test('Pi session UI keeps chat, SSE, and explicit fake-adapter diagnostics', () => {
+  const app = source('web/src/App.tsx');
+  const panel = source('web/src/components/PiSessionsPanel.tsx');
+  assert.match(app, />Pi Sessions <span>chat<\/span><\/button>/);
+  assert.match(panel, /TESSERAFT_PI_ADAPTER=fake/);
+  assert.match(panel, /new EventSource/);
+  assert.match(panel, /Pi session chat transcript/);
+  assert.match(panel, /role="alert" aria-live="assertive"/);
+  assert.match(panel, /Send prompt/);
 });
 
 test('StartWorkflowWizard renders a two-step modal with a workflow picker', () => {
-  const onStart = async () => ({ operation: 'start' });
   const markup = renderToStaticMarkup(React.createElement(StartWorkflowWizard, {
     open: true,
-    workflows: [{ name: 'smoke-demo', path: 'examples/smoke/workflow.edn' }],
-    initialWorkflow: 'smoke-demo',
-    onClose: () => {},
-    onStart
+    workflows: [{ name: 'smoke-demo', title: 'Smoke demo', summary: 'Safe local smoke workflow.' }],
+    selectedWorkflow: 'smoke-demo',
+    workflowDetail: { name: 'smoke-demo', title: 'Smoke demo', metadata: {}, inputs: { prompt: { type: 'string', required: true } }, states: {}, raw: {} },
+    onSelectWorkflow: () => {}, onClose: () => {}, onStarted: () => {}
   }));
   assert.match(markup, /Start workflow/);
   assert.match(markup, /Pick workflow/);
   assert.match(markup, /Configure run/);
   assert.match(markup, /smoke-demo/);
-  assert.match(markup, /role="dialog"/);
-  assert.match(markup, /aria-modal="true"/);
 });

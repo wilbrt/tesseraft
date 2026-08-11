@@ -25,7 +25,7 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: `npm run web:build && node web/dist-server/server.js --host 127.0.0.1 --port ${TEST_PORT}`,
+    command: `node web/dist-server/server.js --host 127.0.0.1 --port ${TEST_PORT}`,
     url: `http://127.0.0.1:${TEST_PORT}`,
     reuseExistingServer: false,
     timeout: 120_000

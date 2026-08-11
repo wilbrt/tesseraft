@@ -12,7 +12,8 @@ import { FieldList } from './FieldList';
 
 /** Inline per-node artifact viewer rendered inside the node modal. Keeps its
  * own selection state (one preview open at a time) and reuses the existing
- * `GET /api/runs/:runId/artifact?path=...` route + `ArtifactRead` preview,
+ * project-scoped `GET /api/projects/:projectId/runs/:runId/artifact?path=...`
+ * route + `ArtifactRead` preview,
  * mirroring `ArtifactBrowser` without coupling to its state.
  * `artifacts` is the per-node filtered list; if the selected path disappears
  * (e.g. during streaming), the preview auto-clears to avoid stale views. */

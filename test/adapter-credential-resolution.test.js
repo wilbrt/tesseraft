@@ -22,7 +22,9 @@ test('SC-001 GitHub adapter resolves tesseraft refs from the selected project lo
               {:run {:project-id "sc001-adapter"
                      :tesseraft-home (System/getenv "SC001_ADAPTER_HOME")}}
               {:project_id "sc001-adapter"
-               :connections {:github {:credential-ref "tesseraft:SC001_ADAPTER_TOKEN"}}})]
+               :connections {:code-host {:provider "github"
+                                         :auth-mode "credential-ref"
+                                         :credential-ref "tesseraft:SC001_ADAPTER_TOKEN"}}})]
   (println (pr-str token)))
 `;
   const output = execFileSync('bb', ['-e', script], {
@@ -38,20 +40,20 @@ test('WT2 injectable resolver is shared by selected-project public and adapter c
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt2-injected-resolver-'));
   const selectedHome = path.join(root, 'selected-home');
   const ambientHome = path.join(root, 'ambient-home');
-  const projectsDir = path.join(root, '.tesseraft', 'projects');
-  fs.mkdirSync(projectsDir, { recursive: true });
+  const descriptorDir = path.join(root, '.tesseraft');
+  fs.mkdirSync(descriptorDir, { recursive: true });
   fs.mkdirSync(ambientHome, { recursive: true });
   fs.writeFileSync(path.join(ambientHome, 'credentials.json'), JSON.stringify({
     version: 1,
     credentials: { github: 'WT2_AMBIENT_SENTINEL_MUST_NOT_BE_USED' }
   }));
-  fs.writeFileSync(path.join(projectsDir, 'injected.json'), JSON.stringify({
+  fs.writeFileSync(path.join(descriptorDir, 'project.json'), JSON.stringify({
+    version: 2,
     project_id: 'injected',
     name: 'Injected resolver project',
-    workspace_root: '.',
     runs_root: '.agent-runs',
-    discovery: { 'workflow-roots': ['examples'], 'tesseraft-home': selectedHome },
-    connections: { github: { 'credential-ref': 'tesseraft:github' } }
+    discovery: { workflow_roots: ['examples'] },
+    connections: { 'code-host': { provider: 'github', 'auth-mode': 'credential-ref', 'credential-ref': 'tesseraft:github' } }
   }));
 
   const script = String.raw`
@@ -68,20 +70,20 @@ test('WT2 injectable resolver is shared by selected-project public and adapter c
       resolver (fn [options ref]
                  (swap! calls conj {:home (:tesseraft-home options) :ref ref})
                  {:present true :state "present" :credential-ref ref :value sentinel})
-      options {:workspace-root root :tesseraft-home ambient-home :credential-resolver resolver}
+      options {:workspace-root root :tesseraft-home selected-home :credential-resolver resolver}
       project (cp/resolve-project options "injected")
       connections (cp/get-project-connections options "injected")
       report (doctor/doctor-report options "injected")
       adapter-token (builtin/github-token {:run {:project-id "injected"
                                                   :workspace-root root
-                                                  :tesseraft-home ambient-home
+                                                    :tesseraft-home selected-home
                                                   :project-context project}
                                              :credential-resolver resolver}
                                             project)
-      credential-check (first (filter #(= "github-credential" (get % "id")) (get report "checks")))
+      credential-check (first (filter #(= "code-host-credential" (get % "id")) (get report "checks")))
       public-json (json/generate-string {:connections connections :doctor report})]
   (assert (= sentinel adapter-token) "adapter did not use the injected resolver")
-  (assert (= "present" (get-in connections [:connections :github "credential-state" "state"]))
+  (assert (= "present" (get-in connections [:connections :code-host "credential-state" "state"]))
           "control plane did not use the injected resolver")
   (assert (= "ready" (get credential-check "status")) "doctor did not use the injected resolver")
   (assert (seq @calls) "the fake resolver was not called")

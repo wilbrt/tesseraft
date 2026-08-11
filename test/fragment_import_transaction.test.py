@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path.cwd()
-EXAMPLE = ROOT / "examples/fragments/test-fix-loop"
+EXAMPLE = ROOT / "examples/catalog/fragments/test-fix-loop"
 
 BASE_WORKFLOW = '''{:api-version "tesseraft.workflow/v1"
  :kind :workflow

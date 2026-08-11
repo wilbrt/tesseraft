@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "examples" / "design-in-practice-to-pr"
+PACKAGE = ROOT / "examples" / "catalog" / "design-in-practice-to-pr"
 WORKFLOW = PACKAGE / "workflow.edn"
 FALLBACK_WORKFLOW = PACKAGE / "workflow-openai-fallback.edn"
 SCRIPTS = PACKAGE / "scripts"
@@ -48,7 +48,7 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.count(':model "gpt-5.5"'), 1)
         self.assertNotIn(':executor :claude-code', workflow)
 
-    def test_graph_is_bounded_deterministic_first_and_has_no_pr_agent(self):
+    def test_graph_is_bounded_deterministic_first_and_pins_primary_executor(self):
         workflow = WORKFLOW.read_text()
         self.assertIn(':max-rounds 12', workflow)
         self.assertIn(':inputs {:correction-budget 8}', workflow)
@@ -59,12 +59,12 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
         self.assertIn(':command ["./scripts/assemble_pr.py"]', workflow)
         self.assertNotIn(':merge-issues', workflow)
         self.assertNotIn(':title "Draft PR', workflow)
-        self.assertEqual(workflow.count(':executor :claude-code'), 4)
-        self.assertEqual(workflow.count(':model "claude-opus-5"'), 3)
-        self.assertEqual(workflow.count(':model "claude-sonnet-5"'), 1)
-        self.assertNotIn(':executor :pi-cli', workflow)
-        self.assertNotIn(':provider ', workflow)
-        self.assertNotIn(':thinking ', workflow)
+        self.assertEqual(workflow.count(':executor :pi-cli'), 4)
+        self.assertEqual(workflow.count(':provider "opencode-go"'), 4)
+        self.assertEqual(workflow.count(':model "kimi-k3"'), 3)
+        self.assertEqual(workflow.count(':model "kimi-k2.7-code"'), 1)
+        self.assertEqual(workflow.count(':thinking "high"'), 3)
+        self.assertNotIn(':executor :claude-code', workflow)
         for state in ("design", "implement", "review"):
             prompt = (PACKAGE / "prompts" / f"{state}.md.tmpl").read_text()
             self.assertIn("Testing is NOT your job", prompt)

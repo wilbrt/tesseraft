@@ -30,7 +30,7 @@ const close = (server) => new Promise((resolve, reject) => {
   server.close((error) => error ? reject(error) : resolve());
 });
 
-test('POST /api/studio/workflows creates a draft workflow.edn and sidecar', async (t) => {
+test('POST /api/studio/workflows creates a sidecar-only semantic draft', async (t) => {
   const server = createServer();
   const port = await listen(server);
   t.after(() => close(server));
@@ -45,10 +45,7 @@ test('POST /api/studio/workflows creates a draft workflow.edn and sidecar', asyn
   const body = await res.json();
   assert.equal(body.workflow.name, 'wf-create');
   const file = path.join(workflowsRoot, 'wf-create', 'workflow.edn');
-  assert.ok(fs.existsSync(file));
-  const edn = fs.readFileSync(file, 'utf8');
-  assert.match(edn, /:name "wf-create"/);
-  assert.match(edn, /:description "create test"/);
+  assert.equal(fs.existsSync(file), false);
   const sidecar = JSON.parse(fs.readFileSync(path.join(workflowsRoot, 'wf-create', 'studio-state.json'), 'utf8'));
   assert.equal(sidecar.status, 'draft');
   assert.ok(sidecar.draft);
@@ -75,7 +72,7 @@ test('POST /api/studio/workflows rejects invalid names and refuses collisions', 
   assert.equal((await dup.json()).error.code, 'conflict');
 });
 
-test('GET /api/studio/workflows/:name returns edn and stored sidecar state', async (t) => {
+test('GET /api/studio/workflows/:name returns semantic JSON and stored sidecar state', async (t) => {
   const server = createServer();
   const port = await listen(server);
   t.after(() => close(server));
@@ -89,14 +86,14 @@ test('GET /api/studio/workflows/:name returns edn and stored sidecar state', asy
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.workflow.name, 'wf-get');
-  assert.match(body.workflow.edn, /:name "wf-get"/);
+  assert.equal(body.workflow.normalized.metadata.name, 'wf-get');
   assert.ok(body.state.draft);
 
   const missing = await fetch(`${base}/api/studio/workflows/no-such-wf`);
   assert.equal(missing.status, 404);
 });
 
-test('PUT save_mode=draft persists a JSON draft and returns non-blocking lint', async (t) => {
+test('PUT save_mode=draft persists JSON without creating canonical EDN', async (t) => {
   const server = createServer();
   const port = await listen(server);
   t.after(() => close(server));
@@ -104,10 +101,10 @@ test('PUT save_mode=draft persists a JSON draft and returns non-blocking lint', 
 
   const draft = {
     'api-version': 'tesseraft.workflow/v1',
-    kind: ':workflow',
+    kind: 'workflow',
     metadata: { name: 'wf-draft' },
     initial: 'start',
-    states: { start: { id: 'start', type: ':terminal', title: 'Start', status: ':success' } }
+    states: { start: { id: 'start', type: 'terminal', title: 'Start', status: 'success' } }
   };
   const res = await fetch(`${base}/api/studio/workflows/wf-draft`, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -117,8 +114,7 @@ test('PUT save_mode=draft persists a JSON draft and returns non-blocking lint', 
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.save_mode, 'draft');
-  const edn = fs.readFileSync(path.join(workflowsRoot, 'wf-draft', 'workflow.edn'), 'utf8');
-  assert.match(edn, /:terminal/);
+  assert.equal(fs.existsSync(path.join(workflowsRoot, 'wf-draft', 'workflow.edn')), false);
   const sidecar = JSON.parse(fs.readFileSync(path.join(workflowsRoot, 'wf-draft', 'studio-state.json'), 'utf8'));
   assert.deepEqual(sidecar.positions, { start: { x: 10, y: 20 } });
 });
@@ -135,7 +131,7 @@ test('PUT save_mode=completed lints first and rejects an invalid workflow with 4
   });
   const draft = {
     'api-version': 'tesseraft.workflow/v1',
-    kind: ':workflow',
+    kind: 'workflow',
     metadata: { name: 'wf-completed' },
     initial: null,
     states: {}
@@ -146,10 +142,8 @@ test('PUT save_mode=completed lints first and rejects an invalid workflow with 4
   });
   assert.equal(res.status, 422);
   const body = await res.json();
-  assert.equal(body.ok, false);
-  assert.equal(body.save_mode, 'completed');
-  assert.ok(body.lint.ok === false);
-  assert.ok(body.lint.errors.length > 0);
+  assert.equal(body.error.code, 'invalid_workflow');
+  assert.ok(body.error.details.diagnostics.length > 0);
 });
 
 test('PUT save_mode=completed persists a valid workflow and marks completed', async (t) => {
@@ -164,10 +158,10 @@ test('PUT save_mode=completed persists a valid workflow and marks completed', as
   });
   const draft = {
     'api-version': 'tesseraft.workflow/v1',
-    kind: ':workflow',
+    kind: 'workflow',
     metadata: { name: 'wf-valid' },
     initial: 'start',
-    states: { start: { id: 'start', type: ':terminal', title: 'Start', status: ':success' } }
+    states: { start: { id: 'start', type: 'terminal', title: 'Start', status: 'success' } }
   };
   const res = await fetch(`${base}/api/studio/workflows/wf-valid`, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -207,15 +201,15 @@ test('GET /api/studio/workflows/:name falls back to bundled example workflows', 
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
 
-  // Example workflows ship under examples/<name>/ and are not copied into
+  // Bundled workflows ship under examples/tutorials|catalog/<name>/ and are not copied into
   // .tesseraft/workflows/ in a fresh workspace. The Studio must still load
   // them so the composer can target example agent nodes (read-only view).
   const res = await fetch(`${base}/api/studio/workflows/smoke`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.workflow.name, 'smoke');
-  assert.match(body.workflow.edn, /:workflow/);
-  assert.match(body.workflow.path, /examples\/smoke\/workflow\.edn$/);
+  assert.equal(body.workflow.normalized.kind, 'workflow');
+  assert.match(body.workflow.path, /examples\/tutorials\/smoke\/workflow\.edn$/);
 });
 
 test('GET /api/studio/workflows/:name/assets/* 404s for a missing asset', async (t) => {

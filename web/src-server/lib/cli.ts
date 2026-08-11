@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
-import { WORKSPACE_ROOT, tesseraftBin } from './paths.js';
+import { ROOT_DIR, WORKSPACE_ROOT, tesseraftBin } from './paths.js';
 import { errorBody } from './http.js';
 
 export type ControlPlaneResult = { status: number; body: unknown };
@@ -34,11 +34,80 @@ export const runControlPlane = (args: string[], options: { timeout?: number } = 
   });
 });
 
+export const runControlPlaneOperation = (request: unknown, options: { timeout?: number } = {}): Promise<ControlPlaneResult> => new Promise((resolve) => {
+  const child = spawn(tesseraftBin(), ['control-plane', 'apply', '--input', '-'], {
+    cwd: WORKSPACE_ROOT,
+    env: { ...process.env, TESSERAFT_INSTALL_ROOT: ROOT_DIR },
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const timer = setTimeout(() => child.kill('SIGTERM'), options.timeout || 15000);
+  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  child.on('error', (error) => {
+    clearTimeout(timer);
+    resolve({ status: 500, body: errorBody(500, 'control_plane_error', 'Control-plane operation could not start', { message: error.message }) });
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    const output = Buffer.concat(stdout).toString('utf8');
+    const errorOutput = Buffer.concat(stderr).toString('utf8').trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output || '{}');
+    } catch (error) {
+      resolve({ status: 502, body: errorBody(502, 'bad_gateway', 'Control-plane returned invalid JSON', {
+        message: error instanceof Error ? error.message : String(error), stderr: errorOutput, exit_code: code
+      }) });
+      return;
+    }
+    if (code !== 0 || hasControlPlaneError(parsed)) {
+      resolve({ status: statusFromControlPlane(parsed, code === 2 ? 400 : 500), body: parsed });
+      return;
+    }
+    resolve({ status: 200, body: parsed });
+  });
+  child.stdin.end(JSON.stringify(request));
+});
+
 export const startRuntime = (args: string[]): BackgroundRuntime => {
   const child = spawn(tesseraftBin(), ['run', ...args], { cwd: WORKSPACE_ROOT, detached: true, stdio: 'ignore' });
   child.unref();
   return { pid: child.pid };
 };
+
+export const startRuntimeOperation = (request: unknown): BackgroundRuntime => {
+  const child = spawn(tesseraftBin(), ['run', 'apply', '--input', '-'], {
+    cwd: WORKSPACE_ROOT, detached: true, stdio: ['pipe', 'ignore', 'ignore']
+  });
+  child.stdin.end(JSON.stringify(request));
+  child.unref();
+  return { pid: child.pid };
+};
+
+export const runRuntimeOperation = (request: unknown, options: { timeout?: number } = {}): Promise<RuntimeResult> => new Promise((resolve) => {
+  const child = spawn(tesseraftBin(), ['run', 'apply', '--input', '-'], { cwd: WORKSPACE_ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const timer = setTimeout(() => child.kill('SIGTERM'), options.timeout || 30000);
+  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    const stderrText = Buffer.concat(stderr).toString('utf8').trim();
+    let parsed: unknown;
+    try { parsed = JSON.parse(Buffer.concat(stdout).toString('utf8') || '{}'); }
+    catch { return resolve({ status: 502, body: errorBody(502, 'bad_gateway', 'Runtime returned invalid JSON'), exitCode: code, stderr: stderrText }); }
+    const status = statusFromControlPlane(parsed, code === 0 ? 200 : 400);
+    resolve({ status: code === 0 && !hasControlPlaneError(parsed) ? 200 : status, body: parsed, exitCode: code, stderr: stderrText });
+  });
+  child.on('error', (error) => {
+    clearTimeout(timer);
+    resolve({ status: 500, body: errorBody(500, 'runtime_error', error.message), exitCode: null, stderr: error.message });
+  });
+  child.stdin.end(JSON.stringify(request));
+});
 
 export type LintResult = { ok: boolean; errors: unknown[]; warnings: unknown[]; diagnostics: unknown[]; status: number; body: unknown };
 

@@ -11,7 +11,7 @@ test('keeps the start wizard open and visible when run creation is rejected', as
   await wizard.getByLabel('Max automated steps').fill('1');
   await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
 
-  await page.route('**/api/runs', async (route) => {
+  await page.route('**/api/projects/default/runs', async (route) => {
     if (route.request().method() === 'POST') {
       await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: 'duplicate run id from e2e' } }) });
       return;
@@ -41,14 +41,14 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await wizard.getByLabel('Max automated steps').fill('1');
   await wizard.getByLabel('I understand this may execute local side effects automatically.').check();
   const [startResponse] = await Promise.all([
-    page.waitForResponse((response) => response.url() === `${isolatedRun.baseURL}/api/runs` && response.request().method() === 'POST'),
+    page.waitForResponse((response) => response.url() === `${isolatedRun.baseURL}/api/projects/default/runs` && response.request().method() === 'POST'),
     wizard.getByRole('button', { name: 'Start and run' }).click()
   ]);
   expect(startResponse.status(), 'start run status').toBe(202);
   await expect(wizard).toBeHidden();
 
   await expect.poll(async () => {
-    const response = await fetch(`${isolatedRun.baseURL}/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    const response = await fetch(`${isolatedRun.baseURL}/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
     if (response.status !== 200) return { status: `http-${response.status}`, state: null, pathUnderWorkspace: false };
     const body = await response.json() as { run: { status: string; state: string; path: string } };
     const apiRunDir = path.resolve(isolatedRun.workspaceRoot, body.run.path);
@@ -71,7 +71,7 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await page.getByRole('button', { name: 'Step one node' }).click();
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    const body = await isolatedRun.apiJson<{ run: { status: string; state: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
     return { status: body.run.status, state: body.run.state };
   }, { timeout: 15_000 }).toEqual({ status: 'running', state: isolatedRun.pw3.expectedAfterStepState });
   await expect(row).toContainText(isolatedRun.pw3.expectedAfterStepState, { timeout: 15_000 });
@@ -82,7 +82,7 @@ test('starts, steps, and resumes a safe local workflow from visible run controls
   await page.getByRole('button', { name: 'Resume run' }).click();
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
+    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw3.runId)}`);
     const apiRunDir = path.resolve(isolatedRun.workspaceRoot, body.run.path);
     return { status: body.run.status, state: body.run.state, pathUnderWorkspace: apiRunDir.startsWith(path.resolve(isolatedRun.workspaceRoot) + path.sep) };
   }, { timeout: 15_000 }).toEqual({ status: 'done', state: 'done', pathUnderWorkspace: true });

@@ -19,7 +19,7 @@ test('updates an open run inspection through EventSource after an external CLI s
   await expect(row).toContainText(isolatedRun.workflowName);
   await expect(row).toContainText('start');
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.runId)}`);
+    const body = await isolatedRun.apiJson<{ run: { status: string; state: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.runId)}`);
     return { status: body.run.status, state: body.run.state };
   }).toEqual({ status: 'running', state: 'start' });
   await row.click();
@@ -38,7 +38,7 @@ test('updates an open run inspection through EventSource after an external CLI s
   await isolatedRun.runCli(['run', 'step', '--run-dir', isolatedRun.runDir, '--format', 'json']);
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.runId)}`);
+    const body = await isolatedRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.runId)}`);
     const apiRunDir = path.resolve(isolatedRun.workspaceRoot, body.run.path);
     return { status: body.run.status, state: body.run.state, path: apiRunDir };
   }).toMatchObject({ status: 'done', state: 'done', path: path.resolve(isolatedRun.runDir) });

@@ -3,6 +3,7 @@
     [tesseraft.cli-args :as cli-args]
     [tesseraft.control-plane.core :as control-plane]
     [tesseraft.control-plane.doctor :as doctor]
+    [tesseraft.control-plane.operations :as operations]
     [cheshire.core :as json]
     [clojure.string :as str]))
 
@@ -12,9 +13,9 @@
 ;; the command (e.g. `control-plane --workspace-root <root> workflows`).
 ;; Crucially, it also disambiguates the `project create|update` subcommands,
 ;; whose own `--workspace-root`/`--runs-root`/`--workflow-root` flags are
-;; *project-spec* values (written into `.tesseraft/projects/<id>.json`), not
+;; project creation values (written to the v2 descriptor and registry), not
 ;; control-plane workspace overrides. Without this ordering, those flags were
-;; greedily stolen as top-level options, relocating manifest writes outside
+;; greedily stolen as top-level options, relocating project writes outside
 ;; the workspace and bypassing path-confinement validation.
 (defn parse-args [args]
   (loop [xs args acc {:command nil :args [] :workspace-root "." :workflow-roots ["examples"] :tesseraft-home nil :runs-root ".agent-runs" :project-id nil :project-root nil}]
@@ -57,10 +58,10 @@
     (println "  tesseraft control-plane project register <project-root>")
     (println "  tesseraft control-plane project unregister <project-id>")
     (println "  tesseraft control-plane project update <project-id> [--name <name>] [--workspace-root <dir>] [--runs-root <dir>]")
-    (println "  tesseraft control-plane project migrate [<project-id>] [--legacy-manifest <file> --project-root <dir>]")
     (println "  tesseraft control-plane project connections <project-id>")
     (println "  tesseraft control-plane project work-tracker-providers")
-    (println "  tesseraft control-plane credentials migrate --legacy-file <file>")
+    (println "  tesseraft control-plane capabilities")
+    (println "  tesseraft control-plane apply --input -")
     (println "  tesseraft control-plane doctor")
     (println)
     (println "Options:")
@@ -104,16 +105,12 @@
 (def ^:private settings-flags
   {"--pi-default-provider" :pi_default_provider
    "--pi-default-model" :pi_default_model
-   "--github-token" :github_token
-   "--jira-token" :jira_token
    "--default-repo-root" :default_repo_root
    "--color-scheme" :color_scheme})
 
 (def ^:private settings-clear-flags
   {"--clear-pi-default-provider" :pi_default_provider
    "--clear-pi-default-model" :pi_default_model
-   "--clear-github-token" :github_token
-   "--clear-jira-token" :jira_token
    "--clear-default-repo-root" :default_repo_root})
 
 (defn parse-settings-set-args [args]
@@ -130,7 +127,7 @@
             (if (nil? v)
               (throw (ex-info (str "Missing value for " a) {:flag a}))
               (recur (drop 2 xs) (assoc acc (get settings-flags a) v) global)))
-          :else (recur (rest xs) acc global))))))
+          :else (throw (ex-info (str "Unknown settings argument: " a) {:argument a})))))))
 
 (defn settings-command [options args project-id]
   (let [[sub & rest] (if (empty? args) ["get"] args)]
@@ -180,9 +177,13 @@
           "--runs-root" (recur more (assoc-in acc [:spec :runs_root] b))
           "--workflow-root" (let [roots (get-in acc [:spec :discovery :workflow-roots] [])]             (recur more (assoc-in acc [:spec :discovery :workflow-roots] (conj roots b))))
           "--tesseraft-home" (recur more (assoc-in acc [:spec :discovery :tesseraft-home] b))
-          "--jira-base-url" (recur more (assoc-in acc [:spec :connections :jira :base-url] b))
-          "--jira-credential-ref" (recur more (assoc-in acc [:spec :connections :jira :credential-ref] b))
-          "--github-credential-ref" (recur more (assoc-in acc [:spec :connections :github :credential-ref] b))
+          "--code-host-credential-ref" (recur more (-> acc
+                                                       (assoc-in [:spec :connections :code-host :provider] "github")
+                                                       (assoc-in [:spec :connections :code-host :auth-mode] "credential-ref")
+                                                       (assoc-in [:spec :connections :code-host :credential-ref] b)))
+          "--code-host-auth-mode" (recur more (-> acc
+                                                  (assoc-in [:spec :connections :code-host :provider] "github")
+                                                  (assoc-in [:spec :connections :code-host :auth-mode] b)))
           "--work-tracker-provider" (recur more (assoc-in acc [:spec :connections :work-tracker :provider] b))
           "--work-tracker-schema-version" (recur more (assoc-in acc [:spec :connections :work-tracker :schema-version] (parse-long (cli-args/require-value a b))))
           "--work-tracker-credential-ref" (recur more (assoc-in acc [:spec :connections :work-tracker :credential-ref] b))
@@ -190,43 +191,19 @@
           "--source" (recur more (assoc-in acc [:spec :source] b))
           (recur (rest xs) acc))))))
 
-(defn parse-project-migrate-args [args]
-  (loop [xs args acc {:project-id nil :legacy-manifest nil :project-root nil}]
-    (if (empty? xs)
-      acc
-      (let [[a b & more] xs]
-        (case a
-          "--legacy-manifest" (recur more (assoc acc :legacy-manifest b))
-          "--project-root" (recur more (assoc acc :project-root b))
-          (if (:project-id acc)
-            (recur (rest xs) acc)
-            (recur (rest xs) (assoc acc :project-id a))))))))
-
-(defn parse-credentials-migrate-args [args]
-  (loop [xs args acc {:legacy-file nil}]
-    (if (empty? xs)
-      acc
-      (let [[a b & more] xs]
-        (case a
-          "--legacy-file" (recur more (assoc acc :legacy-file b))
-          (recur (rest xs) acc))))))
-
-(defn credentials-command [options args]
-  (let [[sub & rest] args]
-    (case sub
-      "migrate" (let [parsed (parse-credentials-migrate-args rest)]
-                  (control-plane/migrate-local-credentials options (:legacy-file parsed)))
-      (control-plane/error-response 400 "bad_request" (str "Unknown credentials subcommand: " sub)))))
-
 (defn parse-project-connections-args [args]
   (loop [xs args acc {}]
     (if (empty? xs)
       acc
       (let [[a b & more] xs]
         (case a
-          "--jira-base-url" (recur more (assoc-in acc [:jira :base-url] b))
-          "--jira-credential-ref" (recur more (assoc-in acc [:jira :credential-ref] b))
-          "--github-credential-ref" (recur more (assoc-in acc [:github :credential-ref] b))
+          "--code-host-credential-ref" (recur more (-> acc
+                                                       (assoc-in [:code-host :provider] "github")
+                                                       (assoc-in [:code-host :auth-mode] "credential-ref")
+                                                       (assoc-in [:code-host :credential-ref] b)))
+          "--code-host-auth-mode" (recur more (-> acc
+                                                  (assoc-in [:code-host :provider] "github")
+                                                  (assoc-in [:code-host :auth-mode] b)))
           "--work-tracker-provider" (recur more (assoc-in acc [:work-tracker :provider] b))
           "--work-tracker-schema-version" (recur more (assoc-in acc [:work-tracker :schema-version] (parse-long (cli-args/require-value a b))))
           "--work-tracker-credential-ref" (recur more (assoc-in acc [:work-tracker :credential-ref] b))
@@ -262,11 +239,6 @@
                  (if (str/blank? project-id)
                    (control-plane/error-response 400 "bad_request" "project update requires <project-id>")
                    (control-plane/update-project options project-id (:spec (parse-project-create-args more)))))
-      "migrate" (let [parsed (parse-project-migrate-args rest)
-                      pid (or (:project-id parsed) "default")]
-                  (if (or (:legacy-manifest parsed) (:project-root parsed))
-                    (control-plane/migrate-project-portable options pid (:legacy-manifest parsed) (:project-root parsed))
-                    (control-plane/migrate-project options pid)))
       "connections" (let [[project-id & more] rest]
                       (if (str/blank? project-id)
                         (control-plane/error-response 400 "bad_request" "project connections requires <project-id>")
@@ -297,6 +269,14 @@
           project-id (:project-id opts)
           options (select-keys opts [:workspace-root :workflow-roots :tesseraft-home :runs-root :project-id :project-root])
           result (case command
+                   "apply" (let [input-flag (first (:args opts))
+                                 input-source (second (:args opts))]
+                             (if (and (= "--input" input-flag) (= "-" input-source))
+                               (try
+                                 (operations/apply-operation options (json/parse-string (slurp *in*) true))
+                                 (catch Throwable t
+                                   (control-plane/error-response 400 "bad_request" (.getMessage t))))
+                               (control-plane/error-response 400 "bad_request" "apply requires --input -")))
                    "workflows" (control-plane/list-workflows options project-id)
                    "workflow" (control-plane/get-workflow options (require-arg opts "workflow name") project-id)
                    "graph" (control-plane/get-workflow-graph options (require-arg opts "workflow name") project-id)
@@ -326,7 +306,7 @@
                    "git-user" (git-user-command options (:args opts) project-id)
                    "settings" (settings-command options (:args opts) project-id)
                    "doctor" (doctor/doctor-report options project-id)
-                   "credentials" (credentials-command options (:args opts))
+                   "capabilities" (control-plane/list-capabilities options)
                    "projects" (projects-command options (:args opts))
                    "project" (project-command options (:args opts))
                    (usage!))]

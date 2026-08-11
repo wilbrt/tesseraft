@@ -1,54 +1,46 @@
-# Tesseraft canonical reference image.
-#
-# Installs the whole stack: the Babashka CLI (lint/run/node/control-plane) and
-# the Web UI (Workflow Studio / Run Console). For a core-only (lint) image, pass
-# `--core-only` to the installer and switch the base to debian:bookworm-slim.
-#
-#   docker build -t tesseraft .
-#   docker run --rm tesseraft --version
-#   docker run --rm tesseraft lint examples/smoke/workflow.edn
-#   docker run --rm -p 8787:8787 tesseraft web --port 8787
-#
-# To use Tesseraft from *your own* Dockerfile without building this image,
-# just copy the repo in and run the installer (see docs/CONTAINER_INSTALL.md):
-#
-#   COPY tesseraft /opt/tesseraft
-#   RUN /opt/tesseraft/scripts/install.sh && \
-#       cd /opt/tesseraft && npm ci && npm run web:build
-#   ENV PATH="/opt/tesseraft/bin:${PATH}"
+# syntax=docker/dockerfile:1
+FROM node:22.23.2-bookworm-slim AS builder
 
-FROM node:22-bookworm-slim
-
-# Minimal runtime utilities: ca-certificates/curl for the static-bb download,
-# git for git/worktree nodes, and a JRE because Babashka shells out to `java`
-# to resolve the Maven dep declared in bb.edn (a JRE is enough, no full JDK).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git openjdk-17-jre-headless \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3 \
     && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /opt/tesseraft
 
-# Install deps first for better layer caching. Copy the install script and
-# run it (Babashka static binary), then bring in the rest of the source.
-COPY scripts/install.sh ./scripts/install.sh
+COPY .tool-versions ./
+COPY scripts/install.sh scripts/toolchain.sh scripts/check_deps.sh ./scripts/
 RUN ./scripts/install.sh
 
-# Package metadata + source. node_modules is excluded via .dockerignore.
 COPY package.json package-lock.json ./
-COPY bb.edn ./
+RUN npm ci
+COPY bb.edn tsconfig.server.json tsconfig.web.json ./
 COPY bin/ ./bin/
 COPY src/ ./src/
 COPY schemas/ ./schemas/
 COPY examples/ ./examples/
 COPY web/ ./web/
-COPY tsconfig.server.json tsconfig.web.json ./
+RUN npm run web:build \
+    && npm prune --omit=dev \
+    && bb --config /opt/tesseraft/bb.edn lint examples/tutorials/smoke/workflow.edn --format json >/dev/null
 
-# Build the Web UI server + static assets.
-RUN npm ci && npm run web:build && npm cache clean --force
+FROM node:22.23.2-bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/bin/bb /usr/local/bin/bb
+COPY --from=builder /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=builder /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=builder /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=builder --chown=node:node /opt/tesseraft /opt/tesseraft
 
-# Pre-warm Babashka deps (cheshire) so offline `tesseraft lint` works.
-RUN bb --config /opt/tesseraft/bb.edn lint examples/smoke/workflow.edn --format json >/dev/null
+RUN mkdir -p /workspace /data/.tesseraft /data/runs \
+    && chown -R node:node /workspace /data
+USER node
+WORKDIR /workspace
 
-ENV PATH="/opt/tesseraft/bin:${PATH}"
-ENTRYPOINT ["tesseraft"]
+ENV PATH="/opt/tesseraft/bin:${PATH}" \
+    TESSERAFT_HOME="/data/.tesseraft" \
+    TESSERAFT_WORKSPACE_ROOT="/workspace"
+VOLUME ["/workspace", "/data"]
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8787/api/health >/dev/null || exit 1
+ENTRYPOINT ["/opt/tesseraft/bin/tesseraft"]
 CMD ["--help"]

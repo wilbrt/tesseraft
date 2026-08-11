@@ -1,0 +1,47 @@
+Fresh agent session: DESIGN ONLY.
+
+Inputs:
+- Original prompt: {{run.dir}}/prompt/prompt.md
+- Bounded repository context: {{run.dir}}/context/repository.json
+- Prior validated workflow lessons: {{run.dir}}/context/prior-run-lessons.md
+- Previous design check, when present: {{run.dir}}/design/check-current.json
+- Repository root: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+- Requested existing branch, when supplied for an explicit replacement run: {{inputs.branch}}
+
+Goal:
+Produce one compact, evidence-based delivery design and deterministic validation plan. Internally perform Rich Hickey's Describe, Diagnose, Delimit, Direction, Design, and Decide phases; do not turn them into separate sessions.
+
+Required reasoning:
+- Describe sourced symptoms, requests, and context without asserting a cause.
+- Diagnose the unmet user objective and obstacle. A requested feature is one possible answer, never the problem statement.
+- Delimit one solution-free problem statement, scope, and non-goals.
+- Compare the status quo and at least two credible approaches using only salient criteria. Record factual aspects, tradeoffs, and why the selected direction wins.
+- State knowns, unknowns, questions, risks, and any explicit backtracking.
+- Design the smallest coherent implementation and its deterministic validation.
+
+Testing policy:
+- Testing is NOT your job. Do NOT run tests, lint, builds, type checks, `bb`, or `npm`.
+- You may inspect repository test definitions and scripts to choose commands.
+- Put argv-array checks into validation-plan.json, ordered focused -> repository -> browser.
+- For Tesseraft changes, include a focused command where one exists and `bb test` in the repository tier. Include `npm run web:e2e` only for browser-visible or Web UI changes.
+
+Rules:
+- Read the repository and current implementation before deciding what is unimplemented.
+- Account for existing branches/worktrees only as evidence; design against current base-branch truth.
+- Do not edit source, tests, workflow definitions, or repository files.
+- Keep design/brief.md under 8 KB.
+- Use a semantic lowercase branch with feature/fix/docs/refactor/test/chore prefix. When a nonblank requested existing branch is supplied, preserve it exactly after confirming it belongs to this task; do not invent a replacement branch.
+- Keep the PR title under 100 characters. For a requested existing branch/replacement run, title the complete base-to-branch change rather than only the final correction.
+- Fail only when a safe, bounded design cannot be produced.
+
+Write:
+- {{run.dir}}/design/brief.md with headings: Title, Description, Problem, Evidence, Use cases, Approaches and criteria, Decision and tradeoffs, Scope, Implementation plan, Validation, Risks and unknowns.
+- {{run.dir}}/design/validation-plan.json matching the package schema.
+- {{run.dir}}/design/branch-name.txt
+- {{run.dir}}/design/pr-title.txt
+- {{run.dir}}/design/status-{{run.attempt}}.json
+
+Status examples:
+{"status":"pass","summary":"problem-grounded design ready","issues_file":null}
+{"status":"fail","summary":"critical design evidence remains missing","issues_file":null}

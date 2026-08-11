@@ -34,7 +34,7 @@ test('submits one allowed approval decision and verifies durable runtime state',
     await expect(approvalPanel.getByRole('button', { name: decision, exact: true })).toBeVisible();
   }
 
-  const approvalsBefore = await isolatedApprovalRun.apiJson<{ approvals: Array<{ approval_id: string; question?: string; artifacts?: Array<{ path?: string; kind?: string }>; decisions?: Array<{ decision: string; next?: string }>; decision?: unknown }> }>(`/api/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approvals`);
+  const approvalsBefore = await isolatedApprovalRun.apiJson<{ approvals: Array<{ approval_id: string; question?: string; artifacts?: Array<{ path?: string; kind?: string }>; decisions?: Array<{ decision: string; next?: string }>; decision?: unknown }> }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approvals`);
   const pending = approvalsBefore.approvals.find((approval) => approval.approval_id === isolatedApprovalRun.approvalId);
   expect(pending).toBeTruthy();
   expect(pending?.decision ?? null).toBeNull();
@@ -49,7 +49,7 @@ test('submits one allowed approval decision and verifies durable runtime state',
   await page.getByLabel('Show finished runs').check();
 
   await expect.poll(async () => {
-    const body = await isolatedApprovalRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(isolatedApprovalRun.runId)}`);
+    const body = await isolatedApprovalRun.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}`);
     const apiRunDir = path.resolve(isolatedApprovalRun.workspaceRoot, body.run.path);
     return {
       status: body.run.status,
@@ -63,7 +63,7 @@ test('submits one allowed approval decision and verifies durable runtime state',
   await expect(inspection).toContainText(isolatedApprovalRun.expectedTerminalState, { timeout: 15_000 });
   await expect(inspection).toContainText('Inactive', { timeout: 15_000 });
 
-  const approvalAfter = await isolatedApprovalRun.apiJson<{ approval: { approval_id: string; decision?: { approval_id: string; decision: string; summary?: string | null } | null } }>(`/api/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approval/${encodeURIComponent(isolatedApprovalRun.approvalId)}`);
+  const approvalAfter = await isolatedApprovalRun.apiJson<{ approval: { approval_id: string; decision?: { approval_id: string; decision: string; summary?: string | null } | null } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approval/${encodeURIComponent(isolatedApprovalRun.approvalId)}`);
   expect(approvalAfter.approval.decision).toMatchObject({
     approval_id: isolatedApprovalRun.approvalId,
     decision: isolatedApprovalRun.expectedDecision,

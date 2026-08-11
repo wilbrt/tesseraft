@@ -7,7 +7,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "examples" / "pr-housekeeping" / "scripts" / "sync_base_branch.py"
+SCRIPT = ROOT / "examples" / "catalog" / "pr-housekeeping" / "scripts" / "sync_base_branch.py"
 
 
 def run(*args, cwd=None):

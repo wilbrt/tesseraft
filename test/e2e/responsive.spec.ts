@@ -97,10 +97,11 @@ test.describe('responsive geometry', () => {
       await expect(popover).toBeHidden();
 
       await page.getByRole('button', { name: /Settings: configure Pi defaults/ }).click();
-      const settings = page.getByRole('region', { name: 'Settings' });
+      const settings = page.getByRole('region', { name: 'Settings', exact: true });
       await expect(settings).toBeVisible();
       await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
-      await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+      await expect(settings.getByRole('heading', { name: 'User preferences' })).toBeVisible();
+      await expect(settings.getByRole('group', { name: 'Color scheme' })).toBeVisible();
       await expectDocumentFitsHorizontally(page);
 
       await expect.poll(async () => settings.evaluate((element) => {

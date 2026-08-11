@@ -1,36 +1,9 @@
 // Workflow Studio authoring state types.
 //
-// The draft workflow is a JSON-shaped mirror of the EDN workflow file. Keys
-// that are EDN keywords in the file are stored as strings here; keyword-valued
-// fields (e.g. `type: ':agent'`) keep their leading colon so the server's
-// EDN emitter writes them as keywords. The file is the source of truth once
-// saved; draft state in React is disposable/reconstructable (design doc).
+// The draft is a semantic browser model. It contains no EDN syntax; the
+// Clojure workflow persistence service owns normalization and serialization.
 
-export type NodeTypeId = ':agent' | ':deterministic' | ':process' | ':timer' | ':approval' | ':router' | ':terminal';
-
-export const NODE_TYPES: NodeTypeId[] = [':agent', ':deterministic', ':process', ':timer', ':approval', ':router', ':terminal'];
-
-// Known deterministic handlers. Source of truth: `default-known-handlers` in
-// `src/tesseraft/spec.clj`. The web UI is a thin authoring shell with no
-// Clojure dependency, so the small static list is duplicated here; the linter
-// remains the final authority and accepts unknown handlers via the
-// "Custom…" option. Update this when the Clojure registry changes.
-export const KNOWN_HANDLERS: string[] = [
-  ':work-tracker/fetch-item',
-  ':jira/fetch-ticket',
-  ':git/ensure-branch',
-  ':git/ensure-worktree',
-  ':git/push',
-  ':github/create-pr',
-  ':github/fetch-pr-feedback',
-  ':web/start-test-server',
-  ':notify/pinga',
-  ':noop/succeed'
-];
-
-// Sentinel value used by the deterministic-node handler <select> to indicate
-// the user wants to type a custom handler keyword not in KNOWN_HANDLERS.
-export const CUSTOM_HANDLER_SENTINEL = '__custom__';
+export type NodeTypeId = 'agent' | 'deterministic' | 'process' | 'timer' | 'approval' | 'router' | 'terminal' | 'fragment';
 
 export type WhenMap = Record<string, string>;
 
@@ -45,17 +18,17 @@ export type StudioNode = {
   type: NodeTypeId;
   title?: string;
   // type-specific fields (kept loose; the linter is the final authority)
-  executor?: string;        // :agent
-  'prompt-template'?: string; // :agent
-  'prompt-output'?: string;   // :agent
-  'session-name'?: string;     // :agent
-  handler?: string;        // :deterministic
-  command?: string[];      // :process
-  'input-mode'?: string;   // :process
-  'output-mode'?: string;  // :process
-  duration?: string;       // :timer
-  message?: string;        // :approval
-  status?: string;         // :terminal (':success' | ':failure')
+  executor?: string;        // agent
+  'prompt-template'?: string; // agent
+  'prompt-output'?: string;   // agent
+  'session-name'?: string;     // agent
+  handler?: string;        // deterministic
+  command?: string[];      // process
+  'input-mode'?: string;   // process
+  'output-mode'?: string;  // process
+  duration?: string;       // timer
+  message?: string;        // approval
+  status?: string;         // terminal ('success' | 'failure')
   next?: string;           // simple shorthand
   transitions?: Transition[];
   // Optional structured fields kept loose so the editor can render/round-trip
@@ -70,7 +43,7 @@ export type StudioNode = {
 
 export type StudioWorkflow = {
   'api-version': 'tesseraft.workflow/v1';
-  kind: ':workflow';
+  kind: 'workflow';
   metadata: { name: string; description?: string };
   initial: string | null;
   states: Record<string, StudioNode>;
@@ -94,7 +67,7 @@ export type StudioState = {
 
 export const emptyDraft = (name: string, description?: string): StudioWorkflow => ({
   'api-version': 'tesseraft.workflow/v1',
-  kind: ':workflow',
+  kind: 'workflow',
   metadata: description ? { name, description } : { name },
   initial: null,
   states: {}

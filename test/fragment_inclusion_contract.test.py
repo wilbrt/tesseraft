@@ -36,7 +36,7 @@ def write_fragment_package(tmp: Path, scope="project", package_text=FRAGMENT, na
     roots = {
         "project": tmp / ".tesseraft/fragments",
         "global": tmp / "global-home/fragments",
-        "examples": tmp / "examples/fragments",
+        "examples": tmp / "examples/catalog/fragments",
     }
     package_root = roots[scope] / name
     package_root.mkdir(parents=True, exist_ok=True)
@@ -188,7 +188,7 @@ def test_default_resolution_prefers_project_then_global_then_examples():
         assert status == 0, payload
         inclusion = payload["fragment-inclusions"]["run"]
         assert inclusion["scope"] == "examples", inclusion
-        assert inclusion["package-path"].endswith("examples/fragments/contract-fragment/fragment.edn"), inclusion
+        assert inclusion["package-path"].endswith("examples/catalog/fragments/contract-fragment/fragment.edn"), inclusion
     with_tmp(run)
 
 
@@ -200,12 +200,12 @@ def test_explicit_scope_values_and_aliases_select_canonical_scope():
             ('"project"', "project", ".tesseraft/fragments/contract-fragment/fragment.edn"),
             (':global', "global", "global-home/fragments/contract-fragment/fragment.edn"),
             ('"global"', "global", "global-home/fragments/contract-fragment/fragment.edn"),
-            (':examples', "examples", "examples/fragments/contract-fragment/fragment.edn"),
-            ('"examples"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
-            (':example', "examples", "examples/fragments/contract-fragment/fragment.edn"),
-            ('"example"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
-            (':configured', "examples", "examples/fragments/contract-fragment/fragment.edn"),
-            ('"configured"', "examples", "examples/fragments/contract-fragment/fragment.edn"),
+            (':examples', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
+            ('"examples"', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
+            (':example', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
+            ('"example"', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
+            (':configured', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
+            ('"configured"', "examples", "examples/catalog/fragments/contract-fragment/fragment.edn"),
         ]
         write_fragment_package(tmp, "project")
         write_fragment_package(tmp, "global")

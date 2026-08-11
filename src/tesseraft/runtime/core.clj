@@ -2,12 +2,15 @@
   (:require
     [tesseraft.adapters.builtin :as adapters]
     [tesseraft.executors.mock :as mock]
-    [tesseraft.executors.pi-cli :as pi-cli]
-    [tesseraft.executors.claude-code :as claude-code]
+    [tesseraft.capabilities.executors :as executor-catalog]
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
+    [tesseraft.runtime.approvals :as approvals]
     [tesseraft.runtime.fragment :as fragment]
+    [tesseraft.runtime.lifecycle :as lifecycle]
+    [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.store :as store]
+    [tesseraft.runtime.transitions :as transitions]
     [babashka.fs :as fs]
     [babashka.process :as p]
     [cheshire.core :as json]
@@ -18,309 +21,23 @@
 ;; part of a single parent step, so forward-declare it here.
 (declare run-until-done!)
 
-(defn parse-input [s]
-  (let [[k v] (str/split s #"=" 2)] [(keyword k) v]))
-
-(def terminal-run-statuses #{"done" "failed" "error" "cancelled"})
-
-(defn terminal-run? [ctx]
-  (contains? terminal-run-statuses (get-in ctx [:run :status])))
-
-(defn runtime-process-path [run-dir]
-  (fs/path run-dir "runtime-process.json"))
-
-(defn register-runtime-process! [run-dir]
-  (let [pid (.pid (java.lang.ProcessHandle/current))]
-    (store/write-json! (runtime-process-path run-dir)
-                       {:pid pid :started_at (store/now)})
-    pid))
-
-(defn unregister-runtime-process! [run-dir pid]
-  (let [path (runtime-process-path run-dir)]
-    ;; Do not let an older resume process remove a newer process's marker.
-    (when (and (fs/exists? path)
-               (= pid (:pid (store/read-json path))))
-      (fs/delete-if-exists path))))
-
-(defn- normalized-run-dir [run-dir]
-  (str (fs/normalize (fs/absolutize run-dir))))
-
-(defn run-owner-env [ctx]
-  {"AGENT_RUN_DIR" (normalized-run-dir (get-in ctx [:run :dir]))})
-
-(defn- process-enumeration-denied? [error]
-  (let [message (some-> error .getMessage str/lower-case)]
-    (boolean (and message
-                  (or (str/includes? message "operation not permitted")
-                      (str/includes? message "permission denied")
-                      (str/includes? message "sysctl failed"))))))
-
-(defn- process-descendants [process-handle]
-  (try
-    (with-open [stream (.descendants process-handle)]
-      {:handles (vec (iterator-seq (.iterator stream)))
-       :enumerated true})
-    (catch RuntimeException error
-      (if (process-enumeration-denied? error)
-        {:handles [] :enumerated false}
-        (throw error)))))
-
-(defn- wait-for-process-exit [handles]
-  (loop [remaining 40]
-    (let [alive (filterv #(.isAlive ^java.lang.ProcessHandle %) handles)]
-      (cond
-        (empty? alive) true
-        (zero? remaining) (do (doseq [handle alive] (.destroyForcibly ^java.lang.ProcessHandle handle)) false)
-        :else (do (Thread/sleep 50) (recur (dec remaining)))))))
-
-(defn- linux-process-environment [pid]
-  (let [path (fs/path "/proc" (str pid) "environ")]
-    (when (fs/exists? path)
-      (try
-        (str/split (slurp (str path)) #"\u0000")
-        (catch Exception _ nil)))))
-
-(defn- owned-by-run-dir? [owner marker]
-  ;; A deterministic node executing inside a fragment marks its process with
-  ;; the *nested* run dir (run-owner-env applies over the fragment's internal
-  ;; ctx), i.e. <owner>/fragments/<state>/<attempt>, not <owner> itself. Match
-  ;; that nesting so the parent run's cleanup/cancellation still reaps it.
-  (or (= owner marker)
-      (str/starts-with? marker (str owner "/fragments/"))))
-
-(defn- owned-process-handles [run-dir]
-  (let [owner (normalized-run-dir run-dir)
-        prefix "AGENT_RUN_DIR="
-        owned? (fn [handle]
-                 (some (fn [entry]
-                         (when (str/starts-with? entry prefix)
-                           (owned-by-run-dir? owner (normalized-run-dir (subs entry (count prefix))))))
-                       (linux-process-environment (.pid ^java.lang.ProcessHandle handle))))
-        current-pid (.pid (java.lang.ProcessHandle/current))]
-    (if-not (fs/exists? "/proc")
-      {:handles [] :enumerated false}
-      (with-open [stream (java.lang.ProcessHandle/allProcesses)]
-        {:handles (->> (iterator-seq (.iterator stream))
-                       (remove #(= current-pid (.pid ^java.lang.ProcessHandle %)))
-                       (filter owned?)
-                       vec)
-         :enumerated true}))))
-
-(defn stop-owned-processes! [run-dir]
-  (let [{:keys [handles enumerated]} (owned-process-handles run-dir)]
-    (doseq [handle handles]
-      (when (.isAlive ^java.lang.ProcessHandle handle)
-        (.destroy ^java.lang.ProcessHandle handle)))
-    {:owned_processes (count handles)
-     :owned_processes_enumerated enumerated
-     :owned_processes_stopped (if (seq handles) (wait-for-process-exit handles) true)}))
-
-(defn stop-runtime-process! [run-dir]
-  (let [path (runtime-process-path run-dir)
-        record (when (fs/exists? path) (store/read-json path))
-        pid (:pid record)
-        optional (when (and (integer? pid) (pos? pid))
-                   (java.lang.ProcessHandle/of (long pid)))
-        root (when (and optional (.isPresent optional)) (.get optional))
-        descendant-result (if (and root (.isAlive root))
-                            (process-descendants root)
-                            {:handles [] :enumerated true})
-        descendants (:handles descendant-result)
-        ;; The runtime process can be blocked synchronously inside a process
-        ;; node's own child (e.g. mid p/shell wait): destroying that child
-        ;; first would unblock this same process to keep running and durably
-        ;; record a spurious node result before it is itself torn down.
-        ;; destroyForcibly (SIGKILL) is uncatchable and runs no process code,
-        ;; unlike destroy (SIGTERM) on a JVM, which still has to be scheduled
-        ;; and dispatched through its own shutdown handling before the process
-        ;; actually stops. Kill the root first and confirm it is gone before
-        ;; touching anything it owned, so it can never observe -- or react to
-        ;; -- a descendant's exit.
-        root-stopped? (if (and root (.isAlive root))
-                        (do (.destroyForcibly ^java.lang.ProcessHandle root)
-                            (wait-for-process-exit [root]))
-                        true)]
-    (doseq [handle (reverse descendants)]
-      (when (.isAlive ^java.lang.ProcessHandle handle)
-        (.destroy ^java.lang.ProcessHandle handle)))
-    (let [descendants-stopped? (if (seq descendants) (wait-for-process-exit descendants) true)
-          owned (stop-owned-processes! run-dir)]
-      (fs/delete-if-exists path)
-      (merge {:pid pid
-              :process_found (boolean root)
-              :descendants (count descendants)
-              :descendants_enumerated (:enumerated descendant-result)
-              :stopped (and root-stopped? descendants-stopped? (:owned_processes_stopped owned))}
-             owned))))
-
-(defn retry-allowed-status? [status]
-  (contains? #{"failed" "cancelled"} status))
-
-(defn- live-runtime-process? [run-dir]
-  (let [path (runtime-process-path run-dir)
-        record (when (fs/exists? path) (store/read-json path))
-        pid (:pid record)]
-    (when (and (integer? pid) (pos? pid))
-      (when-let [handle (some-> (java.lang.ProcessHandle/of (long pid)) (.orElse nil))]
-        (.isAlive handle)))))
-
-(defn- current-workflow-sha [ctx]
-  (let [wf-file (get-in ctx [:workflow :file])]
-    (when (and wf-file (fs/exists? wf-file))
-      (store/sha256 (slurp wf-file)))))
-
-(defn- assert-pinned-workflow-readable! [ctx]
-  (let [wf-file (get-in ctx [:workflow :file])
-        run-dir (get-in ctx [:run :dir])]
-    (when (str/blank? wf-file)
-      (throw (ex-info "Pinned workflow file is missing from run context (retry_missing_workflow_file)"
-                      {:run-dir run-dir :error "retry_missing_workflow_file"})))
-    (when-not (fs/exists? wf-file)
-      (throw (ex-info "Pinned workflow file does not exist (retry_missing_workflow_file)"
-                      {:run-dir run-dir :error "retry_missing_workflow_file" :file wf-file})))
-    (try
-      (spec/read-workflow wf-file)
-      (catch Throwable t
-        (throw (ex-info "Pinned workflow file is unreadable (retry_unreadable_workflow_file)"
-                        {:run-dir run-dir :error "retry_unreadable_workflow_file" :file wf-file}
-                        t))))))
-
-(defn- pinned-workflow-sha [ctx]
-  (when-let [version (get-in ctx [:workflow :version])]
-    (when (string? version)
-      (second (str/split version #":" 2)))))
-
-(defn read-run-events [ctx]
-  (let [p (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
-    (when (fs/exists? p)
-      (->> (str/split-lines (slurp (str p)))
-           (remove str/blank?)
-           (keep #(try (json/parse-string % true) (catch Throwable _ nil)))
-           vec))))
-
-(defn last-terminal-evidence [ctx]
-  (let [events (read-run-events ctx)]
-    (last (filter #(contains? #{"node.failed" "node.orphaned" "run.max-rounds-exceeded" "run.cancelled"} (:event %)) events))))
-
-(defn retry! [run-dir {:keys [reason repin]}]
-  (let [ctx (store/load-context run-dir)
-        status (get-in ctx [:run :status])]
-    ;; Single-writer guard comes first: a live runtime-process.json marker
-    ;; means an executing runner owns this run dir, regardless of whether the
-    ;; persisted status is running, failed, or cancelled. Recovery must never
-    ;; race an executing runner.
-    (when (live-runtime-process? run-dir)
-      (throw (ex-info "Run cannot be retried while owned by a live process (retry_live_process)"
-                      {:run-dir run-dir :error "retry_live_process"})))
-    (when-not (retry-allowed-status? status)
-      (throw (ex-info "Run cannot be retried because it is not in a failed or cancelled state (retry_requires_failed_or_cancelled)"
-                      {:run-dir run-dir :status status :error "retry_requires_failed_or_cancelled"})))
-    (assert-pinned-workflow-readable! ctx)
-    (let [current-sha (current-workflow-sha ctx)
-          pinned-sha (pinned-workflow-sha ctx)
-          pinned-version (get-in ctx [:workflow :version])]
-      (when (and (not repin) current-sha pinned-sha (not= pinned-sha current-sha))
-        (throw (ex-info "Workflow content changed since this run was pinned (retry_pin_mismatch)"
-                        {:run-dir run-dir
-                         :error "retry_pin_mismatch"
-                         :pinned pinned-version
-                         :current (str "sha256:" current-sha)})))
-      (let [prior-attempt (get-in ctx [:run :attempt])
-            new-attempt (inc prior-attempt)
-            prior-state (get-in ctx [:run :state])
-            running (-> ctx
-                        (assoc-in [:run :status] "running")
-                        (assoc-in [:run :attempt] new-attempt)
-                        (assoc-in [:run :updated-at] (store/now)))
-            repin-data (when (and repin pinned-sha current-sha (not= pinned-sha current-sha))
-                         {:old_hash pinned-sha :new_hash current-sha})
-            prior-evidence (last-terminal-evidence ctx)]
-        (store/save-context! running)
-        (store/event! running (cond-> {:event "run.recovery"
-                                         :prior_status status
-                                         :prior_state (some-> prior-state name)
-                                         :prior_attempt prior-attempt
-                                         :new_attempt new-attempt
-                                         :reason reason
-                                         :repin repin-data
-                                         :at (store/now)}
-                                  prior-evidence (assoc :prior_evidence prior-evidence)))
-        running))))
-
-(defn cancel! [run-dir]
-  (let [before (store/load-context run-dir)]
-    (if (terminal-run? before)
-      before
-      (let [process (stop-runtime-process! run-dir)
-            ;; Reload after stopping the process so its last durable transition
-            ;; cannot overwrite the cancellation state.
-            ctx (store/load-context run-dir)
-            cancelled (-> ctx
-                          (assoc-in [:run :status] "cancelled")
-                          (assoc-in [:run :updated-at] (store/now)))]
-        (store/event! cancelled {:event "run.cancelled"
-                                 :pid (:pid process)
-                                 :process_found (:process_found process)
-                                 :descendants (:descendants process)
-                                 :descendants_enumerated (:descendants_enumerated process)
-                                 :owned_processes (:owned_processes process)
-                                 :owned_processes_enumerated (:owned_processes_enumerated process)
-                                 :owned_processes_stopped (:owned_processes_stopped process)
-                                 :stopped (:stopped process)})
-        (store/save-context! cancelled)
-        ;; A fragment's own nested run dir is a full durable run in its own
-        ;; right: cancelling the parent must not leave it silently "running"
-        ;; forever once the owning parent process is gone. The parent's own
-        ;; "cancelled" status is already durable above, so a throw while
-        ;; cancelling a nested run (e.g. an unreadable state.edn) can never
-        ;; leave the parent's own cancellation unrecorded; cancel-internal-runs!
-        ;; itself isolates failures per nested attempt dir.
-        (fragment/cancel-internal-runs! cancelled)
-        cancelled))))
-
-(defn default-branch [inputs]
-  (when-let [ticket (:ticket inputs)]
-    (str "feature/" (str/lower-case ticket))))
-
-(defn init-context [wf opts]
-  (let [content (slurp (spec/workflow-file wf))
-        run-id (or (:run-id opts)
-                   (str "run-" (-> (store/now) (str/replace #"[:.]" "-") (str/replace #"Z$" "Z"))))
-        name (spec/workflow-name wf)
-        run-dir (str (fs/absolutize (fs/path (or (:workspace-root opts) ".")
-                                      (or (:runs-root opts) ".agent-runs")
-                                      name run-id)))
-        inputs (merge {:repo-root "."
-                       :base-branch (get-in wf [:defaults :base-branch] "main")}
-                      (:inputs opts))
-        inputs (if (:branch inputs) inputs (assoc inputs :branch (default-branch inputs)))
-        git-user-name (some-> (get-in opts [:git-user :name]) str/trim not-empty)
-        git-user-email (some-> (get-in opts [:git-user :email]) str/trim not-empty)
-        git-user (when (and git-user-name git-user-email)
-                   {:name git-user-name :email git-user-email})
-        executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))
-        project-id (or (:project-id opts) "default")
-        runtime-options (select-keys opts [:workspace-root :tesseraft-home :runs-root :workflow-roots :project-context])]
-    {:workflow {:name name
-                :file (spec/workflow-file wf)
-                :version (str "sha256:" (store/sha256 content))
-                :defaults (:defaults wf {})}
-     :inputs inputs
-     :run (cond-> {:id run-id
-                  :dir run-dir
-                  :project-id project-id
-                  :state (:initial wf)
-                  :status "running"
-                  :round 1
-                  :attempt 1
-           :feedback-cycle 1
-           :issues-file (str (fs/path run-dir "issues.json"))
-           :created-at (store/now)
-           :updated-at (store/now)}
-         executor-mode (assoc :executor-mode executor-mode)
-         git-user (assoc :git-user git-user)
-         (seq runtime-options) (merge runtime-options))}))
-
+(def parse-input lifecycle/parse-input)
+(def terminal-run-statuses lifecycle/terminal-run-statuses)
+(def terminal-run? lifecycle/terminal-run?)
+(def runtime-process-path lifecycle/runtime-process-path)
+(def register-runtime-process! lifecycle/register-runtime-process!)
+(def unregister-runtime-process! lifecycle/unregister-runtime-process!)
+(def run-owner-env lifecycle/run-owner-env)
+(def run-tracked-process! lifecycle/run-tracked-process!)
+(def stop-owned-processes! lifecycle/stop-owned-processes!)
+(def stop-runtime-process! lifecycle/stop-runtime-process!)
+(def retry-allowed-status? lifecycle/retry-allowed-status?)
+(def read-run-events lifecycle/read-run-events)
+(def last-terminal-evidence lifecycle/last-terminal-evidence)
+(def retry! lifecycle/retry!)
+(def cancel! lifecycle/cancel!)
+(def default-branch lifecycle/default-branch)
+(def init-context lifecycle/init-context)
 (defn artifact-path [ctx p]
   (let [rendered (spec/render-template-string p ctx)]
     (if (str/starts-with? rendered "/") rendered (str (fs/path (get-in ctx [:run :dir]) rendered)))))
@@ -346,11 +63,11 @@
                  :inputs (:inputs ctx)
                  :paths {:run_dir (get-in ctx [:run :dir]) :repo_root repo-root}}
         cmd (:command node)
-        result (apply p/shell {:dir (spec/workflow-dir wf)
-                               :in (json/generate-string request)
-                               :out :string :err :string :continue true
-                               :extra-env (run-owner-env ctx)}
-                      cmd)
+        result (run-tracked-process! (get-in ctx [:run :dir]) (mapv str cmd)
+                                     {:dir (spec/workflow-dir wf)
+                                      :in (json/generate-string request)
+                                      :out :string :err :string :continue true
+                                      :extra-env (run-owner-env ctx)})
         log-file (str (fs/path (get-in ctx [:run :dir]) "logs" (str (name state-id) "-process-" (get-in ctx [:run :attempt]) ".log")))]
     (store/write-runtime-text! ctx log-file (str "COMMAND: " (str/join " " cmd) "\n\nSTDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
     (if (zero? (:exit result))
@@ -399,17 +116,7 @@
 (defn run-agent! [wf ctx state-id node]
   (cond
     (mock-mode? ctx)        (mock/run-agent-node! wf ctx state-id node)
-    ;; Per-node `:executor` is the source of truth (lint rejects unknown
-    ;; executor names). `:pi-sdk` is declared in the linter registry as a
-    ;; known future executor but is not yet implemented by a real adapter,
-    ;; so it fails fast instead of silently falling back to pi.
-    :else (case (:executor node)
-            :pi-cli       (pi-cli/run-agent-node! wf ctx state-id node)
-            :claude-code (claude-code/run-agent-node! wf ctx state-id node)
-            (throw (ex-info "Unknown or unimplemented agent executor"
-                            {:executor (:executor node)
-                             :state state-id
-                             :error-type "unknown_executor"})))))
+    :else (executor-catalog/invoke! (:executor node) wf ctx state-id node)))
 
 (defn json-compatible [x]
   (cond
@@ -588,267 +295,27 @@
                              :result result})
           result)))))
 
-(defn choose-transition [node result]
-  (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
-      (throw (ex-info "No transition matched result" {:result result}))))
-
-(defn normalize-issue-path [ctx p]
-  (when (and p (not (str/blank? (str p))))
-    (if (str/starts-with? (str p) "/") p (str (fs/path (get-in ctx [:run :dir]) p)))))
-
-(defn merge-issues! [ctx result]
-  (if-let [issue-file (normalize-issue-path ctx (:issues_file result))]
-    (if (fs/exists? issue-file)
-      (let [old (if (fs/exists? (get-in ctx [:run :issues-file])) (store/read-json (get-in ctx [:run :issues-file])) [])
-            new (store/read-json issue-file)
-            keyfn (fn [i] [(:source i) (:title i) (:details i)])
-            merged (->> (concat old new) (map #(vector (keyfn %) %)) (into {}) vals vec)]
-        (store/write-runtime-json! ctx (get-in ctx [:run :issues-file]) merged)
-        ctx)
-      ctx)
-    ctx))
-
-(defn apply-effect [ctx effect result]
-  (store/event! ctx {:event "effect.applied" :effect (name effect)})
-  (case effect
-    :merge-issues (merge-issues! ctx result)
-    :clear-issues (do (store/write-runtime-json! ctx (get-in ctx [:run :issues-file]) []) ctx)
-    :inc-round (update-in ctx [:run :round] inc)
-    :inc-feedback-cycle (update-in ctx [:run :feedback-cycle] inc)
-    :fail-run (assoc-in ctx [:run :status] "failed")
-    :set-context ctx
-    :record-pr ctx
-    (throw (ex-info "Unknown effect" {:effect effect}))))
-
-(defn apply-effects [ctx effects result]
-  (reduce #(apply-effect %1 %2 result) ctx effects))
-
-(defn carry-result-context [ctx result]
-  (cond-> ctx
-    (:worktree-dir result) (assoc-in [:run :worktree-dir] (:worktree-dir result))
-    (:branch result) (assoc-in [:run :branch] (:branch result))))
-
-(defn advance [ctx transition result]
-  (-> ctx
-      (carry-result-context result)
-      (apply-effects (:effects transition []) result)
-      (assoc-in [:run :state] (:next transition))
-      (update-in [:run :attempt] inc)
-      (assoc-in [:run :updated-at] (store/now))))
-
-(defn finish-if-terminal [wf ctx]
-  (let [state-id (get-in ctx [:run :state])
-        node (spec/node wf state-id)]
-    (if (= :terminal (:type node))
-      (do
-        (store/event! ctx {:event "run.finished" :state (name state-id)})
-        (-> ctx
-            (assoc-in [:run :status] "done")
-            (assoc-in [:run :updated-at] (store/now))))
-      ctx)))
-
-(defn max-rounds-exceeded? [wf ctx]
-  (let [maximum (get-in wf [:defaults :max-rounds])
-        current (get-in ctx [:run :round] 1)]
-    (and (integer? maximum) (pos? maximum) (> current maximum))))
-
-(defn fail-max-rounds! [wf ctx]
-  (let [maximum (get-in wf [:defaults :max-rounds])
-        current (get-in ctx [:run :round])
-        failed (-> ctx
-                   (assoc-in [:run :status] "failed")
-                   (assoc-in [:run :updated-at] (store/now)))]
-    (store/event! failed {:event "run.max-rounds-exceeded"
-                          :status "failed"
-                          :round current
-                          :max_rounds maximum
-                          :state (some-> (get-in ctx [:run :state]) name)})
-    (store/save-context! failed)
-    failed))
-
-(defn heartbeat-interval-ms []
-  (or (some-> (System/getenv "TESSERAFT_HEARTBEAT_INTERVAL_MS")
-              parse-long
-              (#(when (and % (pos? %)) %)))
-      30000))
-
-(defn execute-with-heartbeat [ctx state-id attempt f]
-  (let [active? (atom true)
-        interval (heartbeat-interval-ms)
-        worker (future
-                 (try
-                   (while @active?
-                     (Thread/sleep interval)
-                     (when @active?
-                       (store/event! ctx {:event "node.heartbeat"
-                                          :state (name state-id)
-                                          :attempt attempt})))
-                   (catch InterruptedException _ nil)))]
-    (try
-      (f)
-      (finally
-        (reset! active? false)
-        (future-cancel worker)))))
-
-(defn orphaned-current-attempt? [ctx state-id attempt]
-  "True if the events.jsonl shows a node.started for this state+attempt with no
-  matching node.finished/node.failed/node.orphaned, which means a prior step
-  started this node but never recorded a terminal event (the resume process was
-  killed/torn down mid-node). Used in step! to FAIL FAST with node.orphaned
-  instead of silently re-running and duplicating node.started."
-  (let [events (read-run-events ctx)
-        started? (some #(and (= "node.started" (:event %))
-                             (= (name state-id) (:state %))
-                             (= attempt (:attempt %)))
-                       events)
-        terminal? (some #(and (#{"node.finished" "node.failed" "node.orphaned"} (:event %))
-                               (= (name state-id) (:state %))
-                               (= attempt (:attempt %)))
-                        events)]
-    (and started? (not terminal?))))
-
-(defn resumable-fragment?
-  "True when the current node is a :fragment whose durable nested run already
-  exists: a prior process's parent-level node.started for this state+attempt
-  is not an orphan in that case, it is a fragment step continuing from its
-  own persisted boundary (run-fragment-node! decides terminal-vs-continuing)."
-  [ctx state-id attempt node]
-  (and (= :fragment (:type node))
-       (fragment/durable-internal-run? ctx state-id attempt)))
-
-(defn orphan-run! [ctx state-id attempt]
-  (let [failed (-> ctx
-                   (assoc-in [:run :status] "failed")
-                   (assoc-in [:run :updated-at] (store/now)))]
-    (store/event! failed {:event "node.orphaned"
-                          :state (name state-id)
-                          :attempt attempt
-                          :status "error"
-                          :error "Node was started but never reached a terminal event; the run process was likely killed mid-execution."})
-    (store/save-context! failed)
-    failed))
-
-;; ---- approval (manual input) pause/resume ----
-;; An :approval node pauses the run to collect a human decision about a produced
-;; artifact. On first entry it writes a run-relative approval-request record,
-;; appends approval.requested, marks the run "blocked", and parks (no
-;; node.started/finished are emitted, so orphan detection is not triggered). On
-;; resume (after a decision record is written by decide!), it appends
-;; approval.decided and advances through the transition whose :when matches
-;; {:decision "..."}. See design §3 R1.
-
-(defn approval-request-path [ctx state-id attempt]
-  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt ".json")))
-
-(defn approval-decision-path [ctx state-id attempt]
-  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt "-decision.json")))
-
-(defn load-approval-decision [ctx state-id attempt]
-  (let [p (approval-decision-path ctx state-id attempt)]
-    (when (fs/exists? p) (store/read-json p))))
-
-(defn render-artifact [ctx node]
-  (when-let [art (:artifact node)]
-    (cond-> art
-      (string? (:path art))
-      (assoc :path (spec/render-template-string (:path art) ctx)))))
-
-;; ---- approval presentation contract ----
-;; The Web UI should render the decision screen from the durable request
-;; record rather than hard-coded labels, so phase-2 reviewer routing becomes
-;; a routing change instead of a redesign. When the node author supplies an
-;; explicit `:presentation` block, it is materialized verbatim (with
-;; template-rendered artifact paths). When absent, we synthesize a minimal
-;; presentation from the legacy `:message` + single `:artifact` form and the
-;; node's `:transitions` whose `:when` carries a `:decision`. `routing`
-;; defaults to `{:kind :self}`. The posted `decision` string still matches
-;; transition `:when {:decision "..."}` unchanged.
-(defn approval-presentation [ctx node]
-  (if-let [pres (:presentation node)]
-    (-> pres
-        (update :question #(some-> % str))
-        (update :artifacts
-                (fn [arts]
-                  (mapv (fn [a]
-                          (cond-> a
-                            (and (map? a) (string? (:path a)))
-                            (assoc :path (spec/render-template-string (:path a) ctx))))
-                        arts)))
-        (update :routing #(or % {:kind :self})))
-    ;; Synthesize from the legacy form.
-    (let [artifact (render-artifact ctx node)
-          decisions (->> (spec/transitions node)
-                         (keep (fn [tr]
-                                 (when-let [d (get-in tr [:when :decision])]
-                                   {:decision (str d)
-                                    :label (str d)
-                                    :next (some-> (:next tr) name)}))))]
-      {:question (some-> (:message node) str)
-       :artifacts (if artifact [artifact] [])
-       :decisions decisions
-       :routing {:kind :self}})))
-
-(defn step-approval! [wf ctx state-id attempt node]
-  (if-let [decision (load-approval-decision ctx state-id attempt)]
-    ;; Resume: a decision record exists. Build a result carrying :decision so
-    ;; the node's :transitions :when {:decision "..."} can match, then advance.
-    (let [result {:status "ok" :ok true
-                  :approval_id (:approval_id decision)
-                  :decision (:decision decision)}
-          ; spec/match-transition? compares :when predicates against result keys.
-          tr (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
-                 (throw (ex-info "No approval transition matched the recorded decision"
-                                 {:state state-id :decision (:decision decision)})))
-          ctx (store/event! ctx {:event "approval.decided"
-                                  :state (name state-id)
-                                  :attempt attempt
-                                  :approval_id (:approval_id decision)
-                                  :decision (:decision decision)})
-          ctx (store/event! ctx {:event "transition.selected"
-                                  :from (name state-id)
-                                  :to (name (:next tr))
-                                  :effects (mapv name (:effects tr []))})
-          advanced (finish-if-terminal wf (advance ctx tr result))]
-      (store/save-context! advanced))
-    ;; Pause: no decision yet. Write the approval-request record (idempotent),
-    ;; append approval.requested only on first creation, mark the run blocked,
-    ;; and park. Returning a blocked ctx makes run-until-done! stop cleanly.
-    (let [req-path (approval-request-path ctx state-id attempt)
-          already? (fs/exists? req-path)
-          artifact (render-artifact ctx node)
-          presentation (approval-presentation ctx node)
-          approval-id (str (name state-id) "-" attempt)
-          request {:approval_id approval-id
-                   :run_id (get-in ctx [:run :id])
-                   :state (name state-id)
-                   :attempt attempt
-                   :message (:message node)
-                   :artifact artifact
-                   ;; Presentation contract (P0.2 review). The UI renders the
-                   ;; decision screen from these fields; legacy `message` /
-                   ;; `artifact` are kept for backward compatibility. When the
-                   ;; node authored a `:presentation`, it is materialized
-                   ;; verbatim; otherwise a minimal one is synthesized from
-                   ;; `:message` + `:artifact` + decision transitions.
-                   :question (:question presentation)
-                   :artifacts (:artifacts presentation)
-                   :decisions (:decisions presentation)
-                   :routing (:routing presentation)
-                   :requested_at (store/now)
-                   :status "pending"}
-          ctx (if already?
-                ctx
-                (do (store/write-runtime-json! ctx req-path request)
-                    (store/event! ctx {:event "approval.requested"
-                                       :state (name state-id)
-                                       :attempt attempt
-                                       :approval_id approval-id
-                                       :artifact (and artifact (:path artifact))})))
-          ctx (-> ctx
-                  (assoc-in [:run :status] "blocked")
-                  (assoc-in [:run :updated-at] (store/now)))]
-      (store/save-context! ctx))))
-
+(def choose-transition transitions/choose-transition)
+(def normalize-issue-path transitions/normalize-issue-path)
+(def merge-issues! transitions/merge-issues!)
+(def apply-effect transitions/apply-effect)
+(def apply-effects transitions/apply-effects)
+(def carry-result-context transitions/carry-result-context)
+(def advance transitions/advance)
+(def finish-if-terminal transitions/finish-if-terminal)
+(def max-rounds-exceeded? transitions/max-rounds-exceeded?)
+(def fail-max-rounds! transitions/fail-max-rounds!)
+(def heartbeat-interval-ms liveness/heartbeat-interval-ms)
+(def execute-with-heartbeat liveness/execute-with-heartbeat)
+(def orphaned-current-attempt? liveness/orphaned-current-attempt?)
+(def resumable-fragment? liveness/resumable-fragment?)
+(def orphan-run! liveness/orphan-run!)
+(def approval-request-path approvals/approval-request-path)
+(def approval-decision-path approvals/approval-decision-path)
+(def load-approval-decision approvals/load-approval-decision)
+(def render-artifact approvals/render-artifact)
+(def approval-presentation approvals/approval-presentation)
+(def step-approval! approvals/step-approval!)
 (defn step! [wf ctx]
   (if (terminal-run? ctx)
     ctx
@@ -887,10 +354,6 @@
                   tr (choose-transition node result)]
               (store/event! ctx {:event "transition.selected" :from (name state-id) :to (name (:next tr)) :effects (mapv name (:effects tr []))})
               (finish-if-terminal wf (advance ctx tr result)))))))))
-
-(defn read-project-git-user []
-  (let [p (fs/path ".tesseraft" "git-user.json")]
-    (when (fs/exists? p) (store/read-json p))))
 
 ;; decide!: record a human decision for the pending approval at the run's
 ;; current state+attempt, then advance the run through the matching transition.
@@ -931,9 +394,10 @@
                                    (seq (str (:email author-overrides))))
                          {:name (str (:name author-overrides))
                           :email (str (:email author-overrides))})
-                       (read-project-git-user)
+                       (get-in ctx [:run :git-user])
                        {:name "unknown" :email "unknown@tesseraft.local"})
-             decision-rec {:approval_id approval-id
+             decision-rec {:version 1
+                           :approval_id approval-id
                            :run_id (get-in ctx [:run :id])
                            :state (name state-id)
                            :attempt attempt

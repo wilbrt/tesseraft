@@ -1,0 +1,55 @@
+.connections-doctor { display: grid; gap: 0.9rem; }
+.doctor-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.doctor-summary { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.doctor-checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+.doctor-check { border: 1px solid var(--color-border); border-radius: 0.75rem; padding: 0.85rem; background: var(--color-surface-muted); }
+.doctor-check-title { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.doctor-status.ready { background: #dcfce7; color: #166534; }
+.doctor-status.not-configured { background: #e5e7eb; color: #374151; }
+.doctor-status.unreachable { background: #ffedd5; color: #9a3412; }
+.doctor-status.invalid { background: #fee2e2; color: #991b1b; }
+.mode-pill { background: #dbeafe; color: var(--color-accent); }
+/* WT4: work-tracker diagnosis states (absent/incomplete/invalid/unresolved/ready),
+   reusing the doctor-status color vocabulary where the meaning matches. */
+.tracker-state.absent { background: #e5e7eb; color: #374151; }
+.tracker-state.ready, .tracker-state.present { background: #dcfce7; color: #166534; }
+.tracker-state.unresolved { background: #dbeafe; color: var(--color-accent); }
+.tracker-state.incomplete { background: #ffedd5; color: #9a3412; }
+.tracker-state.invalid { background: #fee2e2; color: #991b1b; }
+.doctor-work-tracker { border: 1px solid var(--color-border); border-radius: 0.75rem; padding: 0.6rem 0.85rem; background: var(--color-surface-muted); }
+@media (max-width: 700px) { .doctor-header { flex-direction: column; } .doctor-header button { width: 100%; } }
+
+/* Project/Connections selector pills in the Settings panel (surface 10). */
+.settings-panel { width: 100%; }
+.settings-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.settings-layout > .connections-doctor { grid-column: 1 / -1; }
+.settings-primary, .settings-projects { align-self: stretch; }
+.project-tab { background: transparent; border: 1px solid var(--color-header-muted); border-radius: 0.45rem; padding: 0.4rem 0.6rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; }
+.project-tab.active { border-color: var(--color-accent); background: #eff6ff; }
+.settings-panel .item-list .project-tab + .project-tab { margin-left: 0; }
+@media (max-width: 480px) { .project-tab { width: 100%; } }
+
+/* Global Project selector in the header topline (project-scoped operations). */
+.project-selector { position: relative; display: inline-flex; align-items: center; }
+.popover-layer { position: fixed; z-index: 1000; overflow: auto; }
+.project-selector-popover { color: var(--color-text); }
+.project-selector-button { display: inline-flex; align-items: center; gap: 0.4rem; background: var(--color-control-subtle-bg); border: 1px solid var(--color-header-muted); border-radius: 0.45rem; padding: 0.3rem 0.55rem; cursor: pointer; font: inherit; color: var(--color-nav-active-text); }
+.project-selector-button:hover { background: var(--color-control-subtle-hover); border-color: var(--color-accent); }
+.project-selector-label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.project-selector-caret { font-size: 0.7rem; color: var(--color-nav-active-muted); }
+.project-selector-menu { margin: 0; padding: 0.25rem; list-style: none; background: var(--color-surface); border: 1px solid var(--color-header-muted); border-radius: 0.45rem; box-shadow: 0 4px 10px rgba(15,23,42,0.12); min-width: 12rem; }
+.project-selector-item { display: flex; flex-direction: column; width: 100%; text-align: left; background: transparent; border: 0; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: 0.3rem; font: inherit; }
+.project-selector-item:hover { background: #eff6ff; }
+.project-selector-item.active { background: #dbeafe; }
+.project-selector-id { font-weight: 600; }
+.project-selector-name { color: var(--color-subtle-text); font-size: 0.82rem; }
+.project-selector-empty { padding: 0.4rem 0.5rem; color: #64748b; }
+
+@media (max-width: 900px) { .settings-layout { grid-template-columns: minmax(0, 1fr); } .settings-layout > .connections-doctor { grid-column: auto; } }
+
+.color-scheme-options { margin: 0; border: 1px solid var(--color-border); border-radius: 0.6rem; padding: 0.75rem; display: grid; gap: 0.65rem; }
+.color-scheme-options legend { padding: 0 0.35rem; font-weight: 700; }
+.color-scheme-options label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0.55rem; cursor: pointer; }
+.color-scheme-options input { margin-top: 0.25rem; accent-color: var(--color-accent); }
+.color-scheme-options span, .color-scheme-options small { display: block; }
+.color-scheme-options small { margin-top: 0.15rem; color: var(--color-muted); font-weight: 500; }

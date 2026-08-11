@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tesseraft User Preferences",
+  "type": "object",
+  "required": ["version", "preferences"],
+  "properties": {
+    "version": { "const": 1 },
+    "preferences": {
+      "type": "object",
+      "properties": {
+        "color_scheme": { "enum": ["classic", "matrix"] },
+        "editor_layout": { "enum": ["comfortable", "compact"] },
+        "pi_default_provider": { "type": "string" },
+        "pi_default_model": { "type": "string" },
+        "default_repo_root": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

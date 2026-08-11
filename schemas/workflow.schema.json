@@ -1,82 +1,110 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Tesseraft Workflow Definition (normalized JSON shape)",
+  "$id": "https://tesseraft.local/schemas/workflow.schema.json",
+  "title": "Tesseraft Workflow Definition (portable normalized JSON)",
   "type": "object",
-  "required": [
-    "api-version",
-    "kind",
-    "metadata",
-    "initial",
-    "states"
-  ],
+  "additionalProperties": false,
+  "required": ["api-version", "kind", "metadata", "initial", "states"],
   "$defs": {
-    "resourceDeclaration": {
+    "stringMap": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean", "null"] } },
+    "transition": {
       "type": "object",
+      "additionalProperties": false,
+      "required": ["next"],
+      "properties": {
+        "when": { "$ref": "#/$defs/stringMap" },
+        "next": { "type": "string", "minLength": 1 },
+        "effects": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "outputContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "schema": { "type": "string" },
+        "required": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "outputs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/outputContract" } },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string" }, "name": { "type": "string" }, "path": { "type": "string" },
+        "mode": { "type": "string" }, "description": { "type": "string" }, "schema": { "type": "string" },
+        "source": { "type": "string" }, "tool": { "type": "string" }, "secret": { "type": ["string", "boolean"] },
+        "handler": { "type": "string" }, "executor": { "type": "string" }
+      }
+    },
+    "resourceList": { "type": "array", "items": { "$ref": "#/$defs/resource" } },
+    "resources": {
+      "type": "object", "additionalProperties": false,
       "properties": {
         "requires": { "$ref": "#/$defs/resourceList" },
         "consumes": { "$ref": "#/$defs/resourceList" },
         "produces": { "$ref": "#/$defs/resourceList" }
-      },
-      "additionalProperties": true
+      }
     },
-    "resourceList": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/resource" }
-    },
-    "resource": {
+    "runtime": { "type": "object" },
+    "inputs": { "type": "object" },
+    "commonNode": {
       "type": "object",
-      "required": ["kind", "name"],
       "properties": {
-        "kind": { "type": "string" },
-        "name": { "type": "string" },
-        "path": { "type": "string" },
-        "mode": { "type": "string" },
-        "description": { "type": "string" },
-        "schema": { "type": "string" },
-        "source": { "type": "string" },
-        "tool": { "type": "string" },
-        "secret": { "type": ["string", "boolean"] },
-        "handler": { "type": "string" },
-        "executor": { "type": "string" }
-      },
-      "additionalProperties": true
-    }
-  },
-  "properties": {
-    "api-version": {
-      "const": "tesseraft.workflow/v1"
+        "title": { "type": "string" }, "runtime": { "$ref": "#/$defs/runtime" },
+        "inputs": { "$ref": "#/$defs/inputs" }, "outputs": { "$ref": "#/$defs/outputs" },
+        "resources": { "$ref": "#/$defs/resources" }, "next": { "type": "string" },
+        "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } }
+      }
     },
-    "kind": {
-      "const": "workflow"
-    },
-    "metadata": {
-      "type": "object",
-      "required": [
-        "name"
+    "agent": {
+      "allOf": [
+        { "$ref": "#/$defs/commonNode" },
+        { "type": "object", "additionalProperties": false, "required": ["type", "executor", "prompt-template"],
+          "properties": {
+            "type": { "const": "agent" }, "title": { "type": "string" }, "runtime": { "$ref": "#/$defs/runtime" },
+            "inputs": { "$ref": "#/$defs/inputs" }, "outputs": { "$ref": "#/$defs/outputs" }, "resources": { "$ref": "#/$defs/resources" },
+            "next": { "type": "string" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } },
+            "executor": { "type": "string" }, "provider": { "type": "string" }, "model": { "type": "string" },
+            "thinking": { "type": "string" }, "prompt-template": { "type": "string" }, "prompt-output": { "type": "string" },
+            "session-name": { "type": "string" }, "tools": { "type": "array", "items": { "type": "string" } }
+          } }
       ]
     },
-    "inputs": {
-      "type": "object"
-    },
-    "defaults": {
-      "type": "object"
-    },
-    "policies": {
-      "type": "object"
-    },
-    "initial": {
-      "type": "string"
-    },
-    "states": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "resources": { "$ref": "#/$defs/resourceDeclaration" }
-        },
-        "additionalProperties": true
+    "deterministic": {
+      "type": "object", "additionalProperties": false, "required": ["type", "handler"],
+      "properties": {
+        "type": { "const": "deterministic" }, "title": { "type": "string" }, "handler": { "type": "string" },
+        "runtime": { "$ref": "#/$defs/runtime" }, "inputs": { "$ref": "#/$defs/inputs" }, "outputs": { "$ref": "#/$defs/outputs" },
+        "resources": { "$ref": "#/$defs/resources" }, "next": { "type": "string" },
+        "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } }
       }
-    }
+    },
+    "process": {
+      "type": "object", "additionalProperties": false, "required": ["type", "command"],
+      "properties": {
+        "type": { "const": "process" }, "title": { "type": "string" }, "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "input-mode": { "type": "string" }, "output-mode": { "type": "string" }, "runtime": { "$ref": "#/$defs/runtime" },
+        "inputs": { "$ref": "#/$defs/inputs" }, "outputs": { "$ref": "#/$defs/outputs" }, "resources": { "$ref": "#/$defs/resources" },
+        "next": { "type": "string" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } }
+      }
+    },
+    "timer": { "type": "object", "additionalProperties": false, "required": ["type", "duration", "next"], "properties": { "type": { "const": "timer" }, "title": { "type": "string" }, "duration": { "type": "string" }, "next": { "type": "string" } } },
+    "approval": { "type": "object", "additionalProperties": false, "required": ["type", "message", "transitions"], "properties": { "type": { "const": "approval" }, "title": { "type": "string" }, "message": { "type": "string" }, "artifact": { "type": "string" }, "presentation": { "type": "object" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
+    "router": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "router" }, "title": { "type": "string" }, "next": { "type": "string" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
+    "terminal": { "type": "object", "additionalProperties": false, "required": ["type", "status"], "properties": { "type": { "const": "terminal" }, "title": { "type": "string" }, "status": { "enum": ["success", "failure"] } } },
+    "fragment": { "type": "object", "additionalProperties": false, "required": ["type", "fragment", "transitions"], "properties": { "type": { "const": "fragment" }, "title": { "type": "string" }, "fragment": { "type": ["string", "object"] }, "inputs": { "type": "object" }, "parameters": { "type": "object" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
+    "node": { "oneOf": [ { "$ref": "#/$defs/agent" }, { "$ref": "#/$defs/deterministic" }, { "$ref": "#/$defs/process" }, { "$ref": "#/$defs/timer" }, { "$ref": "#/$defs/approval" }, { "$ref": "#/$defs/router" }, { "$ref": "#/$defs/terminal" }, { "$ref": "#/$defs/fragment" } ] }
   },
-  "additionalProperties": true
+  "properties": {
+    "api-version": { "const": "tesseraft.workflow/v1" },
+    "kind": { "const": "workflow" },
+    "metadata": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "name": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "owners": { "type": "array", "items": { "type": "string" } }, "tags": { "type": "array", "items": { "type": "string" } } } },
+    "inputs": { "type": "object" }, "defaults": { "type": "object" }, "policies": { "type": "object" },
+    "initial": { "type": "string", "minLength": 1 },
+    "states": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/node" } },
+    "extensions": { "type": "object" }
+  }
 }

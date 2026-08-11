@@ -25,19 +25,17 @@ type RuntimeMaskedCredential = {
 export type RuntimeWorkTrackerConnection = {
   provider?: string;
   'credential-ref'?: string;
-  credential_ref?: string;
   config?: Record<string, unknown>;
   'credential-state'?: RuntimeMaskedCredential | null;
-  credential_state?: RuntimeMaskedCredential | null;
 };
 
 type RuntimeProjectConnections = Record<string, unknown> & { 'work-tracker'?: RuntimeWorkTrackerConnection };
 
 const readCredRef = (tracker: RuntimeWorkTrackerConnection | undefined): string =>
-  (tracker && (tracker['credential-ref'] || tracker.credential_ref)) || '';
+  tracker?.['credential-ref'] || '';
 
 const readCredState = (tracker: RuntimeWorkTrackerConnection | undefined): RuntimeMaskedCredential | null =>
-  (tracker && (tracker['credential-state'] || tracker.credential_state)) || null;
+  tracker?.['credential-state'] || null;
 
 const credentialStateLabel: Record<string, string> = {
   present: 'Present',
@@ -127,7 +125,7 @@ export const WorkTrackerPanel = ({
     try {
       const result = await putJson<{ connections?: RuntimeProjectConnections }>(
         `/api/projects/${encodeURIComponent(projectId)}/connections`,
-        { work_tracker: { provider: selectedProvider, credential_ref: credentialRef.trim(), config } }
+        { 'work-tracker': { provider: selectedProvider, 'credential-ref': credentialRef.trim(), config } }
       );
       onSaved(result.connections || {});
       setInfo('Work tracker saved. Only the provider, credential reference, and non-secret config are stored; the browser never holds credential values.');
@@ -145,7 +143,7 @@ export const WorkTrackerPanel = ({
     try {
       const result = await putJson<{ connections?: RuntimeProjectConnections }>(
         `/api/projects/${encodeURIComponent(projectId)}/connections`,
-        { clear_work_tracker: true }
+        { 'work-tracker': 'clear' }
       );
       onSaved(result.connections || {});
       selectProvider('');

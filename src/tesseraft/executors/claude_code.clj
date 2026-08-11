@@ -21,11 +21,10 @@
   are best-effort until the installed CLI's session-id output schema is
   confirmed."
   (:require
-    [tesseraft.executors.pi-cli :as pi-cli]
-    [tesseraft.spec :as spec]
+    [tesseraft.executors.context :as executor-context]
+    [tesseraft.executors.process :as executor-process]
     [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
-    [babashka.process :as p]
     [clojure.string :as str]))
 
 (defn env [k default] (or (System/getenv k) default))
@@ -64,10 +63,10 @@
 (defn run-agent-node! [wf ctx state-id node]
   (let [claude-bin (env "CLAUDE_BIN" "claude")
         run-dir (get-in ctx [:run :dir])
-        repo-root (pi-cli/runtime-cwd ctx state-id node)
-        prompt-file (pi-cli/render-prompt! wf ctx state-id node)
+        repo-root (executor-context/runtime-cwd ctx state-id node)
+        prompt-file (executor-context/render-prompt! wf ctx state-id node)
         prompt-text (slurp prompt-file)
-        session-name (pi-cli/session-name ctx state-id node)
+        session-name (executor-context/session-name wf ctx state-id node)
         model (:model node)
         provider (:provider node)
         thinking (:thinking node)
@@ -97,35 +96,21 @@
                 tools (into ["--allowedTools" tools]))
           ;; Feed the rendered prompt via stdin so argv length and shell
           ;; escaping are never a concern.
-          extra-env {"AGENT_RUN_DIR" run-dir
-                     "AGENT_STATE" (name state-id)
-                     "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}
-          git-user (get-in ctx [:run :git-user])
-          git-env (when git-user
-                    {"GIT_AUTHOR_NAME" (:name git-user)
-                     "GIT_AUTHOR_EMAIL" (:email git-user)
-                     "GIT_COMMITTER_NAME" (:name git-user)
-                     "GIT_COMMITTER_EMAIL" (:email git-user)
-                     "GIT_USER_NAME" (:name git-user)
-                     "GIT_USER_EMAIL" (:email git-user)})
-          proc (deref (p/process {:cmd cmd
-                                  :dir repo-root
-                                  :in prompt-text
-                                  :out :string :err :string :continue true
-                                  :extra-env (subenv-without-api-key
-                                                (merge extra-env (or git-env {})))}))
-          exit (:exit proc)
-          out (str (:out proc))
-          err (str (:err proc))]
+          proc (executor-process/run! {:cmd cmd :dir repo-root :input prompt-text
+                                       :env (subenv-without-api-key
+                                              (executor-context/agent-env ctx state-id))})
+          exit (:exit-code proc)
+          out (:stdout proc)
+          err (:stderr proc)]
       (store/append-runtime-text! ctx log
                                    (str "STATUS: exited " exit "\n\n"
                                         "STDOUT:\n" out "\n\nSTDERR:\n" err "\n"))
-      (cond-> {:executor "claude-code"
-               :ok (zero? exit)
+      (cond-> (merge (select-keys proc [:ok :status :category :code :message])
+                     {:executor "claude-code"
                :exit-code exit
                :prompt-file prompt-file
                :log-file log
-               :session-name session-name}
+               :session-name session-name})
         provider (assoc :provider provider)
         model (assoc :model model)
         thinking (assoc :thinking thinking)))))

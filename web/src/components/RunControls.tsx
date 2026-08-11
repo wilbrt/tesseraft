@@ -105,7 +105,11 @@ export const RunControls = ({ workflows, selectedWorkflow, workflowDetail, selec
           <h3>Delete selected run</h3>
           <p className="muted">Removes the run directory from <code>.agent-runs/</code>. Local and irreversible. The server refuses actively executing runs.</p>
           <label className="check"><input type="checkbox" checked={confirmDelete} onChange={(event) => setConfirmDelete(event.target.checked)} /> Confirm permanent deletion of this run's directory.</label>
-          <button type="button" disabled={!selectedRun || !confirmDelete || busy} onClick={() => mutate('delete', () => deleteJson<MutationResult>(projectApiUrl(`/api/runs/${encodeURIComponent(selectedRun || '')}`, projectId)), null)}>Delete run</button>
+          <button type="button" disabled={!selectedRun || !confirmDelete || busy} onClick={() => mutate('delete', async () => {
+            const runId = selectedRun || '';
+            const deleted = await deleteJson<Record<string, unknown>>(projectApiUrl(`/api/runs/${encodeURIComponent(runId)}`, projectId));
+            return { operation: 'delete', status: 'ok', run_id: runId, result: deleted };
+          }, null)}>Delete run</button>
         </div>
         <div className="control-card">
           <h3>Step selected run</h3>

@@ -179,7 +179,10 @@ const terminate = async (child: ChildProcessWithoutNullStreams): Promise<void> =
 
 const expectUnder = (parent: string, child: string): void => {
   const rel = path.relative(parent, child);
-  expect(rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))).toBeTruthy();
+  expect(
+    rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)),
+    `expected ${child} to be contained by ${parent}`
+  ).toBeTruthy();
 };
 
 const writeSeededRun = async (workspaceRoot: string, workflowName: string, runId: string, status: 'running' | 'done', state: string, events = ''): Promise<string> => {
@@ -194,7 +197,7 @@ const writeSeededRun = async (workspaceRoot: string, workflowName: string, runId
 
 export const test = base.extend<{}, WorkerFixtures>({
   isolatedWorkspace: [async ({}, use) => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tesseraft-pw-'));
+    const tempRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tesseraft-pw-')));
     const workspaceRoot = path.join(tempRoot, 'workspace');
     const tesseraftHome = path.join(tempRoot, 'home');
     let child: ChildProcessWithoutNullStreams | null = null;
@@ -253,7 +256,7 @@ export const test = base.extend<{}, WorkerFixtures>({
     await fs.writeFile(path.join(isolatedWorkspace.workspaceRoot, artifactPath), `# PW7 approval context\n\nRun: ${runId}\nWorkflow: ${workflowName}\n`);
     expectUnder(isolatedWorkspace.workspaceRoot, workflowPath);
 
-    const startResponse = await fetch(`${isolatedWorkspace.baseURL}/api/runs`, {
+    const startResponse = await fetch(`${isolatedWorkspace.baseURL}/api/projects/default/runs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ workflow_name: workflowName, run_id: runId, inputs: {} })
@@ -261,13 +264,13 @@ export const test = base.extend<{}, WorkerFixtures>({
     expect(startResponse.status, 'PW7 start status').toBe(202);
 
     await expect.poll(async () => {
-      const body = await isolatedWorkspace.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/runs/${encodeURIComponent(runId)}`);
+      const body = await isolatedWorkspace.apiJson<{ run: { status: string; state: string; path: string } }>(`/api/projects/default/runs/${encodeURIComponent(runId)}`);
       return { status: body.run.status, state: body.run.state };
     }, { timeout: 15_000 }).toEqual({ status: 'blocked', state: 'gate-1' });
-    const blocked = await isolatedWorkspace.apiJson<{ run: { path: string } }>(`/api/runs/${encodeURIComponent(runId)}`);
+    const blocked = await isolatedWorkspace.apiJson<{ run: { path: string } }>(`/api/projects/default/runs/${encodeURIComponent(runId)}`);
     const runDir = path.resolve(isolatedWorkspace.workspaceRoot, blocked.run.path);
     expectUnder(isolatedWorkspace.workspaceRoot, runDir);
-    const approvals = await isolatedWorkspace.apiJson<{ approvals: Array<{ approval_id: string; state: string; question?: string; decision?: unknown }> }>(`/api/runs/${encodeURIComponent(runId)}/approvals`);
+    const approvals = await isolatedWorkspace.apiJson<{ approvals: Array<{ approval_id: string; state: string; question?: string; decision?: unknown }> }>(`/api/projects/default/runs/${encodeURIComponent(runId)}/approvals`);
     const pending = approvals.approvals.find((approval) => approval.state === 'gate-1' && approval.question === question && !approval.decision);
     expect(pending, 'PW7 pending approval record').toBeTruthy();
 
@@ -308,7 +311,9 @@ export const test = base.extend<{}, WorkerFixtures>({
 
     const started = await isolatedWorkspace.runCli(['run', 'start', workflowPath, '--run-id', runId, '--format', 'json']);
     const body = started.json as { run?: { dir?: string } };
-    const runDir = body.run?.dir || path.join(isolatedWorkspace.workspaceRoot, '.agent-runs', workflowName, runId);
+    const runDir = body.run?.dir
+      ? path.resolve(isolatedWorkspace.workspaceRoot, body.run.dir)
+      : path.join(isolatedWorkspace.workspaceRoot, '.agent-runs', workflowName, runId);
     const pw4ExecutingRunDir = await writeSeededRun(
       isolatedWorkspace.workspaceRoot,
       pw4WorkflowName,

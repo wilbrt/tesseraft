@@ -1,5 +1,4 @@
 {:paths ["src"]
- :deps {cheshire/cheshire {:mvn/version "5.13.0"}}
  :tasks
  {lint {:doc "Standalone workflow linter"
         :requires ([tesseraft.lint.cli :as cli])
@@ -14,10 +13,57 @@
   fragment {:doc "Self-contained fragment package commands"
             :requires ([tesseraft.fragment.cli :as cli])
             :task (apply cli/-main *command-line-args*)}
-  control-plane {:doc "Read-only local control-plane inspection commands"
+  control-plane {:doc "Local control-plane inspection and mutation commands"
                  :requires ([tesseraft.control-plane.cli :as cli])
                  :task (apply cli/-main *command-line-args*)}
-  test {:doc "Run safe Tesseraft smoke checks"
-        :task (shell "./scripts/test.sh")}
-  status {:doc "Regenerate README status section from STATUS.edn (use --check for CI)"
+  migrate {:doc "Inspect and apply versioned project and workflow migrations"
+           :requires ([tesseraft.migration.cli :as cli])
+           :task (apply cli/-main *command-line-args*)}
+  test:unit {:doc "Run Clojure unit and focused contract tests"
+             :task (shell "bb" "--classpath" "src:test" "-m" "tesseraft.test-runner"
+                          "tesseraft.control-plane.core-test"
+                          "tesseraft.capabilities.catalog-test"
+                          "tesseraft.migration.project-test"
+                          "tesseraft.handlers.builtin-test"
+                          "tesseraft.security.redaction-test")}
+  test:runtime {:doc "Run focused Clojure runtime and durability tests"
+                :task (shell "bb" "--classpath" "src:test" "-m" "tesseraft.test-runner"
+                             "tesseraft.runtime.core-test")}
+  test:python {:doc "Run all Python contract and black-box tests through discovery"
+               :task (shell "python" "-m" "pytest")}
+  test:integration {:doc "Run local integration tests against an already prepared Web build"
+                    :task (shell "bb" "--classpath" "src:test" "-m" "tesseraft.test-runner"
+                                 "tesseraft.handlers.integration-test")}
+  test:clojure {:doc "Run all Clojure test namespaces except prepared-build integration tests"
+                :task (do
+                        (shell "bb" "test:unit")
+                        (shell "bb" "test:runtime"))}
+  test:core {:doc "Run local core and contract checks"
+             :task (do
+                     (shell "bb" "test:clojure")
+                     (shell "bb" "test:python")
+                     (shell "bb" "test:node"))}
+  test:node {:doc "Run all non-Web Node.js contract tests"
+             :task (shell "npm" "run" "test:node")}
+  build:web {:doc "Build the Web server and production UI"
+             :task (shell "npm" "run" "build:web")}
+  test:web {:doc "Run Web server, component, and Studio tests without building"
+            :task (shell "npm" "run" "test:web")}
+  test:e2e {:doc "Run Playwright against an already prepared Web build"
+            :task (shell "npm" "run" "test:e2e")}
+  test:docs {:doc "Verify generated documentation and status"
+             :task (apply shell "bb" "scripts/generate_status.clj" "--check" *command-line-args*)}
+  test {:doc "Run safe local core and documentation checks"
+        :task (do
+                (shell "bb" "test:core")
+                (shell "bb" "test:docs"))}
+  test:all {:doc "Build once and run every local core, Web, browser, and documentation suite once"
+            :task (do
+                    (shell "bb" "test:core")
+                    (shell "npm" "run" "build:web")
+                    (shell "npm" "run" "test:web")
+                    (shell "bb" "test:integration")
+                    (shell "npm" "run" "test:e2e")
+                    (shell "bb" "test:docs"))}
+  status {:doc "Regenerate README summary and detailed status outputs from STATUS.edn (use --check for CI)"
           :task (apply shell "bb" "scripts/generate_status.clj" *command-line-args*)}}}

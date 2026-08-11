@@ -12,8 +12,8 @@ automated suite only checks at the HTTP/route level. Covers P0.4 surface #4
   - `GET /api/pi-sessions/:sessionId/stream` → `text/event-stream; charset=utf-8`
     (implementation: `web/src-server/routes/api.ts`, handler ~line 755).
 - Run records (snapshot source of truth): `.agent-runs/<workflow>/<run-id>/`
-  (see `docs/WORKFLOW_RUNS.md`).
-- API contract: `docs/CONTROL_PLANE_API.md` (SSE snapshot stream section).
+  (see `docs/reference/WORKFLOW_RUNS.md`).
+- API contract: `docs/reference/CONTROL_PLANE_API.md` (SSE snapshot stream section).
 - Automated gate that already covers route/snapshot construction:
   `npm run web:test` → `test/web-server.test.js`, `test/web-pi-session.test.js`.
 

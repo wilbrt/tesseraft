@@ -2,14 +2,14 @@
   (:require
     [cheshire.core :as json]
     [clojure.string :as str]
-    [tesseraft.runtime.store :as store])
+    [tesseraft.runtime.store :as store]
+    [tesseraft.work-tracker.errors :as errors]
+    [tesseraft.work-tracker.http :as http])
   (:import
-    [java.net URI URLEncoder]
-    [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse HttpResponse$BodyHandlers HttpTimeoutException]
-    [java.time Duration]))
+    [java.net URLEncoder]))
 
-(def default-timeout-ms 5000)
-(def max-timeout-ms 10000)
+(def default-timeout-ms http/default-timeout-ms)
+(def max-timeout-ms http/max-timeout-ms)
 
 (def ^:dynamic *http-request* nil)
 
@@ -33,76 +33,27 @@
     (when-let [id (present-string s)]
       (re-matches #"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}" id))))
 
-(defn- response-headers-map [headers]
-  (cond
-    (map? headers) headers
-    headers (into {} (for [[k vs] (.map headers)] [(str k) (first vs)]))
-    :else {}))
-
-(defn- header-value [headers name]
-  (some (fn [[k v]] (when (= (str/lower-case (str k)) (str/lower-case name)) (str v))) headers))
-
 (defn- safe-rate-limit-metadata [headers]
-  (let [remaining (header-value headers "X-RateLimit-Remaining")
-        reset (header-value headers "X-RateLimit-Reset")]
-    (cond-> {}
-      remaining (assoc :remaining remaining)
-      reset (assoc :reset reset))))
+  (http/rate-limit-metadata headers))
 
-(defn production-http-request [{:keys [method url headers timeout-ms]}]
-  (let [timeout (Duration/ofMillis (long (or timeout-ms default-timeout-ms)))
-        client (-> (HttpClient/newBuilder)
-                   (.connectTimeout timeout)
-                   (.build))
-        builder (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout timeout)
-                    (.method (or method "GET") (HttpRequest$BodyPublishers/noBody)))]
-    (doseq [[k v] headers]
-      (.header builder (str k) (str v)))
-    (let [response (.send client (.build builder) (HttpResponse$BodyHandlers/ofString))]
-      {:status (.statusCode response)
-       :headers (response-headers-map (.headers response))
-       :body (.body response)})))
+(def production-http-request http/production-request)
 
 (defn- http-request [request]
-  (try
-    ((or *http-request* production-http-request) request)
-    (catch HttpTimeoutException _
-      {:error :timeout})
-    (catch Throwable _
-      {:error :transport})))
+  (http/request *http-request* request))
 
 (defn- response-value [response k]
-  (or (get response k)
-      (get response (name k))))
+  (http/response-value response k))
 
 (defn- http-status [response]
-  (let [status (response-value response :status)]
-    (when (integer? status) status)))
+  (http/status response))
 
 (defn- failure
   ([category message] (failure category message {}))
   ([category message details]
-   (merge {:ok false
-           :status "error"
-           :provider "plane"
-           :category category
-           :message message}
-          details)))
-
-(defn- parse-timeout-ms [v]
-  (try
-    (cond
-      (nil? v) default-timeout-ms
-      (number? v) v
-      (and (string? v) (re-matches #"\d+" (str/trim v))) (Long/parseLong (str/trim v))
-      :else nil)
-    (catch Throwable _ nil)))
+   (errors/failure "plane" category message details)))
 
 (defn- bounded-timeout-ms [v]
-  (when-let [parsed (parse-timeout-ms v)]
-    (when (pos? parsed)
-      (min max-timeout-ms (long parsed)))))
+  (http/bounded-timeout-ms v))
 
 (defn- state-name [issue]
   (or (present-string (get-in issue [:state :name]))

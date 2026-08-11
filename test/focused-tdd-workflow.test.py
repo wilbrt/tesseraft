@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "examples" / "focused-tdd-to-pr"
+PACKAGE = ROOT / "examples" / "catalog" / "focused-tdd-to-pr"
 WORKFLOW = PACKAGE / "workflow.edn"
 RUNNER = PACKAGE / "scripts" / "run_validation.py"
 

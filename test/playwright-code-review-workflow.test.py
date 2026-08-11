@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "examples" / "playwright-code-review-loop"
+PACKAGE = ROOT / "examples" / "catalog" / "playwright-code-review-loop"
 WORKFLOW = PACKAGE / "workflow.edn"
 RUNNER = PACKAGE / "scripts" / "run_playwright.py"
 

@@ -89,35 +89,34 @@ export type GitUser = { name: string; email: string };
 
 // ---- Project abstraction types (design §4.1) ----
 // A first-class Project owns a workspace root, run root, workflow discovery
-// context, non-secret settings, and project-specific Jira/GitHub connections.
-// Raw credentials never appear here; connections carry only a `credential_ref`
+// context, runtime defaults, and role-specific connections.
+// Raw credentials never appear here; connections carry only a credential ref
 // plus masked present/absent state.
 
 /** Credential reference of the form `<store>:<path>` (e.g. `env:GITHUB_TOKEN`). */
 export type CredentialRef = string;
 /** Masked token state: never contains the raw secret. */
-export type MaskedCredential = { present: boolean; credential_ref?: CredentialRef; preview?: string; unresolved?: string; error?: string };
+export type MaskedCredential = { present: boolean; 'credential-ref'?: CredentialRef; preview?: string; unresolved?: string; error?: string };
 
-export type ProjectDiscovery = { workflow_roots?: string[] | null; tesseraft_home?: string | null };
+export type ProjectDiscovery = { 'workflow-roots'?: string[] | null };
 export type ProjectSettings = {
   pi_default_provider?: string | null;
   pi_default_model?: string | null;
   default_repo_root?: string | null;
-  github_token?: MaskedCredential | null;
-  jira_token?: MaskedCredential | null;
 };
 export type ProjectConnection = {
-  base_url?: string;
-  credential_ref?: CredentialRef;
-  credential_state?: MaskedCredential | null;
+  provider?: string;
+  'auth-mode'?: 'credential-ref' | 'ambient';
+  'credential-ref'?: CredentialRef;
+  'credential-state'?: MaskedCredential | null;
 };
 export type WorkTrackerConnection = {
   provider?: string;
-  credential_ref?: CredentialRef;
+  'credential-ref'?: CredentialRef;
   config?: Record<string, unknown>;
-  credential_state?: MaskedCredential | null;
+  'credential-state'?: MaskedCredential | null;
 };
-export type ProjectConnections = { jira?: ProjectConnection; github?: ProjectConnection; 'work-tracker'?: WorkTrackerConnection };
+export type ProjectConnections = { 'code-host'?: ProjectConnection; 'work-tracker'?: WorkTrackerConnection };
 
 export type ProjectSummary = { project_id: string; name?: string; source?: 'manifest' | 'implicit' };
 export type ProjectDetail = {
@@ -128,7 +127,7 @@ export type ProjectDetail = {
   discovery?: ProjectDiscovery;
   settings?: ProjectSettings;
   connections?: ProjectConnections;
-  migrated_from?: string;
+  migration?: { source_version?: number; source_sha256?: string; tool_version?: string };
 };
 export type ProjectsResponse = { projects: ProjectSummary[] };
 export type ProjectConnectionsResponse = { connections: ProjectConnections };

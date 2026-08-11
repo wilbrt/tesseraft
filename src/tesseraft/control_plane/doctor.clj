@@ -7,12 +7,12 @@
   (:import [java.util.concurrent TimeUnit TimeoutException]))
 
 (def statuses ["ready" "not-configured" "unreachable" "invalid"])
-(def check-order ["github-credential" "github-auth" "jira-base-url" "jira-credential" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root" "work-tracker-config" "work-tracker-credential"])
+(def check-order ["code-host-credential" "code-host-auth" "pi-provider-model" "git-author" "repository-root" "pinga" "workflow-discovery" "runs-root" "work-tracker-config" "work-tracker-credential"])
 
 ;; WT4: work-tracker checks derive from one authoritative raw-source diagnosis
 ;; (`cp/work-tracker-diagnosis`), not from `resolve-project` output, so a
-;; malformed tracker can be classified even where legacy manifests silently
-;; drop it. Both checks share the same status/state mapping; `absent` and
+;; malformed tracker can be classified directly from descriptor bytes. Both
+;; checks share the same status/state mapping; `absent` and
 ;; `unresolved` are explicit non-failure states.
 (def ^:private work-tracker-status
   {"absent" "not-configured"
@@ -75,8 +75,8 @@
   (and (not (blank? p)) (fs/exists? p) (.canExecute (fs/file p))))
 
 (defn- command-available? [cmd]
-  (let [r (process-run {:cmd ["sh" "-c" (str "command -v " cmd " >/dev/null 2>&1")] :timeout-ms 1000})]
-    (zero? (or (:exit r) 1))))
+  (boolean (or (and (fs/absolute? (fs/path cmd)) (executable? cmd))
+               (fs/which cmd))))
 
 (defn- check [id label mode f]
   (let [start (now-ms)
@@ -99,7 +99,7 @@
       :else {:status "not-configured" :summary (str "Credential reference " ref " does not resolve locally.") :remediation "Set the referenced environment variable or local credential-store entry."})))
 
 (defn- github-auth-check [options project]
-  (let [ref (conn-val (conn project :github) :credential-ref)
+  (let [ref (conn-val (conn project :code-host) :credential-ref)
         token (resolved-token options ref)]
     (cond
       (not (command-available? "gh")) {:status "not-configured" :summary "GitHub CLI (gh) is not installed or not on PATH." :remediation "Install gh and authenticate, or configure a GitHub credential reference."}
@@ -110,19 +110,6 @@
           (:timeout r) {:status "unreachable" :summary "gh auth status timed out." :remediation "Retry after checking local gh/network responsiveness."}
           (= 0 (:exit r)) {:status "ready" :summary "gh authentication is available." :remediation nil}
           :else {:status "invalid" :summary "gh authentication was rejected or incomplete." :remediation "Run gh auth login or fix the configured credential reference."})))))
-
-(defn- jira-base-url-check [project]
-  (let [u (conn-val (conn project :jira) :base-url)]
-    (cond
-      (blank? u) {:status "not-configured" :summary "Jira base URL is not configured." :remediation "Set the project Jira base URL."}
-      :else (try
-              (let [uri (java.net.URI. (str u))]
-                (cond
-                  (not (#{"http" "https"} (.getScheme uri))) {:status "invalid" :summary "Jira base URL must use http or https." :remediation "Use an absolute HTTPS URL such as https://example.atlassian.net."}
-                  (blank? (.getHost uri)) {:status "invalid" :summary "Jira base URL must be absolute." :remediation "Use an absolute HTTPS URL."}
-                  (not (blank? (.getUserInfo uri))) {:status "invalid" :summary "Jira base URL must not include user info." :remediation "Remove embedded credentials from the URL."}
-                  :else {:status "ready" :summary "Jira base URL is configured (static check only)." :remediation nil}))
-              (catch Throwable _ {:status "invalid" :summary "Jira base URL is malformed." :remediation "Use an absolute HTTP(S) URL."})))))
 
 (defn- pi-check [project]
   (let [provider (or (setting project :pi-default-provider) (setting project :pi_default_provider))
@@ -201,13 +188,11 @@
      (if (:error project)
        project
        (let [sopts (cp/project-scoped-opts options project-id)
-             github-secret (resolved-token sopts (conn-val (conn project :github) :credential-ref))
-             jira-secret (resolved-token sopts (conn-val (conn project :jira) :credential-ref))
+             github-secret (resolved-token sopts (conn-val (conn project :code-host) :credential-ref))
              ;; The raw-source diagnosis is scoped by `options` (the *control*
              ;; workspace root), not `sopts` (the project's own workspace
-             ;; root): `cp/project-connection-source` locates the legacy
-             ;; manifest at `<control workspace-root>/.tesseraft/projects/<id>.json`,
-             ;; and `work-tracker-diagnosis` derives its own project-scoped
+             ;; root): `cp/project-connection-source` locates the registered
+             ;; descriptor, and `work-tracker-diagnosis` derives project-scoped
              ;; options internally for credential resolution. Read once and
              ;; share it across all three diagnosis calls below so a single
              ;; report always classifies identical raw bytes.
@@ -216,11 +201,9 @@
              work-tracker-config-diagnosis (cp/work-tracker-config-diagnosis options (:project_id project) work-tracker-source)
              work-tracker-credential-diagnosis (cp/work-tracker-credential-diagnosis options (:project_id project) work-tracker-source)
              work-tracker-secret (resolved-token sopts (:credential-ref work-tracker-diagnosis))
-             secrets (remove blank? [github-secret jira-secret work-tracker-secret])
-             checks [(check "github-credential" "GitHub credential reference" "static" #(credential-check sopts project :github))
-                     (check "github-auth" "GitHub authentication" "read-only" #(github-auth-check sopts project))
-                     (check "jira-base-url" "Jira base URL" "static" #(jira-base-url-check project))
-                     (check "jira-credential" "Jira credential reference" "static" #(credential-check sopts project :jira))
+             secrets (remove blank? [github-secret work-tracker-secret])
+             checks [(check "code-host-credential" "Code-host credential reference" "static" #(credential-check sopts project :code-host))
+                     (check "code-host-auth" "GitHub code-host authentication" "read-only" #(github-auth-check sopts project))
                      (check "pi-provider-model" "Pi provider and model" "read-only" #(pi-check project))
                      (check "git-author" "Git author identity" "read-only" #(git-author-check options project))
                      (check "repository-root" "Repository root" "read-only" #(repository-check options project))

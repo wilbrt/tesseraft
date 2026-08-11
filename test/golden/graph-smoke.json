@@ -1,0 +1,9 @@
+{
+  "workflow_name": "smoke-demo",
+  "nodes": [
+    {"id": "start", "type": "deterministic", "title": "Start smoke demo"},
+    {"id": "done", "type": "terminal", "title": "Done"}
+  ],
+  "edges": [{"from": "start", "to": "done", "condition": {"else": true}}],
+  "diagnostics": []
+}
