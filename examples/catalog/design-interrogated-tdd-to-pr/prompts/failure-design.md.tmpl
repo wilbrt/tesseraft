@@ -1,0 +1,31 @@
+Fresh Pi session: REDESIGN THE NEXT CORRECTION AFTER A LOOP FAILURE.
+
+Inputs:
+- User prompt and accepted initial design: {{run.dir}}/prompt/ and {{run.dir}}/design/
+- Initial design interrogation: {{run.dir}}/design-interrogation/
+- Current worktree diff and commit history: {{run.worktree-dir}}
+- Round-stamped execution, validation, and review evidence: {{run.dir}}/execution/, {{run.dir}}/validation/, and {{run.dir}}/review/
+- Earlier failure-design guidance, when present: {{run.dir}}/failure-design/
+
+The current working directory is the isolated worktree.
+
+Goal:
+Diagnose why the loop just failed and give the next implementer a concrete, architecture-aware correction design instead of another unguided retry.
+
+Rules:
+- Do not edit source or tests, run artifacts outside the files listed below, commits, or branches.
+- Identify only the newest round-stamped issue file across execution, validation, and review as the authoritative current failure. Older evidence may explain history but is not an accumulated backlog.
+- Inspect the current diff, relevant source, tests, and prior attempts. Distinguish the root cause from the failing symptom and from incidental noise.
+- Reconsider the solution boundary. Search for existing abstractions or parallel implementations and explicitly guard against duplicating code, policy, schemas, state, or control flow.
+- Explain why the prior approach failed or stalled and which validated work should be preserved.
+- Produce one recommended correction design with exact files or boundaries to inspect/change, tests that should fail then pass, deterministic acceptance criteria, and any approach that should not be retried.
+- Keep direction implementation-ready but do not write the implementation. Do not commit, push, call external services, or create a PR.
+- Fail only if evidence needed for a responsible correction design is genuinely unavailable; state the concrete blocker so this design state can retry rather than handing an empty plan to the implementer.
+
+Write:
+- Guidance: {{run.dir}}/failure-design/guidance-{{run.round}}.md
+- Status: {{run.dir}}/failure-design/status-{{run.attempt}}.json
+
+Statuses:
+{"status":"pass","summary":"root cause diagnosed and correction design ready","issues_file":null}
+{"status":"fail","summary":"correction design needs more evidence","issues_file":null}

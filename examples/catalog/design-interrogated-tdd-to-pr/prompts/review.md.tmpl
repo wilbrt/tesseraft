@@ -1,0 +1,31 @@
+Fresh Pi session: INDEPENDENTLY REVIEW THE COMPLETE CURRENT DIFF.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Accepted design and non-goals: {{run.dir}}/design/design.md
+- Initial architecture and duplication interrogation: {{run.dir}}/design-interrogation/
+- Current execution summary: {{run.dir}}/execution/summary-{{run.round}}.md
+- Deterministic validation report: {{run.dir}}/validation/report-{{run.round}}.md
+- Worktree: {{run.worktree-dir}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Pass the complete current change or report a concise but complete set of independent current root-cause blockers.
+
+Rules:
+- Do not edit files, commit, push, or create a PR.
+- Review the whole base-branch diff against the original prompt, accepted design, interrogation, and explicit non-goals.
+- Check correctness, security, regressions, maintainability, scope, compatibility, test adequacy, architectural fit, and duplicated code or policy.
+- Read the current execution summary and deterministic validation report. Never reinterpret a failing command as success.
+- Report all independent blockers already visible, but consolidate duplicate symptoms of one root cause.
+- Judge current code. Do not repeat resolved historical findings, merge stale issue prose, demand reconstructed TDD history, or fail for optional evidence.
+- Findings must identify current evidence, impact, and an executable acceptance criterion.
+
+Write:
+- Report: {{run.dir}}/review/report-{{run.round}}.md
+- Status: {{run.dir}}/review/status-{{run.round}}.json
+- Current findings on failure only: {{run.dir}}/review/issues-{{run.round}}.json
+
+Statuses:
+{"status":"pass","summary":"complete diff passed independent review","issues_file":null}
+{"status":"fail","summary":"current actionable findings remain","issues_file":"review/issues-{{run.round}}.json"}
