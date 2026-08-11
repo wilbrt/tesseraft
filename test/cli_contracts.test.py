@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -207,6 +208,48 @@ def test_dependency_doctor_rejects_unknown_profiles_with_clean_usage():
     assert result.returncode == 2
     assert "core|web|test|e2e" in result.stderr
     assert "Stack trace" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("version", "accepted"),
+    [("1.12.218", True), ("1.13.219", True), ("1.12.217", False), ("2.0.0", False)],
+)
+def test_core_dependency_doctor_accepts_newer_same_major_babashka(tmp_path, version, accepted):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    bb = fake_bin / "bb"
+    bb.write_text(f'#!/bin/sh\nprintf "babashka v{version}\\n"\n')
+    bb.chmod(0o755)
+
+    result = run_command(
+        [BIN, "doctor", "--profile", "core"],
+        env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert (result.returncode == 0) is accepted, result.stderr or result.stdout
+    if version == "1.13.219":
+        assert "compatible; pinned baseline 1.12.218" in result.stdout
+
+
+def test_test_dependency_doctor_keeps_exact_babashka_pin(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    versions = {
+        "bb": "babashka v1.13.219",
+        "node": "v22.23.2",
+        "npm": "11.18.0",
+        "python3": "3.11",
+    }
+    for command, version in versions.items():
+        executable = fake_bin / command
+        executable.write_text(f'#!/bin/sh\nprintf "{version}\\n"\n')
+        executable.chmod(0o755)
+
+    result = run_command(
+        [BIN, "doctor", "--profile", "test"],
+        env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 1
+    assert "bb expected 1.12.218, found 1.13.219" in result.stderr
 
 
 def test_node_and_fragment_export_import_round_trip(workspace_layout):

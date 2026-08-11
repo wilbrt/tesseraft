@@ -31,6 +31,35 @@ command_name() {
   esac
 }
 
+same_major_at_least() {
+  local actual="$1" expected="$2"
+  local version_re='^([0-9]+)\.([0-9]+)\.([0-9]+)$'
+  local actual_major actual_minor actual_patch
+  local expected_major expected_minor expected_patch
+
+  [[ "$actual" =~ $version_re ]] || return 1
+  actual_major="${BASH_REMATCH[1]}"
+  actual_minor="${BASH_REMATCH[2]}"
+  actual_patch="${BASH_REMATCH[3]}"
+  [[ "$expected" =~ $version_re ]] || return 1
+  expected_major="${BASH_REMATCH[1]}"
+  expected_minor="${BASH_REMATCH[2]}"
+  expected_patch="${BASH_REMATCH[3]}"
+
+  (( actual_major == expected_major &&
+     (actual_minor > expected_minor ||
+      (actual_minor == expected_minor && actual_patch >= expected_patch)) ))
+}
+
+compatible_version() {
+  local tool="$1" actual="$2" expected="$3"
+  if [[ "$tool" == "babashka" && ( "$profile" == "core" || "$profile" == "web" ) ]]; then
+    same_major_at_least "$actual" "$expected"
+  else
+    [[ "$actual" == "$expected" ]]
+  fi
+}
+
 missing=0
 for tool in "${tools[@]}"; do
   cmd="$(command_name "$tool")"
@@ -40,9 +69,11 @@ for tool in "${tools[@]}"; do
   else
     expected="$(toolchain_version "$tool")"
     actual="$(actual_version "$tool")"
-    if [[ "$actual" != "$expected" ]]; then
+    if ! compatible_version "$tool" "$actual" "$expected"; then
       echo "version mismatch: $cmd expected $expected, found $actual ($(command -v "$cmd"))" >&2
       missing=1
+    elif [[ "$actual" != "$expected" ]]; then
+      echo "ok: $cmd $actual -> $(command -v "$cmd") (compatible; pinned baseline $expected)"
     else
       echo "ok: $cmd $actual -> $(command -v "$cmd")"
     fi

@@ -1,6 +1,10 @@
 # Getting started
 
-Tesseraft requires the pinned Node.js, Babashka, and Python versions declared in [`.tool-versions`](../../.tool-versions).
+Tesseraft pins the Node.js, Babashka, and Python versions used by CI, tests, and
+the reference container in [`.tool-versions`](../../.tool-versions). For local
+core and Web use, the dependency doctor accepts a newer Babashka release within
+the same major version; Homebrew's current Babashka therefore does not need to
+match the CI patch version exactly. Test and E2E profiles remain exact.
 
 ```bash
 npm ci

@@ -12,7 +12,9 @@ Tesseraft is a local-first workflow engine for durable, inspectable agent and de
 
 ## Install
 
-Prerequisites are pinned in [`.tool-versions`](.tool-versions). For a local checkout:
+Reproducible test and container versions are pinned in [`.tool-versions`](.tool-versions).
+The local `core` doctor also accepts a newer same-major Babashka release, so the
+current Homebrew package can be used. For a local checkout:
 
 ```bash
 npm ci
