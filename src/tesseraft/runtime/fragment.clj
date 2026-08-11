@@ -244,7 +244,8 @@
   [parent-ctx state-id attempt pkg inclusion internal-ctx]
   (let [pin-path (fs/path (get-in internal-ctx [:run :dir]) "pin.json")
         package-sha (store/sha256 (slurp (:package-path inclusion)))
-        pin-data {:fragment (spec/fragment-package-name pkg)
+        pin-data {:record_version 1
+                  :fragment (spec/fragment-package-name pkg)
                   :scope (spec/outcome-name (:scope inclusion))
                   :version (:version inclusion)
                   :package_path (:package-path inclusion)

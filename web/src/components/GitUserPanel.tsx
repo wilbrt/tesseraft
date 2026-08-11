@@ -42,7 +42,7 @@ export const GitUserPanel = () => {
     try {
       const refreshed = await putJson<GitUserResponse>(projectApiUrl('/api/git-user', projectId), { name, email });
       setGitUser(refreshed.git_user);
-      setInfo('Saved. The git user is written to the project-local config file.');
+      setInfo('Saved. The identity service now owns the user default and optional project override.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -55,7 +55,7 @@ export const GitUserPanel = () => {
   return (
     <section className="panel git-user-panel" aria-label="Git user settings">
       <h2>Git user</h2>
-      <p className="muted">Configure the git identity (name + email) that Tesseraft workflows apply to git operations such as branch, worktree, and push. Stored in the project-local <code>.tesseraft/git-user.json</code> config file; the browser never owns this value.</p>
+      <p className="muted">Configure the git identity Tesseraft applies to workflow git operations. The identity service owns the user default and project override; the browser never persists it.</p>
       {error && <div className="error">{error}</div>}
       {info && <div className="success">{info}</div>}
       <dl className="field-row">

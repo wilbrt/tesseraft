@@ -15,12 +15,15 @@ const bbJson = (script, env = {}) => JSON.parse(execFileSync('bb', ['-e', script
 }));
 
 const writeProject = (root, id, tokenRef = `env:${id.toUpperCase()}_PLANE_TOKEN`, apiBaseUrl = 'https://api.plane.so/root') => {
-  const projectDir = path.join(root, '.tesseraft', 'projects');
+  const projectRoot = path.join(root, 'projects', id);
+  const projectDir = path.join(projectRoot, '.tesseraft');
+  const registryPath = path.join(root, 'home', 'projects', 'registry.json');
   fs.mkdirSync(projectDir, { recursive: true });
-  fs.writeFileSync(path.join(projectDir, `${id}.json`), JSON.stringify({
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
+    version: 2,
     project_id: id,
     name: id,
-    workspace_root: '.',
     runs_root: 'runs',
     connections: {
       'work-tracker': {
@@ -30,6 +33,11 @@ const writeProject = (root, id, tokenRef = `env:${id.toUpperCase()}_PLANE_TOKEN`
       }
     }
   }, null, 2));
+  const registry = fs.existsSync(registryPath)
+    ? JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    : { version: 2, projects: {} };
+  registry.projects[id] = { workspace_root: projectRoot };
+  fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
 };
 
 const REMOTE_ID = '123e4567-e89b-12d3-a456-426614174000';
@@ -38,6 +46,7 @@ const OTHER_REMOTE_ID = '123e4567-e89b-12d3-a456-426614174001';
 const fetchScript = ({ root, projectId = 'alpha', itemId = REMOTE_ID, status = 200, body, headers = {}, token = 'TOKEN_SENTINEL', mock = false }) => `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.control-plane.core :as cp])
 (require '[tesseraft.runtime.store :as store])
 (require '[tesseraft.work-tracker.plane :as plane])
 (def root ${q(root)})
@@ -46,7 +55,10 @@ const fetchScript = ({ root, projectId = 'alpha', itemId = REMOTE_ID, status = 2
 (def resolver (fn [options ref]
                 (swap! calls conj {:workspace-root (:workspace-root options) :ref ref})
                 {:present true :state "present" :credential-ref ref :value ${q(token)}}))
-(def ctx {:run {:dir run-dir :project-id ${q(projectId)} :workspace-root root}
+(def options {:workspace-root root :tesseraft-home (str root "/home")})
+(def project (cp/resolve-project options ${q(projectId)}))
+(def ctx {:run {:dir run-dir :project-id ${q(projectId)} :workspace-root root
+                :tesseraft-home (str root "/home") :project-context project}
           :inputs {}
           :credential-resolver resolver})
 (def node {:handler :work-tracker/fetch-item
@@ -313,11 +325,15 @@ test('WT5 injected transport exceptions become stable redacted durable failures'
   const script = `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.control-plane.core :as cp])
 (require '[tesseraft.runtime.store :as store])
 (require '[tesseraft.work-tracker.plane :as plane])
 (def root ${q(root)})
 (def run-dir (str root "/runs/work-tracker-read"))
-(def ctx {:run {:dir run-dir :project-id "alpha" :workspace-root root}
+(def options {:workspace-root root :tesseraft-home (str root "/home")})
+(def project (cp/resolve-project options "alpha"))
+(def ctx {:run {:dir run-dir :project-id "alpha" :workspace-root root
+                :tesseraft-home (str root "/home") :project-context project}
           :credential-resolver (fn [_ ref] {:present true :state "present" :credential-ref ref :value "TOKEN_SENTINEL"})})
 (def node {:handler :work-tracker/fetch-item :inputs {:item-id ${q(REMOTE_ID)}} :outputs {:work-item {:path "work-tracker/item.json"}}})
 (binding [plane/*http-request* (fn [_] (throw (ex-info "TOKEN_SENTINEL socket exploded" {:raw "RAW_RESPONSE_SENTINEL"})))]
@@ -332,17 +348,16 @@ test('WT5 injected transport exceptions become stable redacted durable failures'
   assert.doesNotMatch(durable, /TOKEN_SENTINEL|RAW_RESPONSE_SENTINEL|socket exploded/);
 });
 
-test('WT5 keeps legacy Jira dispatch separate from provider-neutral work-tracker dispatch', () => {
+test('WT5 exposes only provider-neutral work-tracker dispatch', () => {
   const script = `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
 (println (json/generate-string {:has-work-tracker (contains? builtin/handlers :work-tracker/fetch-item)
                                 :has-jira (contains? builtin/handlers :jira/fetch-ticket)
-                                :same (= (get builtin/handlers :work-tracker/fetch-item)
-                                         (get builtin/handlers :jira/fetch-ticket))}))
+                                :handler-ids (mapv (comp name key) builtin/handlers)}))
 `;
   const out = bbJson(script);
   assert.equal(out['has-work-tracker'], true);
-  assert.equal(out['has-jira'], true);
-  assert.equal(out.same, false);
+  assert.equal(out['has-jira'], false);
+  assert.ok(out['handler-ids'].includes('fetch-item'));
 });

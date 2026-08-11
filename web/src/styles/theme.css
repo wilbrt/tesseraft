@@ -1,0 +1,149 @@
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-app-bg: #0f172a;
+    --color-text: #e5e7eb;
+    --color-surface: #111827;
+    --color-surface-muted: #0f172a;
+    --color-border: #374151;
+    --color-border-subtle: #273449;
+    --color-muted: #cbd5e1;
+    --color-subtle-text: #cbd5e1;
+    --color-soft: #e2e8f0;
+    background: var(--color-app-bg);
+    color: var(--color-text);
+  }
+  .panel, .modal { background: var(--color-dark-surface); border-color: #374151; color: #e5e7eb; }
+  .control-card { background: var(--color-deep-bg); border-color: #374151; }
+  .control-card input, .control-card textarea, .control-card select { background: var(--color-dark-surface); color: #e5e7eb; border-color: var(--color-subtle-text); }
+  .workflow-inputs, .context-mini span { background: var(--color-dark-surface); border-color: #374151; color: #e5e7eb; }
+  .workflow-input-field small { color: var(--color-header-muted); }
+  .item-list li, .event-list li, .timeline li { border-color: #273449; }
+  .pi-chat-transcript { background: var(--color-deep-bg); border-color: #374151; }
+  .pi-chat-message { background: var(--color-dark-surface); border-color: #374151; }
+  .pi-chat-message.user { background: #1e3a8a; border-color: var(--color-accent-border); }
+  .pi-chat-message.assistant { background: var(--color-dark-surface); }
+  .pi-chat-message.system, .pi-chat-message.tool { background: #1f2937; color: var(--color-header-muted); }
+  .pi-chat-meta { color: var(--color-header-muted); }
+  pre, .graph-canvas { background: var(--color-deep-bg); border-color: #374151; }
+  .graph-node rect { fill: #1f2937; stroke: #60a5fa; }
+  .graph-node.active rect { stroke: #4ade80; filter: drop-shadow(0 0 6px rgba(74, 222, 128, 0.5)); }
+  .run-list-search { background: var(--color-dark-surface); color: #e5e7eb; border-color: var(--color-subtle-text); }
+  .runs-table th, .runs-table td { border-color: #273449; }
+  .runs-table thead th { border-bottom-color: #374151; color: var(--color-header-muted); }
+  .runs-table-row:hover { background: var(--color-dark-surface); }
+  .runs-table-row.expanded { background: #1e293b; }
+  .runs-table-inspection-row td { background: var(--color-deep-bg); border-color: #273449; }
+  .run-inspection-graph { background: var(--color-deep-bg); border-color: #374151; }
+  .node-title { fill: var(--color-text); }
+  .node-type, .graph-edge text { fill: var(--color-header-muted); }
+}
+
+/* Explicit project-selected theme. This block intentionally follows the system
+   dark-mode rules so Matrix always wins over prefers-color-scheme. */
+:root[data-color-scheme="matrix"],
+.app-shell[data-color-scheme="matrix"] {
+  color-scheme: dark;
+  --color-app-bg: #020604;
+  --color-text: #a7f3a0;
+  --color-surface: #061009;
+  --color-surface-muted: #08170d;
+  --color-border: #206b32;
+  --color-border-subtle: #123d20;
+  --color-accent: #35e85f;
+  --color-accent-hover: #72ff91;
+  --color-accent-border: #35e85f;
+  --color-muted: #79c985;
+  --color-subtle-text: #8ddd98;
+  --color-soft: #b7f7bb;
+  --color-header-bg: #000000;
+  --color-header-muted: #83d98e;
+  --color-on-accent: #001804;
+  --color-deep-bg: #020604;
+  --color-dark-surface: #061009;
+  --color-nav-active-bg: #0c3518;
+  --color-nav-active-text: #d4ffd6;
+  --color-nav-active-muted: #a7f3a0;
+  --color-control-subtle-bg: #071b0d;
+  --color-control-subtle-hover: #10461f;
+  --color-control-subtle-text: #baffbd;
+  --color-step-bg: #0a2812;
+  --color-step-text: #a7f3a0;
+  --color-required: #ff9aa3;
+  --color-lint-warning-border: #facc15;
+  --color-lint-warning-bg: #2b2205;
+  --color-lint-warning-text: #ffe781;
+  --color-lint-error-border: #ff6b78;
+  --color-lint-error-bg: #2b090d;
+  --color-lint-error-text: #ffb3ba;
+}
+
+:root[data-color-scheme="matrix"] { background: var(--color-app-bg); color: var(--color-text); }
+:root[data-color-scheme="matrix"] header { background: var(--color-header-bg); color: #baffbd; border-bottom: 1px solid var(--color-border); }
+:root[data-color-scheme="matrix"] .context-chip,
+:root[data-color-scheme="matrix"] .context-mini span { background: #031108; color: var(--color-text); border-color: var(--color-border); }
+:root[data-color-scheme="matrix"] .panel,
+:root[data-color-scheme="matrix"] .modal,
+:root[data-color-scheme="matrix"] .control-card,
+:root[data-color-scheme="matrix"] .workflow-inputs,
+:root[data-color-scheme="matrix"] .pi-chat-message,
+:root[data-color-scheme="matrix"] .context-menu,
+:root[data-color-scheme="matrix"] .project-selector-menu,
+:root[data-color-scheme="matrix"] .doctor-check { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
+:root[data-color-scheme="matrix"] input,
+:root[data-color-scheme="matrix"] textarea,
+:root[data-color-scheme="matrix"] select { background: #020a05; color: var(--color-text); border-color: var(--color-border); }
+:root[data-color-scheme="matrix"] button:focus-visible,
+:root[data-color-scheme="matrix"] input:focus-visible,
+:root[data-color-scheme="matrix"] textarea:focus-visible,
+:root[data-color-scheme="matrix"] select:focus-visible,
+:root[data-color-scheme="matrix"] [tabindex]:focus-visible { outline: 3px solid #72ff91; outline-offset: 2px; }
+:root[data-color-scheme="matrix"] .tabs button { border-color: var(--color-border); color: var(--color-soft); }
+:root[data-color-scheme="matrix"] .tabs button.active,
+:root[data-color-scheme="matrix"] .project-selector-item.active,
+:root[data-color-scheme="matrix"] .project-tab.active,
+:root[data-color-scheme="matrix"] .runs-table-row.expanded { background: #0c3518; color: #d4ffd6; }
+:root[data-color-scheme="matrix"] .runs-table-row:hover,
+:root[data-color-scheme="matrix"] .project-selector-item:hover,
+:root[data-color-scheme="matrix"] .context-menu button:hover,
+:root[data-color-scheme="matrix"] .studio-toolbar button:hover:not(:disabled) { background: #10461f; color: #d4ffd6; }
+:root[data-color-scheme="matrix"] pre,
+:root[data-color-scheme="matrix"] .graph-canvas,
+:root[data-color-scheme="matrix"] .run-inspection-graph,
+:root[data-color-scheme="matrix"] .pi-chat-transcript,
+:root[data-color-scheme="matrix"] .runs-table-inspection-row td { background: var(--color-deep-bg); border-color: var(--color-border); color: var(--color-text); }
+:root[data-color-scheme="matrix"] .graph-edge line,
+:root[data-color-scheme="matrix"] .graph-edge path { stroke: #35e85f; }
+:root[data-color-scheme="matrix"] .graph-edge marker path { fill: #35e85f; }
+:root[data-color-scheme="matrix"] .graph-edge text,
+:root[data-color-scheme="matrix"] .node-type { fill: #83d98e; stroke: var(--color-deep-bg); }
+:root[data-color-scheme="matrix"] .graph-node rect { fill: #061009; stroke: #35e85f; filter: drop-shadow(0 0 4px rgba(53, 232, 95, 0.45)); }
+:root[data-color-scheme="matrix"] .node-title { fill: #d4ffd6; }
+:root[data-color-scheme="matrix"] .modal-backdrop { background: rgba(0, 6, 2, 0.82); }
+:root[data-color-scheme="matrix"] .pi-chat-message.user { background: #0c3518; border-color: #35e85f; }
+:root[data-color-scheme="matrix"] .pi-chat-message.system,
+:root[data-color-scheme="matrix"] .pi-chat-message.tool { background: #092311; color: #a7f3a0; }
+:root[data-color-scheme="matrix"] .error,
+:root[data-color-scheme="matrix"] .failure-summary,
+:root[data-color-scheme="matrix"] .status-pill.error,
+:root[data-color-scheme="matrix"] .status-pill.failed { background: #2b090d; border-color: #ff6b78; color: #ffb3ba; }
+:root[data-color-scheme="matrix"] .warning,
+:root[data-color-scheme="matrix"] .studio-banner,
+:root[data-color-scheme="matrix"] .status-pill.stale,
+:root[data-color-scheme="matrix"] .status-pill.orphaned { background: #2b2205; border-color: #facc15; color: #ffe781; }
+:root[data-color-scheme="matrix"] .success,
+:root[data-color-scheme="matrix"] .toast,
+:root[data-color-scheme="matrix"] .status-pill.ok,
+:root[data-color-scheme="matrix"] .status-pill.done,
+:root[data-color-scheme="matrix"] .status-pill.connected,
+:root[data-color-scheme="matrix"] .doctor-status.ready { background: #0c3518; border-color: #35e85f; color: #baffbd; }
+:root[data-color-scheme="matrix"] .status-pill,
+:root[data-color-scheme="matrix"] .doctor-status.not-configured { background: #102318; color: #b7f7bb; }
+:root[data-color-scheme="matrix"] .header-start-button,
+:root[data-color-scheme="matrix"] .control-card button,
+:root[data-color-scheme="matrix"] .wizard-actions button,
+:root[data-color-scheme="matrix"] .modal-actions button { background: var(--color-accent); color: var(--color-on-accent); }
+:root[data-color-scheme="matrix"] .control-card button:disabled { background: #31583a; color: #b7cdb9; }
+:root[data-color-scheme="matrix"] a,
+:root[data-color-scheme="matrix"] .link-button,
+:root[data-color-scheme="matrix"] button.link,
+:root[data-color-scheme="matrix"] summary { color: #72ff91; }

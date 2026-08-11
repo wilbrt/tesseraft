@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "errors": [{
+    "severity": "error",
+    "code": "prompt-template-missing",
+    "path": ["states", "agent", "prompt-template"],
+    "message": "Prompt template file does not exist: prompts/missing.md.tmpl"
+  }],
+  "warnings": []
+}

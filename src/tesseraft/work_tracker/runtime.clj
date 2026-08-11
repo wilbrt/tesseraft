@@ -2,39 +2,30 @@
   (:require
     [babashka.fs :as fs]
     [clojure.string :as str]
-    [tesseraft.control-plane.core :as cp]
+    [tesseraft.credentials.store :as credentials]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]
-    [tesseraft.work-tracker.github-issues :as github-issues]
-    [tesseraft.work-tracker.jira :as jira]
-    [tesseraft.work-tracker.plane :as plane]))
+    [tesseraft.work-tracker.catalog :as catalog]))
 
-(defn- control-plane-options [ctx]
+(defn- credential-options [ctx]
   (cond-> {}
-    (get-in ctx [:run :workspace-root]) (assoc :workspace-root (get-in ctx [:run :workspace-root]))
     (get-in ctx [:run :tesseraft-home]) (assoc :tesseraft-home (get-in ctx [:run :tesseraft-home]))
-    (get-in ctx [:run :runs-root]) (assoc :runs-root (get-in ctx [:run :runs-root]))
-    (get-in ctx [:run :workflow-roots]) (assoc :workflow-roots (get-in ctx [:run :workflow-roots]))
     (:credential-resolver ctx) (assoc :credential-resolver (:credential-resolver ctx))))
 
-(defn- persisted-project-context [ctx project-id]
+(defn- project-context [ctx project-id]
   (let [project (get-in ctx [:run :project-context])
         persisted-id (or (:project_id project) (:project-id project))]
     (when (and (map? project) (= project-id persisted-id)) project)))
 
 (defn- selected-project-and-options [ctx]
   (let [project-id (get-in ctx [:run :project-id])
-        base (control-plane-options ctx)
-        persisted (persisted-project-context ctx project-id)
-        project (or persisted (cp/resolve-project base project-id))]
-    (if (:error project)
-      {:error {:category "project" :message "Selected project could not be resolved" :details (:error project)}}
-      (let [scoped (if persisted
-                     (cp/project-context-opts base persisted)
-                     (cp/project-scoped-opts base project-id))]
-        (if (:error scoped)
-          {:error {:category "project" :message "Selected project scope could not be resolved" :details (:error scoped)}}
-          {:project project :options scoped})))))
+        base (credential-options ctx)
+        project (project-context ctx project-id)]
+    (if project
+      {:project project :options base}
+      {:error {:category "project-context"
+               :message "Run state does not contain its resolved project context"
+               :details {:project_id project-id}}})))
 
 (defn- present-string [v]
   (when (string? v)
@@ -88,13 +79,13 @@
                 (write-result! ctx out-path result)
                 (assoc result :item_file out-path))
 
-              (not (contains? #{"plane" "jira" "github-issues"} (:provider tracker)))
+              (not (contains? (catalog/ids) (keyword (:provider tracker))))
               (let [result (failure "unsupported_provider" "Unsupported work-tracker fetch provider" {:tracker_provider (:provider tracker)})]
                 (write-result! ctx out-path result)
                 (assoc result :item_file out-path))
 
               :else
-              (let [credential (cp/resolve-credential options (:credential-ref tracker))
+              (let [credential (credentials/resolve options (:credential-ref tracker))
                     provider (:provider tracker)]
                 (if-not (and (:present credential) (= "present" (:state credential)) (present-string (:value credential)))
                   (let [result (failure "credential_unresolved" "Work-tracker credential could not be resolved"
@@ -107,10 +98,7 @@
                                    :item-id id
                                    :timeout-ms (or (get-in node [:inputs :timeout-ms])
                                                    (get-in node [:runtime :timeout-ms]))}
-                        fetched (case provider
-                                  "plane" (plane/fetch-item (assoc base-args :api-key (:value credential)))
-                                  "jira" (jira/fetch-item (assoc base-args :token (:value credential)))
-                                  "github-issues" (github-issues/fetch-item (assoc base-args :token (:value credential))))]
+                        fetched (catalog/fetch-item (keyword provider) (assoc base-args :credential (:value credential)))]
                     (if (:ok fetched)
                       (let [item (:item fetched)]
                         (write-result! ctx out-path item)
@@ -128,11 +116,7 @@
   (let [id (or (item-id ctx node) "MOCK-1")
         tracker (get-in ctx [:run :project-context :connections :work-tracker])
         provider (or (present-string (:provider tracker)) "plane")
-        remote-scope (case provider
-                       "jira" {:project_key (or (get-in tracker [:config :project-key]) "MOCK")}
-                       "github-issues" {:repository (or (get-in tracker [:config :repository]) "mock/repo")}
-                       {:workspace_slug (or (get-in tracker [:config :workspace-slug]) "mock-workspace")
-                        :project_id (or (get-in tracker [:config :project-id]) "mock-plane-project")})]
+        remote-scope (catalog/mock-scope (keyword provider) (:config tracker))]
     {:schema_version 1
      :provider provider
      :project {:id (or (get-in ctx [:run :project-id]) "mock-project")}

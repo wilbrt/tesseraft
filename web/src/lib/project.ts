@@ -28,17 +28,9 @@ export const storeProjectId = (id: string): void => {
   try { localStorage.setItem(STORAGE_KEY, id); } catch { /* ignore */ }
 };
 
-/**
- * Build a project-scoped API URL. When `projectId` is the default (or omitted),
- * returns the legacy unscoped path so single-project users see no behavior
- * change. For any other project, the path is prefixed with
- * `/api/projects/:projectId`.
- */
+/** Build the canonical project-scoped API URL for a feature request. */
 export const projectApiUrl = (path: string, projectId: string): string => {
   const trimmed = projectId && projectId.trim() !== '' ? projectId : DEFAULT_PROJECT_ID;
-  if (trimmed === DEFAULT_PROJECT_ID) return path;
-  // `path` is like `/api/runs/...` or `/api/workflows`; insert the project
-  // scope after `/api/`.
   if (!path.startsWith('/api/')) return path;
   const rest = path.slice('/api/'.length);
   return `/api/projects/${encodeURIComponent(trimmed)}/${rest}`;

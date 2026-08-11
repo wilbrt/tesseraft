@@ -13,7 +13,6 @@ const inputHelp = (name: string, definition: WorkflowInputDefinition): string =>
   if (definition.type === 'path') return 'Path on this machine, such as . for the current repository.';
   if (definition.type === 'integer') return 'Whole number.';
   if (definition.type === 'boolean') return 'Choose true or false.';
-  if (name === 'ticket') return 'Ticket or issue key to fetch, for example PROJ-123.';
   if (name === 'branch' || name === 'base-branch') return 'Git branch name.';
   return 'Workflow input value.';
 };

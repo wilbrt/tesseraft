@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { expect, test } from './fixtures';
 
 const runApiStatus = async (baseURL: string, runId: string): Promise<number> => {
-  const response = await fetch(`${baseURL}/api/runs/${encodeURIComponent(runId)}`);
+  const response = await fetch(`${baseURL}/api/projects/default/runs/${encodeURIComponent(runId)}`);
   return response.status;
 };
 
@@ -15,7 +15,7 @@ test('visibly refuses deleting an executing run and deletes a terminal run', asy
   await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible();
 
   await expect.poll(async () => {
-    const body = await isolatedRun.apiJson<{ run: { liveness: string; status: string; state: string } }>(`/api/runs/${encodeURIComponent(isolatedRun.pw4.executingRunId)}`);
+    const body = await isolatedRun.apiJson<{ run: { liveness: string; status: string; state: string } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw4.executingRunId)}`);
     return { liveness: body.run.liveness, status: body.run.status, state: body.run.state };
   }).toEqual({ liveness: 'executing', status: 'running', state: 'work' });
 
@@ -28,7 +28,7 @@ test('visibly refuses deleting an executing run and deletes a terminal run', asy
 
   await page.getByLabel("Confirm permanent deletion of this run's directory.").check();
   const executingDelete = page.waitForResponse((response) =>
-    response.url().includes(`/api/runs/${encodeURIComponent(isolatedRun.pw4.executingRunId)}`) &&
+    response.url().includes(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw4.executingRunId)}`) &&
     response.request().method() === 'DELETE'
   );
   await page.getByRole('button', { name: 'Delete run' }).click();
@@ -50,7 +50,7 @@ test('visibly refuses deleting an executing run and deletes a terminal run', asy
 
   await page.getByLabel("Confirm permanent deletion of this run's directory.").check();
   const terminalDelete = page.waitForResponse((response) =>
-    response.url().includes(`/api/runs/${encodeURIComponent(isolatedRun.pw4.terminalRunId)}`) &&
+    response.url().includes(`/api/projects/default/runs/${encodeURIComponent(isolatedRun.pw4.terminalRunId)}`) &&
     response.request().method() === 'DELETE'
   );
   await page.getByRole('button', { name: 'Delete run' }).click();

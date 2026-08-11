@@ -41,7 +41,7 @@ const isIgnored = (relativePath) => {
 
 test('portable project descriptor is versionable while local Tesseraft state stays ignored', () => {
   assert.equal(isIgnored('.tesseraft/project.json'), false, 'repository-owned portable descriptor must be committable');
-  assert.equal(isIgnored('.tesseraft/projects/local.json'), true, 'legacy/local project state remains ignored');
+  assert.equal(isIgnored('.tesseraft/preferences.json'), true, 'project-local mutable state remains ignored');
   assert.equal(isIgnored('.tesseraft/credentials.json'), true, 'local credentials remain ignored');
   assert.equal(isIgnored('.tesseraft/runs/example/state.edn'), true, 'local run state remains ignored');
 });
@@ -63,14 +63,11 @@ test('portable descriptor and user-local registry schemas publish separate owner
   assert.equal(registrySchema.properties.projects.additionalProperties.properties.workspace_root.minLength, 1, 'registry workspace_root must be nonblank');
 
   const producedRegistry = {
-    version: 1,
+    version: 2,
     projects: {
       'schema-produced': {
-        name: 'Schema Produced',
         workspace_root: path.join(repoRoot, '.agent-runs', 'schema-produced-root'),
-        runs_root: 'runs',
-        discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
-        source: 'registration'
+        last_seen_at: '2026-08-10T00:00:00Z'
       }
     }
   };
@@ -80,15 +77,15 @@ test('portable descriptor and user-local registry schemas publish separate owner
   assert.deepEqual(Object.keys(producedRegistry).sort(), ['projects', 'version'], 'produced registry has only schema fields');
   assert.deepEqual(Object.keys(entry).sort(), Object.keys(entrySchema.properties).sort(), 'produced registry entry uses only schema-owned fields');
   assert.equal(entry.workspace_root.length >= entrySchema.properties.workspace_root.minLength, true, 'produced registry entry has a nonblank root');
-  assert.equal(entry.connections, undefined, 'produced registry entry must not include descriptor-owned connections');
+  assert.equal(entry.connections, undefined, 'registry entry must not include descriptor-owned connections');
 
   const producedValidation = validateWithDraft202012(registrySchema, producedRegistry);
   assert.equal(producedValidation.valid, true, `produced registry instance must validate against Draft 2020-12 schema: ${producedValidation.output}`);
 
   const whitespaceRootRegistry = {
-    version: 1,
+    version: 2,
     projects: {
-      'schema-produced': { workspace_root: '   ', source: 'registration' }
+      'schema-produced': { workspace_root: '   ' }
     }
   };
   const whitespaceValidation = validateWithDraft202012(registrySchema, whitespaceRootRegistry);

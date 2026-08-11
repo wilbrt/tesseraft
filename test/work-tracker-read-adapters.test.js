@@ -20,20 +20,29 @@ function prStr(value) {
 }
 
 const writeProject = (root, id, tracker, extraConnections = {}) => {
-  const projectDir = path.join(root, '.tesseraft', 'projects');
+  const projectRoot = path.join(root, 'projects', id);
+  const projectDir = path.join(projectRoot, '.tesseraft');
+  const registryPath = path.join(root, 'home', 'projects', 'registry.json');
   fs.mkdirSync(projectDir, { recursive: true });
-  fs.writeFileSync(path.join(projectDir, `${id}.json`), JSON.stringify({
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
+    version: 2,
     project_id: id,
     name: id,
-    workspace_root: '.',
     runs_root: 'runs',
     connections: { ...extraConnections, 'work-tracker': tracker }
   }, null, 2));
+  const registry = fs.existsSync(registryPath)
+    ? JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    : { version: 2, projects: {} };
+  registry.projects[id] = { workspace_root: projectRoot };
+  fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
 };
 
 const runtimeScript = ({ root, projectId = 'alpha', itemId, provider, status = 200, body = '{}', headers = {}, token = 'TRACKER_TOKEN_SENTINEL', mock = false }) => `
 (require '[cheshire.core :as json])
 (require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.control-plane.core :as cp])
 (require '[tesseraft.runtime.store :as store])
 (require '[tesseraft.work-tracker.jira :as jira])
 (require '[tesseraft.work-tracker.github-issues :as gh-issues])
@@ -43,7 +52,10 @@ const runtimeScript = ({ root, projectId = 'alpha', itemId, provider, status = 2
 (def resolver (fn [options ref]
                 (swap! calls conj {:workspace-root (:workspace-root options) :ref ref})
                 {:present true :state "present" :credential-ref ref :value ${q(token)}}))
-(def ctx {:run {:dir run-dir :project-id ${q(projectId)} :workspace-root root}
+(def options {:workspace-root root :tesseraft-home (str root "/home")})
+(def project (cp/resolve-project options ${q(projectId)}))
+(def ctx {:run {:dir run-dir :project-id ${q(projectId)} :workspace-root root
+                :tesseraft-home (str root "/home") :project-context project}
           :inputs {}
           :credential-resolver resolver})
 (def node {:handler :work-tracker/fetch-item
@@ -112,7 +124,9 @@ test('WT6 normalizes Jira and GitHub Issues into equivalent allowlisted artifact
 
 test('WT6 runtime dispatch uses only the selected project tracker credential and transport', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-wt6-dispatch-'));
-  writeProject(root, 'alpha', ghTracker('env:ALPHA_TRACKER'), { github: { 'credential-ref': 'env:LEGACY_GITHUB' } });
+  writeProject(root, 'alpha', ghTracker('env:ALPHA_TRACKER'), {
+    'code-host': { provider: 'github', 'auth-mode': 'credential-ref', 'credential-ref': 'env:CODE_HOST_GITHUB' }
+  });
   writeProject(root, 'beta', jiraTracker('env:BETA_TRACKER'));
   const out = bbJson(runtimeScript({ root, projectId: 'alpha', itemId: '3', token: 'ALPHA_TRACKER_SECRET', body: JSON.stringify({ id: 3, number: 3, title: 'T' }) }));
   const resolverCall = out.calls.find((call) => call.ref);
@@ -121,7 +135,7 @@ test('WT6 runtime dispatch uses only the selected project tracker credential and
   assert.equal(request.headers.Authorization, 'Bearer ALPHA_TRACKER_SECRET');
   assert.match(request.url, /^https:\/\/api\.github\.com\/repos\/owner\/repo\/issues\/3$/);
   const durable = fs.readFileSync(path.join(out['run-dir'], 'work-tracker', 'item.json'), 'utf8');
-  assert.doesNotMatch(durable, /LEGACY_GITHUB|BETA_TRACKER|ALPHA_TRACKER_SECRET/);
+  assert.doesNotMatch(durable, /CODE_HOST_GITHUB|BETA_TRACKER|ALPHA_TRACKER_SECRET/);
 });
 
 test('WT6 rejects malformed item refs/config before fake transport is called', () => {

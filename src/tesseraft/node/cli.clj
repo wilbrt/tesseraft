@@ -2,26 +2,21 @@
   (:require
     [tesseraft.cli-args :as cli-args]
     [tesseraft.lint.core :as lint]
+    [tesseraft.package.cli :as package-cli]
+    [tesseraft.package.fs :as package-fs]
+    [tesseraft.persistence.safe-write :as safe-write]
     [tesseraft.spec :as spec]
     [babashka.fs :as fs]
-    [cheshire.core :as json]
     [clojure.pprint :as pprint]
     [clojure.string :as str]))
 
-(defn parse-id [s]
-  (cond
-    (keyword? s) s
-    (and (string? s) (str/starts-with? s ":")) (keyword (subs s 1))
-    (string? s) (keyword s)
-    :else s))
+(def parse-id package-cli/parse-id)
 
 (defn write-edn! [path data]
-  (fs/create-dirs (fs/parent path))
-  (spit (str path) (with-out-str (pprint/pprint data)))
+  (safe-write/write-text! path (with-out-str (pprint/pprint data)))
   path)
 
-(defn path-like-command? [cmd]
-  (and (string? cmd) (or (str/includes? cmd "/") (str/starts-with? cmd "."))))
+(def path-like-command? package-fs/path-like-command?)
 
 (defn output-schema-paths [node]
   (->> (spec/output-contracts node)
@@ -39,31 +34,9 @@
     (seq (output-schema-paths node))
     (assoc :schemas (output-schema-paths node))))
 
-(defn same-file-content? [a b]
-  (and (fs/exists? a)
-       (fs/exists? b)
-       (= (slurp (str a)) (slurp (str b)))))
-
-(defn copy-asset! [from-dir to-dir rel-path]
-  (when-not (spec/safe-relative-path? rel-path)
-    (throw (ex-info "Asset path is not a safe relative path" {:path rel-path})))
-  (let [src (fs/path from-dir rel-path)
-        dest (fs/path to-dir rel-path)]
-    (when-not (fs/exists? src)
-      (throw (ex-info "Referenced asset does not exist" {:path rel-path :source (str src)})))
-    (if (fs/exists? dest)
-      (when-not (same-file-content? src dest)
-        (throw (ex-info "Refusing to overwrite different asset" {:path rel-path :destination (str dest)})))
-      (do
-        (fs/create-dirs (fs/parent dest))
-        (fs/copy src dest)))
-    rel-path))
-
-(defn copy-assets! [from-dir to-dir assets]
-  (doseq [[_ paths] assets
-          path paths]
-    (copy-asset! from-dir to-dir path))
-  assets)
+(def same-file-content? package-fs/same-file-content?)
+(def copy-asset! package-fs/copy-asset!)
+(def copy-assets! package-fs/copy-assets!)
 
 (defn exported-node-package [wf state-id node]
   (let [node-name (str (spec/workflow-name wf) "-" (name state-id))
@@ -78,18 +51,7 @@
      :node node*}))
 
 (defn parse-lint-args [args]
-  (loop [xs args acc {:node-packages [] :format "human"}]
-    (if (empty? xs)
-      acc
-      (let [[a b & more] xs
-            rest-xs (rest xs)]
-        (case a
-          "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
-          "--strict" (recur rest-xs (assoc acc :strict true))
-          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword (cli-args/require-value a b))))
-          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword (cli-args/require-value a b))))
-          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword (cli-args/require-value a b))))
-          (recur rest-xs (update acc :node-packages conj a)))))))
+  (package-cli/parse-lint-args args :node-packages))
 
 (defn parse-export-args [args]
   (loop [xs args acc {}]
@@ -118,20 +80,8 @@
             (nil? (:workflow acc)) (recur rest-xs (assoc acc :workflow a))
             :else (throw (ex-info (str "Unexpected argument: " a) {:arg a}))))))))
 
-(defn print-human-result [result]
-  (println (if (:ok result) "OK" "FAILED") (:node-package result))
-  (doseq [d (:diagnostics result)]
-    (println (str (str/upper-case (:severity d))
-                  " " (:code d)
-                  " " (pr-str (:path d))
-                  " - " (:message d)))))
-
-(defn aggregate [results]
-  {:ok (every? :ok results)
-   :files (vec results)
-   :errors (vec (mapcat :errors results))
-   :warnings (vec (mapcat :warnings results))
-   :diagnostics (vec (mapcat :diagnostics results))})
+(def print-human-result package-cli/print-human-result)
+(def aggregate package-cli/aggregate)
 
 (defn lint-main [args]
   (let [opts (parse-lint-args args)
@@ -142,13 +92,7 @@
       (System/exit 2))
     (let [results (mapv #(lint/lint-node-package-file % opts) node-packages)
           result (if (= 1 (count results)) (first results) (aggregate results))]
-      (case (:format opts)
-        "json" (println (json/generate-string result {:pretty true}))
-        "edn" (prn result)
-        "human" (if (:files result)
-                  (doseq [r (:files result)] (print-human-result r))
-                  (print-human-result result))
-        (print-human-result result))
+      (package-cli/print-lint-result! result (:format opts))
       (when-not (:ok result) (System/exit 1)))))
 
 (defn export-main [args]

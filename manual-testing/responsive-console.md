@@ -13,7 +13,7 @@ preserves the prior UX-simplification checklist that lived in the old
   `renderToStaticMarkup`. It cannot assert CSS wrap or console behavior.
 - UI components: `web/src/` (React/Vite frontend).
 - API routes the UI calls: `web/src-server/routes/api.ts` (see
-  `docs/CONTROL_PLANE_API.md`).
+  `docs/reference/CONTROL_PLANE_API.md`).
 - Automated gate: `npm run web:test`.
 
 ## Setup

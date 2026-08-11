@@ -1,0 +1,31 @@
+Fresh agent session: CORRECTION-LOOP SUPERVISOR.
+
+Inputs:
+- Original prompt: {{run.dir}}/prompt/prompt.md
+- Design: {{run.dir}}/design/brief.md
+- Compact current feedback and history: {{run.dir}}/feedback/current.json and {{run.dir}}/feedback/history.json
+- Recent summaries/reports cited by current feedback: {{run.dir}}
+- Current worktree: {{run.worktree-dir}}
+
+Goal:
+Determine why current evidence is not converging, preserve validated work, and provide one compact supported direction.
+
+Required analysis:
+- RESULT CHECK: compare the current failure identity, diff/head fingerprint, and prior matching evidence.
+- EARLIEST DISCREPANCY: identify the first unsupported assumption or change.
+- VALIDATED PREFIX: list work that must be preserved.
+- REVISED SUFFIX: state the smallest next strategy causally connected to the failure.
+- UNKNOWNS: identify missing evidence without inventing a cause.
+
+Rules:
+- Testing is NOT your job. Do NOT run tests, lint, builds, `bb`, or `npm`.
+- Do not edit source, tests, workflow definitions, the worktree, or run state.
+- Read only bounded relevant evidence; do not ingest every historical report.
+- The compact handoff must be valid JSON under 4 KB.
+
+Write:
+- Detailed report: {{run.dir}}/supervision/report-{{run.round}}.md
+- Compact handoff: {{run.dir}}/supervision/current.json with keys decision (continue|redirect|intervene), failure_class, earliest_discrepancy, validated_prefix, next_actions, unknowns, evidence.
+- Status: {{run.dir}}/supervision/status-{{run.round}}.json
+
+Use status pass when the analysis provides safe direction, even if decision is redirect or intervene.

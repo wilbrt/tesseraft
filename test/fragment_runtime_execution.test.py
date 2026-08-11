@@ -11,47 +11,24 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
+
+from python_support import read_json, run_control_plane, run_tesseraft, with_temp_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "test" / "fixtures" / "valid" / "fragment-runtime"
 
 
 def with_tmp(fn):
-    tmp = Path(tempfile.mkdtemp(prefix="tesseraft-fi6-"))
-    try:
-        return fn(tmp)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    return with_temp_dir("tesseraft-fi6-", fn)
 
 
 def tesseraft(args, home):
-    env = os.environ.copy()
-    env["TESSERAFT_HOME"] = str(home)
-    return subprocess.run(
-        [str(ROOT / "bin" / "tesseraft"), *args],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_tesseraft(args, home)
 
 
 def control_plane(args, home):
-    env = os.environ.copy()
-    env["TESSERAFT_HOME"] = str(home)
-    return subprocess.run(
-        [str(ROOT / "bin" / "tesseraft"), "control-plane", *args],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_control_plane(args, home)
 
 
 def stage_fragment(tmp, name):
@@ -83,10 +60,6 @@ def write_workflow(tmp, fragment_name, transitions_edn):
     path = tmp / "workflow.edn"
     path.write_text(workflow)
     return path
-
-
-def read_json(path: Path):
-    return json.loads(path.read_text())
 
 
 def read_events(run_dir: Path):
@@ -450,6 +423,12 @@ def test_bound_input_and_parameter_override_reach_nested_durable_evidence():
 
 
 def test_cancel_reaps_a_process_owned_by_a_fragment_internal_run_dir():
+    # Environment-based ownership discovery reads /proc/<pid>/environ. Linux
+    # CI exercises that contract; platforms without procfs report
+    # owned_processes_enumerated=false and cannot make this assertion.
+    if not Path("/proc").is_dir():
+        return
+
     def run(tmp):
         home = tmp / "home"
         stage_fragment(tmp, "runtime-pass")

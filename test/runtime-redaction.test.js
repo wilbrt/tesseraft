@@ -13,20 +13,10 @@ test('SC-006 runtime store redacts credential sentinels from durable state and e
   const home = path.join(root, 'home');
   const workspace = path.join(root, 'workspace');
   const credentialsPath = path.join(home, 'credentials.json');
-  const projectsDir = path.join(workspace, '.tesseraft', 'projects');
   fs.mkdirSync(path.dirname(credentialsPath), { recursive: true });
-  fs.mkdirSync(projectsDir, { recursive: true });
   fs.writeFileSync(credentialsPath, JSON.stringify({
     version: 1,
     credentials: { SC006_RUNTIME_TOKEN: 'SC006_DURABLE_SECRET_SENTINEL' }
-  }));
-  fs.writeFileSync(path.join(projectsDir, 'sc006.json'), JSON.stringify({
-    project_id: 'sc006',
-    name: 'SC006 Redaction',
-    workspace_root: '.',
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['examples'], 'tesseraft-home': home },
-    connections: { github: { 'credential-ref': 'tesseraft:SC006_RUNTIME_TOKEN' } }
   }));
 
   const script = String.raw`
@@ -38,7 +28,11 @@ test('SC-006 runtime store redacts credential sentinels from durable state and e
       ctx {:run {:dir run-dir
                  :project-id "sc006"
                  :workspace-root workspace
-                 :tesseraft-home home}
+                 :tesseraft-home home
+                 :project-context {:project_id "sc006"
+                                   :connections {:code-host {:provider "github"
+                                                             :auth-mode "credential-ref"
+                                                             :credential-ref "tesseraft:SC006_RUNTIME_TOKEN"}}}}
            :diagnostics {:message (str "resolver failed with " sentinel)
                          :keep "non-secret-context"}}]
   (store/save-context! ctx)
@@ -66,37 +60,43 @@ test('SC-006 runtime store redacts credential sentinels from durable state and e
   assert.match(durable, /event-context/);
 });
 
-test('SC-006 Jira adapter writes ticket artifacts through runtime redaction', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc006-jira-adapter-'));
+test('SC-006 provider-neutral work-tracker handler writes artifacts through runtime redaction', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-sc006-work-tracker-'));
   const runDir = path.join(root, 'run');
-  const sentinel = 'SC006_JIRA_ADAPTER_SECRET_SENTINEL';
+  const sentinel = 'SC006_TRACKER_SECRET_SENTINEL';
   const script = String.raw`
 (require '[tesseraft.adapters.builtin :as builtin])
+(require '[tesseraft.work-tracker.plane :as plane])
 (require '[babashka.fs :as fs])
 (let [run-dir (System/getenv "SC006_RUN_DIR")
       sentinel (System/getenv "SC006_SENTINEL")
-      ctx {:run {:dir run-dir}
-           :inputs {:ticket "TESS-006"}
-           :credential-secrets [sentinel]}
-      node {:outputs {:ticket-json {:path "ticket.json"}}}]
+      ctx {:run {:dir run-dir :project-id "sc006"
+                 :project-context {:project_id "sc006"
+                   :connections {:work-tracker {:provider "plane" :credential-ref "env:TRACKER"
+                     :config {:api-base-url "https://plane.example" :workspace-slug "ws" :project-id "project"}}}}}
+           :credential-resolver (fn [_ ref] {:present true :state "present" :credential-ref ref :value sentinel})}
+      node {:handler :work-tracker/fetch-item
+            :inputs {:item-id "123e4567-e89b-12d3-a456-426614174000"}
+            :outputs {:work-item {:path "work-item.json"}}}]
   (fs/create-dirs run-dir)
-  (binding [builtin/*process-extra-env* {"SC006_SENTINEL" sentinel}]
-    (builtin/jira-fetch-ticket! nil ctx nil node)))
+  (binding [plane/*http-request* (fn [_] {:status 200 :headers {}
+                                           :body (str "{\"id\":\"123e4567-e89b-12d3-a456-426614174000\","
+                                                      "\"name\":\"tracker-context\",\"leak\":\"" sentinel "\"}")})]
+    (builtin/run-handler! nil ctx :fetch node)))
 `;
   execFileSync('bb', ['-e', script], {
     cwd: repoRoot,
     env: {
       ...process.env,
       SC006_RUN_DIR: runDir,
-      SC006_SENTINEL: sentinel,
-      JIRA_FETCH_CMD: 'printf "{\\"ticket\\":\\"TESS-006\\",\\"leak\\":\\"%s\\",\\"keep\\":\\"jira-context\\"}" "$SC006_SENTINEL"'
+      SC006_SENTINEL: sentinel
     },
     encoding: 'utf8'
   });
 
-  const artifact = fs.readFileSync(path.join(runDir, 'ticket.json'), 'utf8');
-  assert.doesNotMatch(artifact, new RegExp(sentinel), 'SC-006 Jira ticket artifact must redact resolved credential sentinels');
-  assert.match(artifact, /jira-context/);
+  const artifact = fs.readFileSync(path.join(runDir, 'work-item.json'), 'utf8');
+  assert.doesNotMatch(artifact, new RegExp(sentinel));
+  assert.match(artifact, /tracker-context/);
 });
 
 test('SC-006 runtime redacts credential sentinels from prompts, logs, and JSON artifacts', () => {
@@ -106,17 +106,9 @@ test('SC-006 runtime redacts credential sentinels from prompts, logs, and JSON a
   const workspace = path.join(root, 'workspace');
   const workflowDir = path.join(root, 'workflow');
   const sentinel = 'SC006_ALL_SINKS_SECRET_SENTINEL';
-  fs.mkdirSync(path.join(workspace, '.tesseraft', 'projects'), { recursive: true });
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(workflowDir, { recursive: true });
   fs.writeFileSync(path.join(home, 'credentials.json'), JSON.stringify({ version: 1, credentials: { token: sentinel } }));
-  fs.writeFileSync(path.join(workspace, '.tesseraft', 'projects', 'sc006.json'), JSON.stringify({
-    project_id: 'sc006',
-    workspace_root: '.',
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['examples'], 'tesseraft-home': home },
-    connections: { github: { 'credential-ref': 'tesseraft:token' } }
-  }));
   fs.writeFileSync(path.join(workflowDir, 'prompt.tmpl'), 'Prompt leaks {{inputs.secret}} and keeps prompt-context\n');
   const workflowFile = path.join(workflowDir, 'workflow.edn');
   fs.writeFileSync(workflowFile, '');
@@ -186,8 +178,10 @@ test('WT2 injected resolver failures are safe and live resolver secrets redact d
                :workspace_root "."
                :runs_root ".agent-runs"
                :discovery {:workflow-roots ["examples"]}
-               :connections {:github {:credential-ref "tesseraft:success"}
-                             :jira {:credential-ref "tesseraft:failure"}}}
+               :connections {:code-host {:provider "github" :auth-mode "credential-ref"
+                                         :credential-ref "tesseraft:success"}
+                             :work-tracker {:provider "jira" :credential-ref "tesseraft:failure"
+                                            :config {:base-url "https://jira.example" :project-key "WT2"}}}}
       ctx {:run {:dir run-dir
                  :project-id "injected"
                  :project-context project}

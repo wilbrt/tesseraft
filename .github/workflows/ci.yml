@@ -11,6 +11,13 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,16 +26,38 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Read declared toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          echo "node=$(awk '$1 == "nodejs" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+          echo "npm=$(awk '$1 == "npm" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+          echo "bb=$(awk '$1 == "babashka" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+          echo "python=$(awk '$1 == "python" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Babashka
         uses: DeLaGuardo/setup-clojure@13.4
         with:
-          bb: latest
+          bb: ${{ steps.toolchain.outputs.bb }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ steps.toolchain.outputs.node }}
           cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ steps.toolchain.outputs.python }}
+
+      - name: Align npm and verify toolchain
+        run: |
+          npm install --global "npm@${{ steps.toolchain.outputs.npm }}"
+          ./scripts/check_deps.sh test
+
+      - name: Install Python test dependencies
+        run: python -m pip install .
 
       - name: Install Node dependencies
         run: npm ci
@@ -36,11 +65,17 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Build Web production artifacts
+        run: npm run build:web
+
       - name: Run Web tests
-        run: npm run web:test
+        run: npm run test:web
+
+      - name: Run prepared-build integration tests
+        run: bb test:integration
 
       - name: Run Playwright E2E tests
-        run: npm run web:e2e
+        run: npm run test:e2e
 
       - name: Upload Playwright diagnostics
         if: failure()
@@ -52,11 +87,11 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
-      - name: Run Babashka tests (bb test)
-        run: bb test
+      - name: Run core tests
+        run: bb test:core
 
       - name: Verify STATUS.edn ↔ README sync
-        run: bb status --check
+        run: bb test:docs
 
       - name: Container harness (PR #37)
         # ubuntu-latest provides a working Docker daemon. If a future

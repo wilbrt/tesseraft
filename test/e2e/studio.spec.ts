@@ -4,9 +4,10 @@ import { expect, test } from './fixtures';
 
 type LintItem = { code?: string; message?: string; severity?: string; path?: string[] };
 type SaveResponse = {
-  ok: boolean;
+  ok?: boolean;
   save_mode: 'draft' | 'completed';
   lint?: { ok: boolean; errors?: LintItem[]; warnings?: LintItem[]; diagnostics?: LintItem[] };
+  error?: { code?: string; message?: string; details?: { diagnostics?: LintItem[] } };
 };
 type StudioGetResponse = {
   workflow: { edn: string; path: string };
@@ -58,22 +59,24 @@ test('saves Studio drafts while completed saves are visibly lint-gated', async (
   const invalidResponse = await invalidResponsePromise;
   expect(invalidResponse.status()).toBe(422);
   const invalidBody = await invalidResponse.json() as SaveResponse;
-  expect(invalidBody.ok).toBe(false);
-  expect(invalidBody.save_mode).toBe('completed');
-  expect(invalidBody.lint?.ok).toBe(false);
-  const diagnostic = firstLintItem(invalidBody);
+  expect(invalidBody.error?.code).toBe('invalid_workflow');
+  const lintBody: SaveResponse = { save_mode: 'completed', lint: {
+    ok: false, errors: invalidBody.error?.details?.diagnostics || [], warnings: [],
+    diagnostics: invalidBody.error?.details?.diagnostics || []
+  } };
+  const diagnostic = firstLintItem(lintBody);
   await expect(page.getByText('Save completed blocked by linter. See issues below.')).toBeVisible();
-  if (diagnostic.code) await expect(page.getByText(diagnostic.code)).toBeVisible();
-  if (diagnostic.message) await expect(page.getByText(diagnostic.message, { exact: false })).toBeVisible();
+  if (diagnostic.code) await expect(page.getByText(diagnostic.code).first()).toBeVisible();
+  if (diagnostic.message) await expect(page.getByText(diagnostic.message, { exact: false }).first()).toBeVisible();
 
   const sidecarAfterInvalid = JSON.parse(await fs.readFile(path.join(packageDir, 'studio-state.json'), 'utf8')) as { status: string };
   expect(sidecarAfterInvalid.status).toBe('draft');
 
   await page.getByRole('button', { name: 'Add node' }).click();
   const addNodeDialog = page.getByRole('dialog', { name: 'Add node' });
-  await addNodeDialog.getByLabel('Node type').selectOption(':terminal');
+  await addNodeDialog.getByLabel('Node type').selectOption('terminal');
   await addNodeDialog.getByLabel('ID (state keyword)').fill('start');
-  await expect(addNodeDialog.getByLabel('Status', { exact: true })).toHaveValue(':success');
+  await expect(addNodeDialog.getByLabel('Status', { exact: true })).toHaveValue('success');
   await addNodeDialog.getByRole('button', { name: 'Save node' }).click();
   await expect(page.getByRole('button', { name: 'Node start' })).toBeVisible();
 
@@ -89,7 +92,7 @@ test('saves Studio drafts while completed saves are visibly lint-gated', async (
   const loaded = await isolatedWorkspace.apiJson<StudioGetResponse>(`/api/studio/workflows/${encodeURIComponent(workflowName)}`);
   expect(loaded.state.status).toBe('completed');
   expect(loaded.state.draft?.initial).toBe('start');
-  expect(loaded.state.draft?.states.start).toMatchObject({ type: ':terminal', status: ':success' });
+  expect(loaded.state.draft?.states.start).toMatchObject({ type: 'terminal', status: 'success' });
 
   const workflowFile = path.join(packageDir, 'workflow.edn');
   expectUnder(isolatedWorkspace.workspaceRoot, workflowFile);

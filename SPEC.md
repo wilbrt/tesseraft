@@ -31,21 +31,21 @@ policies.edn
 
 Node packages (`node.edn`, `tesseraft.node/v1`) and fragment packages
 (`fragment.edn`, `tesseraft.fragment/v1`) use the same scope model. Fragment
-packages live under `examples/fragments/<name>/fragment.edn`,
+packages live under `examples/catalog/fragments/<name>/fragment.edn`,
 `~/.tesseraft/fragments/<name>/fragment.edn`, and
 `.tesseraft/fragments/<name>/fragment.edn` (project precedence highest). See
-[docs/NODES.md](docs/NODES.md) and [docs/FRAGMENTS.md](docs/FRAGMENTS.md).
+[docs/reference/NODES.md](docs/reference/NODES.md) and [docs/reference/FRAGMENTS.md](docs/reference/FRAGMENTS.md).
 
 ## 4. Top-level workflow shape
 
 ```edn
 {:api-version "tesseraft.workflow/v1"
  :kind :workflow
- :metadata {:name "jira-to-pr"}
- :inputs {:ticket {:type :string :required true}}
+ :metadata {:name "work-item-to-pr"}
+ :inputs {:item-id {:type :string :required true}}
  :defaults {:max-rounds 8 :state-timeout "30m"}
  :policies {:runtime-cannot-edit-workflow true}
- :initial :fetch-ticket
+ :initial :fetch-item
  :states {...}}
 ```
 
@@ -65,7 +65,7 @@ Supported node types are:
 - `:fragment` — boundary call to a reusable subgraph package
   (`tesseraft.fragment/v1`). Inclusion lints the fragment's boundary contract
   (inputs, parameters, outputs, outcomes, resources) without duplicating the
-  internal subgraph proof. See [docs/FRAGMENTS.md](docs/FRAGMENTS.md).
+  internal subgraph proof. See [docs/reference/FRAGMENTS.md](docs/reference/FRAGMENTS.md).
 
 ## 6. Common node fields
 
@@ -138,12 +138,12 @@ The built-in `:web/start-test-server` handler starts a local worktree-rooted web
 ## 9. Process node
 
 ```edn
-:fetch-ticket
+:fetch-item
 {:type :process
- :command ["node" "scripts/fetch-jira-ticket.js"]
+ :command ["node" "scripts/fetch-work-item.js"]
  :input-mode :json-stdin
  :output-mode :json-stdout
- :outputs {:ticket-json {:path "ticket.json" :required true}}
+ :outputs {:work-item-json {:path "work-item.json" :required true}}
  :next :design}
 ```
 
@@ -222,7 +222,7 @@ Templates may use `{{...}}` variables. Required namespaces are `inputs.*`, `defa
 A run must be pinned to an immutable workflow version.
 
 ```json
-{"run_id":"run_01HX","workflow_name":"jira-to-pr","workflow_version":"git:abc123","state":"manual-test","round":2,"status":"running"}
+{"run_id":"run_01HX","workflow_name":"work-item-to-pr","workflow_version":"git:abc123","state":"manual-test","round":2,"status":"running"}
 ```
 
 Existing runs must not silently switch workflow versions.
@@ -250,7 +250,7 @@ Request:
 Response:
 
 ```json
-{"ok":true,"status":"pass","outputs":{"ticket-json":"ticket.json"}}
+{"ok":true,"status":"pass","outputs":{"work-item-json":"work-item.json"}}
 ```
 
 A zero exit with valid JSON and `ok` not false is a protocol-level response whose `status` may drive declared transitions. A nonzero exit, malformed JSON, `ok:false`, or `status:"error"` is treated by the reference runner as an external/runtime failure and does not enter transition selection.

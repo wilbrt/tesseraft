@@ -3,7 +3,7 @@ import express, { type ErrorRequestHandler } from 'express';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApiRouter, routeApi, type ApiRouterOptions } from './routes/api.js';
+import { createApiRouter, type ApiRouterOptions } from './routes/api.js';
 import type { PiSessionAdapter } from './lib/piSessionAdapter.js';
 import { errorBody, jsonResponse } from './lib/http.js';
 import { STATIC_DIR } from './lib/paths.js';
@@ -12,9 +12,8 @@ const __filename = fileURLToPath(import.meta.url);
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 7341;
 
-type ParsedArgs = { host: string; port: number; help?: boolean };
+type ParsedArgs = { host: string; port: number; acknowledgeRemoteExposure: boolean; help?: boolean };
 
-export { routeApi };
 
 const apiErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   const err = error as Error & { status?: number; code?: string; type?: string };
@@ -38,7 +37,7 @@ export const createApp = (options: ServerOptions | PiSessionAdapter = {}): expre
 export const createServer = (options: ServerOptions | PiSessionAdapter = {}): http.Server => http.createServer(createApp(options));
 
 export const parseArgs = (argv: string[]): ParsedArgs => {
-  const opts: ParsedArgs = { host: DEFAULT_HOST, port: DEFAULT_PORT };
+  const opts: ParsedArgs = { host: DEFAULT_HOST, port: DEFAULT_PORT, acknowledgeRemoteExposure: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--port') {
@@ -51,6 +50,8 @@ export const parseArgs = (argv: string[]): ParsedArgs => {
       const value = argv[++i];
       if (value === undefined) throw new Error('Missing value for --host');
       opts.host = value;
+    } else if (arg === '--acknowledge-remote-exposure') {
+      opts.acknowledgeRemoteExposure = true;
     } else if (arg === '-h' || arg === '--help' || arg === 'help') {
       opts.help = true;
     } else {
@@ -61,7 +62,7 @@ export const parseArgs = (argv: string[]): ParsedArgs => {
 };
 
 const printUsage = (): void => {
-  console.log('Usage: tesseraft web [--host 127.0.0.1] [--port <port>]');
+  console.log('Usage: tesseraft web [--host 127.0.0.1] [--port <port>] [--acknowledge-remote-exposure]');
   console.log('Serve the local Tesseraft Web UI.');
 };
 
@@ -80,12 +81,35 @@ export const main = (): void => {
     process.exit(0);
   }
 
+  const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
+  if (!loopback.has(opts.host) && !opts.acknowledgeRemoteExposure) {
+    console.error('Refusing a non-loopback bind without --acknowledge-remote-exposure; Tesseraft Web has no remote authentication boundary.');
+    process.exit(2);
+  }
+
   const server = createServer();
   server.listen(opts.port, opts.host, () => {
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : opts.port;
     console.log(`Tesseraft web UI listening on http://${opts.host}:${port}`);
   });
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const forceTimer = setTimeout(() => {
+      server.closeAllConnections();
+      process.exit(1);
+    }, 5000);
+    forceTimer.unref();
+    server.close((error) => {
+      clearTimeout(forceTimer);
+      if (error) console.error(`Tesseraft web shutdown failed after ${signal}: ${error.message}`);
+      process.exit(error ? 1 : 0);
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();

@@ -3,44 +3,21 @@
   (:require
     [tesseraft.cli-args :as cli-args]
     [tesseraft.lint.core :as lint]
+    [tesseraft.package.cli :as package-cli]
+    [tesseraft.package.diagnostics :as package-diagnostics]
+    [tesseraft.package.fs :as package-fs]
+    [tesseraft.package.transaction :as transaction]
     [tesseraft.spec :as spec]
     [babashka.fs :as fs]
-    [cheshire.core :as json]
     [clojure.edn :as edn]
-    [clojure.pprint :as pprint]
-    [clojure.string :as str])
-  (:import
-    [java.nio.file Files StandardCopyOption CopyOption OpenOption]
-    [java.util Arrays UUID]))
+    [clojure.string :as str]))
 
-(defn parse-id [s]
-  (cond
-    (keyword? s) s
-    (and (string? s) (str/starts-with? s ":")) (keyword (subs s 1))
-    (string? s) (keyword s)
-    :else s))
-
-(defn edn-bytes [data]
-  (.getBytes (with-out-str (pprint/pprint data)) "UTF-8"))
-
-(defn same-file-content? [a b]
-  (and (fs/exists? a)
-       (fs/exists? b)
-       (Arrays/equals (Files/readAllBytes (fs/path a)) (Files/readAllBytes (fs/path b)))))
+(def parse-id package-cli/parse-id)
+(def edn-bytes transaction/edn-bytes)
+(def same-file-content? package-fs/same-file-content?)
 
 (defn parse-lint-args [args]
-  (loop [xs args acc {:fragment-packages [] :format "human"}]
-    (if (empty? xs)
-      acc
-      (let [[a b & more] xs
-            rest-xs (rest xs)]
-        (case a
-          "--format" (recur more (assoc acc :format (cli-args/require-value a b)))
-          "--strict" (recur rest-xs (assoc acc :strict true))
-          "--known-handler" (recur more (update acc :known-handlers (fnil conj []) (keyword (cli-args/require-value a b))))
-          "--known-executor" (recur more (update acc :known-executors (fnil conj []) (keyword (cli-args/require-value a b))))
-          "--allowed-tool" (recur more (update acc :allowed-tools (fnil conj []) (keyword (cli-args/require-value a b))))
-          (recur rest-xs (update acc :fragment-packages conj a)))))))
+  (package-cli/parse-lint-args args :fragment-packages))
 
 (defn scalar-edn [flag text]
   (let [v (try
@@ -98,20 +75,8 @@
             (nil? (:workflow acc)) (recur rest-xs (assoc acc :workflow a))
             :else (throw (ex-info (str "Unexpected argument: " a) {:arg a}))))))))
 
-(defn print-human-result [result]
-  (println (if (:ok result) "OK" "FAILED") (or (:fragment-package result) (:workflow result)))
-  (doseq [d (:diagnostics result)]
-    (println (str (str/upper-case (:severity d))
-                  " " (:code d)
-                  " " (pr-str (:path d))
-                  " - " (:message d)))))
-
-(defn aggregate [results]
-  {:ok (every? :ok results)
-   :files (vec results)
-   :errors (vec (mapcat :errors results))
-   :warnings (vec (mapcat :warnings results))
-   :diagnostics (vec (mapcat :diagnostics results))})
+(def print-human-result package-cli/print-human-result)
+(def aggregate package-cli/aggregate)
 
 (defn lint-main [args]
   (let [opts (parse-lint-args args)
@@ -122,13 +87,7 @@
       (System/exit 2))
     (let [results (mapv #(lint/lint-fragment-package-file % opts) fragment-packages)
           result (if (= 1 (count results)) (first results) (aggregate results))]
-      (case (:format opts)
-        "json" (println (json/generate-string result {:pretty true}))
-        "edn" (prn result)
-        "human" (if (:files result)
-                  (doseq [r (:files result)] (print-human-result r))
-                  (print-human-result result))
-        (print-human-result result))
+      (package-cli/print-lint-result! result (:format opts))
       (when-not (:ok result) (System/exit 1)))))
 
 (defn sorted-outcomes [xs]
@@ -189,69 +148,13 @@
                 {:path rel-path :src src :dest dest :action :reuse})
               {:path rel-path :src src :dest dest :action :install})))))))
 
-(defn temp-sibling [dest]
-  (fs/path (fs/parent dest) (str "." (fs/file-name dest) ".import-" (UUID/randomUUID) ".tmp")))
-
-(defn move-replace! [src dest]
-  (Files/move (fs/path src) (fs/path dest)
-              (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING])))
-
-(defn copy-new! [src dest]
-  (Files/copy (fs/path src) (fs/path dest) (make-array CopyOption 0)))
-
-(defn delete-empty-parents! [path stop-dir]
-  (let [stop (.normalize (.toAbsolutePath (fs/path stop-dir)))]
-    (loop [p (fs/parent path)]
-      (when (and p (not= stop (.normalize (.toAbsolutePath (fs/path p)))))
-        (let [deleted? (try
-                         (when (and (fs/exists? p) (empty? (fs/list-dir p)))
-                           (fs/delete p)
-                           true)
-                         (catch Throwable _
-                           false))]
-          (when deleted?
-            (recur (fs/parent p))))))))
-
-(defn rollback! [wf-file original-bytes installed-assets workflow-written? workflow-dir]
-  (when workflow-written?
-    (Files/write (fs/path wf-file) original-bytes (make-array OpenOption 0)))
-  (doseq [dest (reverse installed-assets)]
-    (try
-      (fs/delete-if-exists dest)
-      (delete-empty-parents! dest workflow-dir)
-      (catch Throwable _
-        nil))))
-
-(defn commit-transaction! [wf data asset-plan]
-  (let [wf-file (fs/path (spec/workflow-file wf))
-        workflow-dir (spec/workflow-dir wf)
-        original-bytes (Files/readAllBytes wf-file)
-        wf-tmp (temp-sibling wf-file)
-        installed (atom [])
-        workflow-written (atom false)]
-    (try
-      (doseq [{:keys [src dest action]} asset-plan]
-        (when (= :install action)
-          (fs/create-dirs (fs/parent dest))
-          (let [tmp (temp-sibling dest)]
-            (try
-              (copy-new! src tmp)
-              (swap! installed conj dest)
-              (move-replace! tmp dest)
-              (finally
-                (fs/delete-if-exists tmp))))))
-      (Files/write (fs/path wf-tmp) (edn-bytes data) (make-array OpenOption 0))
-      (move-replace! wf-tmp wf-file)
-      (reset! workflow-written true)
-      true
-      (catch Throwable t
-        (fs/delete-if-exists wf-tmp)
-        (rollback! wf-file original-bytes @installed @workflow-written workflow-dir)
-        (throw t)))))
-
-(defn diagnostic-summary [result]
-  (str/join "; " (map #(str (:severity %) " " (:code %) " " (pr-str (:path %)) " - " (:message %))
-                       (:diagnostics result))))
+(def temp-sibling transaction/temp-sibling)
+(def move-replace! transaction/move-replace!)
+(def copy-new! transaction/copy-new!)
+(def delete-empty-parents! transaction/delete-empty-parents!)
+(def rollback! transaction/rollback!)
+(def commit-transaction! transaction/commit!)
+(def diagnostic-summary package-diagnostics/summary)
 
 (defn import-main [args]
   (let [{:keys [fragment-package workflow as next] :as opts} (parse-import-args args)]

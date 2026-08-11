@@ -1,9 +1,10 @@
 (ns tesseraft.executors.pi-cli
   (:require
     [tesseraft.spec :as spec]
+    [tesseraft.executors.context :as executor-context]
+    [tesseraft.executors.process :as executor-process]
     [tesseraft.runtime.store :as store]
     [babashka.fs :as fs]
-    [babashka.process :as p]
     [clojure.string :as str]))
 
 (defn env [k default] (or (System/getenv k) default))
@@ -33,33 +34,15 @@
       ;; Unknown provider: do not block. A warning is emitted by the caller.
       nil)))
 
-(defn execution-context [ctx state-id node]
-  (merge ctx {:node {:id state-id :config node}
-              :agent {:status-path (spec/status-output-path node)}}))
+(def execution-context executor-context/execution-context)
 
-(defn render-prompt! [wf ctx state-id node]
-  (let [template-path (spec/resolve-workflow-path wf (:prompt-template node))
-        template (slurp template-path)
-        ectx (execution-context ctx state-id node)
-        rendered (spec/render-template-string template ectx)
-        prompt-output (or (:prompt-output node)
-                          (str "prompts/generated/" (name state-id) "-" (get-in ctx [:run :attempt]) ".md"))
-        rendered-output (spec/render-template-string prompt-output ectx)
-        output-path (str (fs/path (get-in ctx [:run :dir]) rendered-output))]
-    (store/write-runtime-text! ctx output-path rendered)
-    output-path))
+(def render-prompt! executor-context/render-prompt!)
 
-(defn session-name [ctx state-id node]
-  (let [template (or (:session-name node) (str "{{inputs.ticket}}-" (name state-id) "-{{run.attempt}}"))]
-    (spec/render-template-string template (execution-context ctx state-id node))))
+(defn session-name
+  ([ctx state-id node] (executor-context/session-name nil ctx state-id node))
+  ([wf ctx state-id node] (executor-context/session-name wf ctx state-id node)))
 
-(defn runtime-cwd [ctx state-id node]
-  (let [ectx (execution-context ctx state-id node)]
-    (or (some-> (get-in node [:runtime :cwd]) (spec/render-template-string ectx) not-empty)
-        (get-in ctx [:run :worktree-dir])
-        (get-in ctx [:inputs :repo-root])
-        (get-in ctx [:inputs :repo])
-        ".")))
+(def runtime-cwd executor-context/runtime-cwd)
 
 (defn run-agent-node! [wf ctx state-id node]
   (let [pi-bin (env "PI_BIN" "pi")
@@ -67,7 +50,7 @@
         repo-root (runtime-cwd ctx state-id node)
         prompt-file (render-prompt! wf ctx state-id node)
         session-dir (str (fs/path run-dir "pi-sessions"))
-        session-name (session-name ctx state-id node)
+        session-name (session-name wf ctx state-id node)
         tools (comma-tools (:tools node))
         provider (:provider node)
         model (:model node)
@@ -112,30 +95,17 @@
                                         "THINKING: " (or thinking "<default>") "\n\n"
                                         "PROMPT_FILE: " prompt-file "\n\n"
                                         "STATUS: running\n\n"))
-        (let [git-user (get-in ctx [:run :git-user])
-              git-env (when git-user
-                        {"GIT_AUTHOR_NAME" (:name git-user)
-                         "GIT_AUTHOR_EMAIL" (:email git-user)
-                         "GIT_COMMITTER_NAME" (:name git-user)
-                         "GIT_COMMITTER_EMAIL" (:email git-user)
-                         "GIT_USER_NAME" (:name git-user)
-                         "GIT_USER_EMAIL" (:email git-user)})
-              result (apply p/shell {:dir repo-root
-                                     :out :string :err :string :continue true
-                                     :extra-env (merge {"AGENT_RUN_DIR" run-dir
-                                                        "AGENT_STATE" (name state-id)
-                                                        "AGENT_ATTEMPT" (str (get-in ctx [:run :attempt]))}
-                                                       git-env)}
-                            args)]
+        (let [result (executor-process/run! {:cmd args :dir repo-root
+                                             :env (executor-context/agent-env ctx state-id)})]
           (store/append-runtime-text! ctx log-file
-                                      (str "STATUS: exited " (:exit result) "\n\n"
-                                           "STDOUT:\n" (:out result) "\n\nSTDERR:\n" (:err result) "\n"))
-          (cond-> {:executor "pi-cli"
-                   :ok (zero? (:exit result))
-                   :exit-code (:exit result)
+                                      (str "STATUS: exited " (:exit-code result) "\n\n"
+                                           "STDOUT:\n" (:stdout result) "\n\nSTDERR:\n" (:stderr result) "\n"))
+          (cond-> (merge (select-keys result [:ok :status :category :code :message])
+                         {:executor "pi-cli"
+                   :exit-code (:exit-code result)
                    :prompt-file prompt-file
                    :log-file log-file
-                   :session-name session-name}
+                   :session-name session-name})
             provider (assoc :provider provider)
             model (assoc :model model)
             thinking (assoc :thinking thinking)))))))

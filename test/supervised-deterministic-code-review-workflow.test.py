@@ -9,7 +9,7 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "examples" / "supervised-deterministic-code-review-loop"
+PACKAGE = ROOT / "examples" / "catalog" / "supervised-deterministic-code-review-loop"
 WORKFLOW = PACKAGE / "workflow.edn"
 CADENCE = PACKAGE / "scripts" / "check_supervision.py"
 

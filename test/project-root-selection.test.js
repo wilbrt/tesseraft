@@ -52,28 +52,28 @@ test('implicit project discovery selects nearest ancestor descriptor from nested
     fs.mkdirSync(start, { recursive: true });
 
     fs.writeFileSync(path.join(outer, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
+      version: 2,
       project_id: 'outer-project',
       name: 'Outer Project',
       runs_root: 'runs',
       discovery: { workflow_roots: ['.tesseraft/workflows'] }
     }, null, 2));
     fs.writeFileSync(path.join(nested, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
+      version: 2,
       project_id: 'inner-project',
       name: 'Inner Project',
       runs_root: 'runs',
       discovery: { workflow_roots: ['.tesseraft/workflows'] }
     }, null, 2));
     fs.writeFileSync(path.join(sibling, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
+      version: 2,
       project_id: 'sibling-project',
       name: 'Sibling Project',
       runs_root: 'runs',
       discovery: { workflow_roots: ['.tesseraft/workflows'] }
     }, null, 2));
     fs.writeFileSync(path.join(home, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
+      version: 2,
       project_id: 'home-project',
       name: 'Home Project',
       runs_root: 'runs',
@@ -185,7 +185,7 @@ test('explicit local project root selects descriptor project instead of invocati
     writeWorkflow(invocation, 'invocation-demo', 'Invocation Demo');
     writeWorkflow(selected, 'selected-demo', 'Selected Demo');
     fs.writeFileSync(path.join(selected, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
+      version: 2,
       project_id: 'selected-root',
       name: 'Selected Root',
       runs_root: 'runs',

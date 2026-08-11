@@ -8,49 +8,25 @@ import json
 import os
 import shutil
 import signal
-import subprocess
-import tempfile
 import time
 from pathlib import Path
+
+from python_support import read_json, run_tesseraft, start_tesseraft, with_temp_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "test" / "fixtures" / "valid" / "fragment-runtime"
 
 
 def with_tmp(fn):
-    tmp = Path(tempfile.mkdtemp(prefix="tesseraft-retry-"))
-    try:
-        return fn(tmp)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    return with_temp_dir("tesseraft-retry-", fn)
 
 
 def tesseraft(args, home, extra_env=None):
-    env = os.environ.copy()
-    env["TESSERAFT_HOME"] = str(home)
-    env.update(extra_env or {})
-    return subprocess.run(
-        [str(ROOT / "bin" / "tesseraft"), *args],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_tesseraft(args, home, extra_env)
 
 
 def tesseraft_bg(args, home, extra_env=None):
-    env = os.environ.copy()
-    env["TESSERAFT_HOME"] = str(home)
-    env.update(extra_env or {})
-    return subprocess.Popen(
-        [str(ROOT / "bin" / "tesseraft"), *args],
-        cwd=ROOT,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    return start_tesseraft(args, home, extra_env)
 
 
 def start(tmp, home, wf, run_id=None):
@@ -82,10 +58,6 @@ def retry(run_dir, home, max_steps=None, reason=None, repin=False, extra_env=Non
     if repin:
         args += ["--repin"]
     return tesseraft(args, home, extra_env=extra_env)
-
-
-def read_json(path):
-    return json.loads(path.read_text())
 
 
 def read_events(run_dir):

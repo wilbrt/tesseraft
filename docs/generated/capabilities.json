@@ -1,0 +1,71 @@
+{
+  "generated_from" : "STATUS.edn",
+  "capabilities" : [ {
+    "id" : "credentials-and-preferences",
+    "status" : "implemented",
+    "summary" : "Versioned user stores separately own credentials, preferences, and Git identities; raw integration tokens are rejected.",
+    "evidence" : [ "schemas/local-credential-store.schema.json", "schemas/user-preferences.schema.json", "schemas/git-identities.schema.json", "src/tesseraft/security/redaction.clj" ]
+  }, {
+    "id" : "project-model",
+    "status" : "implemented",
+    "summary" : "Portable descriptor v2 owns project identity and configuration; registry v2 owns machine-local locations.",
+    "evidence" : [ "schemas/portable-project-descriptor.schema.json", "schemas/user-project-registry.schema.json", "src/tesseraft/project/descriptor.clj", "src/tesseraft/project/registry.clj" ]
+  }, {
+    "id" : "handler-catalog",
+    "status" : "implemented",
+    "summary" : "One closed catalog owns built-in deterministic handler metadata and dispatch.",
+    "evidence" : [ "src/tesseraft/capabilities/handlers.clj", "test/tesseraft/capabilities/catalog_test.clj" ],
+    "catalog" : "handlers",
+    "ids" : [ "git/ensure-branch", "git/ensure-worktree", "git/publish-visual-evidence", "git/push", "github/create-pr", "github/fetch-pr-feedback", "noop/succeed", "notify/pinga", "web/capture-ui-evidence", "web/start-test-server", "web/stop-test-server", "web/validate-ui-review", "work-tracker/fetch-item" ]
+  }, {
+    "id" : "fragment-runtime",
+    "status" : "implemented",
+    "summary" : "Fragment execution and recovery reuse the runtime engine while retaining pinned, inspectable nested evidence.",
+    "evidence" : [ "src/tesseraft/runtime/fragment.clj", "test/fragment_runtime_execution.test.py", "test/fragment_runtime_recovery.test.py" ]
+  }, {
+    "id" : "durable-runtime",
+    "status" : "implemented",
+    "summary" : "Versioned run directories own state, events, artifacts, approvals, retries, cancellation, and process ownership.",
+    "evidence" : [ "src/tesseraft/runtime/core.clj", "src/tesseraft/runtime/store.clj", "schemas/run-state.schema.json", "test/tesseraft/runtime/core_test.clj" ]
+  }, {
+    "id" : "workflow-contracts",
+    "status" : "implemented",
+    "summary" : "Versioned workflow, node, and fragment packages with schema and semantic lint boundaries.",
+    "evidence" : [ "SPEC.md", "schemas/workflow.schema.json", "src/tesseraft/lint/pipeline.clj" ]
+  }, {
+    "id" : "container",
+    "status" : "implemented",
+    "summary" : "Pinned multi-stage image runs non-root with explicit writable roots, health checks, and remote-exposure acknowledgement.",
+    "evidence" : [ "Dockerfile", "test/container/test.sh", "docs/operations/CONTAINER_INSTALL.md" ]
+  }, {
+    "id" : "web-console",
+    "status" : "implemented",
+    "summary" : "Express domain routers expose project-scoped APIs; React features use semantic models and capability metadata.",
+    "evidence" : [ "web/src-server/routes/api.ts", "web/src/features", "web/src/lib/api.ts", "test/web-server.test.js" ]
+  }, {
+    "id" : "migrations",
+    "status" : "implemented",
+    "summary" : "Explicit dry-run/apply migrations own legacy project, preference, credential, and workflow conversion.",
+    "evidence" : [ "src/tesseraft/migration/cli.clj", "src/tesseraft/migration/project.clj", "test/tesseraft/migration/project_test.clj" ]
+  }, {
+    "id" : "executor-catalog",
+    "status" : "implemented",
+    "summary" : "One catalog owns executor metadata, availability, and dispatchability.",
+    "evidence" : [ "src/tesseraft/capabilities/executors.clj", "test/tesseraft/capabilities/catalog_test.clj" ],
+    "catalog" : "executors",
+    "ids" : [ "claude-code", "pi-cli", "pi-sdk" ]
+  }, {
+    "id" : "local-control-plane",
+    "status" : "implemented",
+    "summary" : "Structured application operations and focused services own project, workflow, run, approval, and settings mutations.",
+    "evidence" : [ "src/tesseraft/control_plane/operations.clj", "src/tesseraft/control_plane/core.clj", "docs/reference/CONTROL_PLANE_API.md" ]
+  }, {
+    "id" : "work-tracker-catalog",
+    "status" : "implemented",
+    "summary" : "One provider catalog drives Plane, Jira, and GitHub Issues validation, metadata, mock, doctor, and live fetch behavior.",
+    "evidence" : [ "src/tesseraft/work_tracker/catalog.clj", "test/work-tracker-contract.test.js" ],
+    "catalog" : "work-trackers",
+    "ids" : [ "github-issues", "jira", "plane" ]
+  } ],
+  "not_yet_implemented" : [ "Full Pi SDK executor", "Database-backed or hosted runner" ]
+}

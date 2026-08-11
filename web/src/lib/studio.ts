@@ -2,12 +2,12 @@
 // lint authority; the UI only sends/receives JSON drafts.
 
 import type { LintReport, StudioPositions, StudioWorkflow } from '../types/studio';
-import { getJson, postJson, putJson } from './api';
+import { getJson, postJson, putJson, RequestJsonError } from './api';
 
 export type CreateStudioWorkflowResponse = { workflow: { name: string; path: string } };
 export type StudioSidecar = { status: string; draft?: StudioWorkflow; positions?: StudioPositions; lint?: LintReport };
 export type GetStudioWorkflowResponse = {
-  workflow: { name: string; path: string; edn: string };
+  workflow: { name: string; path: string; normalized?: StudioWorkflow };
   state: StudioSidecar;
 };
 export const createStudioWorkflow = (name: string, description?: string): Promise<CreateStudioWorkflowResponse> =>
@@ -20,24 +20,22 @@ export type SaveStudioResult =
   | { ok: true; save_mode: 'draft' | 'completed'; lint: LintReport | null }
   | { ok: false; save_mode: 'completed'; lint: LintReport };
 
-export const saveStudioWorkflow = async (name: string, draft: StudioWorkflow, positions: StudioPositions, saveMode: 'draft' | 'completed'): Promise<SaveStudioResult> => {
-  const response = await fetch(`/api/studio/workflows/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ draft, positions, save_mode: saveMode })
-  });
-  const data = await response.json().catch(() => ({})) as { ok?: boolean; save_mode?: string; lint?: LintReport; error?: { message?: string } };
-  if (response.ok) {
-    return { ok: true, save_mode: (data.save_mode as 'draft' | 'completed') || saveMode, lint: data.lint || null };
-  }
-  if (response.status === 422 && data.lint) {
-    return { ok: false, save_mode: 'completed', lint: data.lint };
-  }
-  throw new Error(data.error?.message || `Save failed: ${response.status}`);
-};
+export const saveStudioWorkflow = (name: string, draft: StudioWorkflow, positions: StudioPositions, saveMode: 'draft' | 'completed'): Promise<SaveStudioResult> =>
+  putJson<Record<string, unknown>>(`/api/studio/workflows/${encodeURIComponent(name)}`, { draft, positions, save_mode: saveMode })
+    .then((data) => ({ ok: true as const, save_mode: saveMode, lint: (data.lint as LintReport | undefined) || null }))
+    .catch((error: unknown) => {
+      if (saveMode === 'completed' && error instanceof RequestJsonError && error.statusCode === 422) {
+        const details = error.responseBody.error && typeof error.responseBody.error === 'object'
+          ? (error.responseBody.error as { details?: { diagnostics?: unknown[] } }).details : undefined;
+        const diagnostics = details?.diagnostics || [];
+        return { ok: false as const, save_mode: 'completed' as const,
+          lint: { ok: false, errors: diagnostics, warnings: [], diagnostics } };
+      }
+      throw error;
+    });
 
-export const lintStudioWorkflow = (name: string): Promise<LintReport> =>
-  postJson<LintReport>(`/api/studio/workflows/${encodeURIComponent(name)}/lint`, {}).then((res) => ({ ok: res.ok, errors: res.errors || [], warnings: res.warnings || [], diagnostics: res.diagnostics || [] }));
+export const lintStudioWorkflow = (name: string, draft: StudioWorkflow): Promise<LintReport> =>
+  postJson<LintReport>(`/api/studio/workflows/${encodeURIComponent(name)}/lint`, { draft }).then((res) => ({ ok: res.ok, errors: res.errors || [], warnings: res.warnings || [], diagnostics: res.diagnostics || [] }));
 
 // Workflow package asset read/write (prompt templates, etc.). The asset path
 // is a safe relative path under `.tesseraft/workflows/<name>/` (e.g.

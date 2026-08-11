@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer, parseArgs, routeApi } from '../web/dist-server/server.js';
-import { createConfiguredPiSessionAdapter, createFakePiSessionAdapter, derivePiChatMessages, PiSettingsResolutionError } from '../web/dist-server/lib/piSessionAdapter.js';
+import { createServer, parseArgs } from '../web/dist-server/server.js';
+import {
+  createConfiguredPiSessionAdapter,
+  createFakePiSessionAdapter,
+  derivePiChatMessages,
+  PiSettingsResolutionError
+} from '../web/dist-server/lib/piSessionAdapter.js';
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -19,147 +24,90 @@ const close = (server) => new Promise((resolve, reject) => {
   server.close((error) => error ? reject(error) : resolve());
 });
 
-const removeRun = (runId) => {
-  fs.rmSync(path.join(process.cwd(), '.agent-runs', 'smoke-demo', runId), { recursive: true, force: true });
-};
-
-const removeRunUnder = (runsRoot, runId) => {
-  fs.rmSync(path.join(process.cwd(), runsRoot, runId), { recursive: true, force: true });
-};
-
-const seedConnectionsDoctorFixture = () => {
-  const root = process.cwd();
-  const projectsDir = path.join(root, '.tesseraft', 'projects');
-  const defaultManifest = path.join(projectsDir, 'default.json');
-  const explicitManifest = path.join(projectsDir, 'doctor-explicit.json');
-  const fixtureWs = path.join(root, '.agent-runs', 'manual-connections-doctor-explicit-ws');
-  const workflowDir = path.join(fixtureWs, '.tesseraft', 'workflows', 'manual-doctor');
-  const backups = new Map();
-  for (const p of [defaultManifest, explicitManifest]) {
-    backups.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null);
+const withEnvironment = async (updates, action) => {
+  const previous = Object.fromEntries(Object.keys(updates).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
-  fs.mkdirSync(workflowDir, { recursive: true });
-  fs.mkdirSync(path.join(fixtureWs, 'runs'), { recursive: true });
-  fs.mkdirSync(projectsDir, { recursive: true });
-  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
- :kind :workflow
- :metadata {:name "manual-doctor" :title "Manual Doctor"}
- :defaults {:max-rounds 1 :state-timeout "1m"}
- :policies {:require-timeouts true :require-max-rounds true}
- :initial :start
- :states {:start {:type :deterministic
-                  :handler :noop/succeed
-                  :runtime {:timeout "10s"}
-                  :next :done}
-          :done {:type :terminal :title "Done" :status :success}}}
-`);
-  fs.writeFileSync(defaultManifest, JSON.stringify({
-    project_id: 'default',
-    name: 'Default',
-    workspace_root: '.',
-    runs_root: '.agent-runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows', 'examples'] },
-    settings: {}
-  }, null, 2));
-  fs.writeFileSync(explicitManifest, JSON.stringify({
-    project_id: 'doctor-explicit',
-    name: 'Doctor Explicit',
-    workspace_root: '.agent-runs/manual-connections-doctor-explicit-ws',
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
-    settings: { 'default-repo-root': 'missing-repo-root' },
-    connections: {
-      github: { 'credential-ref': 'env:DOCTOR_EXPLICIT_GITHUB_TOKEN' },
-      jira: { 'base-url': 'https://doctor-explicit.invalid', 'credential-ref': 'env:DOCTOR_EXPLICIT_JIRA_TOKEN' }
+  try { return await action(); }
+  finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
-  }, null, 2));
-  return () => {
-    fs.rmSync(fixtureWs, { recursive: true, force: true });
-    for (const [p, content] of backups.entries()) {
-      if (content === null) fs.rmSync(p, { force: true });
-      else fs.writeFileSync(p, content);
-    }
-  };
+  }
 };
 
-test('SC-013 seeded project fixture restores repository project manifests after cleanup', () => {
-  const root = process.cwd();
-  const projectsDir = path.join(root, '.tesseraft', 'projects');
-  const defaultManifest = path.join(projectsDir, 'default.json');
-  const explicitManifest = path.join(projectsDir, 'doctor-explicit.json');
-  const defaultBefore = fs.existsSync(defaultManifest) ? fs.readFileSync(defaultManifest, 'utf8') : null;
-  const explicitBefore = fs.existsSync(explicitManifest) ? fs.readFileSync(explicitManifest, 'utf8') : null;
-
-  const cleanupFixture = seedConnectionsDoctorFixture();
-  assert.equal(fs.existsSync(defaultManifest), true, 'SC-013 fixture should create the default project manifest during the test');
-  assert.equal(fs.existsSync(explicitManifest), true, 'SC-013 fixture should create the explicit project manifest during the test');
-  cleanupFixture();
-
-  if (defaultBefore === null) assert.equal(fs.existsSync(defaultManifest), false, 'SC-013 cleanup should remove default manifest created only for the fixture');
-  else assert.equal(fs.readFileSync(defaultManifest, 'utf8'), defaultBefore, 'SC-013 cleanup should restore pre-existing default manifest bytes');
-  if (explicitBefore === null) assert.equal(fs.existsSync(explicitManifest), false, 'SC-013 cleanup should remove explicit manifest created only for the fixture');
-  else assert.equal(fs.readFileSync(explicitManifest, 'utf8'), explicitBefore, 'SC-013 cleanup should restore pre-existing explicit manifest bytes');
-});
-
-const waitForRunStatus = async (base, runId, status, attempts = 50) => {
-  for (let i = 0; i < attempts; i += 1) {
-    const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    if (body.run.status === status) return body.run;
+const waitForRunStatus = async (base, projectId, runId, expected, attempts = 100) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(`${base}/api/projects/${projectId}/runs/${runId}`);
+    if (response.status === 200) {
+      const body = await response.json();
+      if (body.run?.status === expected) return body.run;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Run ${runId} did not reach status ${status}`);
+  throw new Error(`Run ${runId} did not reach ${expected}`);
 };
 
-const readStreamUntil = async (stream, pattern, attempts = 5) => {
-  const reader = stream.getReader();
-  let text = '';
-  try {
-    for (let i = 0; i < attempts && !pattern.test(text); i += 1) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      text += new TextDecoder().decode(chunk.value);
-    }
-  } finally {
-    await reader.cancel();
-  }
-  return text;
+const writeDescriptor = (root, projectId, workflowRoots = ['.tesseraft/workflows']) => {
+  fs.mkdirSync(path.join(root, '.tesseraft'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.tesseraft', 'project.json'), JSON.stringify({
+    version: 2,
+    project_id: projectId,
+    name: 'Web API Project',
+    runs_root: 'runs',
+    discovery: { workflow_roots: workflowRoots }
+  }, null, 2));
 };
 
-test('parseArgs accepts port zero for tests', () => {
-  assert.deepEqual(parseArgs(['--port', '0']), { host: '127.0.0.1', port: 0 });
+const writeSmokeWorkflow = (root) => {
+  const workflowDir = path.join(root, '.tesseraft', 'workflows', 'web-smoke');
+  fs.mkdirSync(workflowDir, { recursive: true });
+  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), [
+    '{:api-version "tesseraft.workflow/v1" :kind :workflow',
+    ' :metadata {:name "web-smoke" :title "Web smoke"}',
+    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
+    ' :policies {:require-timeouts true :require-max-rounds true}',
+    ' :initial :start',
+    ' :states {:start {:type :deterministic :handler :noop/succeed :runtime {:timeout "10s"} :next :done}',
+    '          :done {:type :terminal :status :success}}}'
+  ].join('\n'));
+};
+
+test('parseArgs validates bind options and requires an explicit exposure acknowledgement', () => {
+  assert.deepEqual(parseArgs(['--port', '0']), {
+    host: '127.0.0.1',
+    port: 0,
+    acknowledgeRemoteExposure: false
+  });
+  assert.deepEqual(parseArgs(['--host', '0.0.0.0', '--acknowledge-remote-exposure']), {
+    host: '0.0.0.0',
+    port: 7341,
+    acknowledgeRemoteExposure: true
+  });
+  assert.throws(() => parseArgs(['--port', '70000']), /Invalid --port/);
+  assert.throws(() => parseArgs(['--unknown']), /Unknown option/);
 });
 
-test('built web wrapper starts and serves HTTP', async () => {
+test('built web wrapper starts and serves the React shell', async () => {
   const child = spawn(process.execPath, ['web/server.js', '--host', '127.0.0.1', '--port', '0'], {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-
   try {
     const url = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`web wrapper did not start: ${stderr}`)), 5000);
-      child.once('error', (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-      child.once('exit', (code) => {
-        clearTimeout(timeout);
-        reject(new Error(`web wrapper exited with ${code}: ${stderr}`));
-      });
+      const timer = setTimeout(() => reject(new Error(`web wrapper did not start: ${stderr}`)), 10000);
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`web wrapper exited with ${code}: ${stderr}`)); });
       child.stdout.on('data', (chunk) => {
-        const text = String(chunk);
-        const match = text.match(/http:\/\/127\.0\.0\.1:(\d+)/);
-        if (match) {
-          clearTimeout(timeout);
-          resolve(`http://127.0.0.1:${match[1]}`);
-        }
+        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
+        if (match) { clearTimeout(timer); resolve(`http://127.0.0.1:${match[1]}`); }
       });
     });
-
     const response = await fetch(url);
     assert.equal(response.status, 200);
     assert.match(await response.text(), /Tesseraft Local Web UI/);
@@ -168,149 +116,8 @@ test('built web wrapper starts and serves HTTP', async () => {
   }
 });
 
-test('server subprocesses resolve default workspace under TESSERAFT_WORKSPACE_ROOT', async () => {
-  fs.mkdirSync(path.join(process.cwd(), '.agent-runs'), { recursive: true });
-  const workspace = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'server-workspace-root-'));
-  const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'server-workspace-home-'));
-  const workflowDir = path.join(workspace, '.tesseraft', 'workflows', 'server-isolated');
-  fs.mkdirSync(workflowDir, { recursive: true });
-  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
- :kind :workflow
- :metadata {:name "server-isolated" :title "Server Isolated"}
- :initial :done
- :states {:done {:type :terminal}}}
-`);
-
-  const child = spawn(process.execPath, ['web/dist-server/server.js', '--host', '127.0.0.1', '--port', '0'], {
-    cwd: process.cwd(),
-    env: { ...process.env, TESSERAFT_WORKSPACE_ROOT: workspace, TESSERAFT_HOME: home },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  let stderr = '';
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  try {
-    const url = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`isolated server did not start: ${stderr}`)), 10000);
-      child.once('error', (error) => { clearTimeout(timeout); reject(error); });
-      child.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`isolated server exited with ${code}: ${stderr}`)); });
-      child.stdout.on('data', (chunk) => {
-        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
-        if (match) { clearTimeout(timeout); resolve(`http://127.0.0.1:${match[1]}`); }
-      });
-    });
-
-    const response = await fetch(`${url}/api/workflows`);
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    const isolated = body.workflows.find((workflow) => workflow.name === 'server-isolated');
-    assert.equal(isolated.source, 'project');
-    assert.equal(isolated.path, path.join('.tesseraft', 'workflows', 'server-isolated', 'workflow.edn'));
-  } finally {
-    child.kill('SIGTERM');
-    fs.rmSync(workspace, { recursive: true, force: true });
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('routeApi maps supported API routes to control-plane commands', () => {
-  assert.deepEqual(routeApi('/api/workflows'), ['workflows']);
-  assert.deepEqual(routeApi('/api/workflows/smoke-demo/graph'), ['graph', 'smoke-demo']);
-  assert.deepEqual(routeApi('/api/runs/smoke-test/events'), ['events', 'smoke-test']);
-  assert.deepEqual(routeApi('/api/runs/smoke-test/artifacts'), ['artifacts', 'smoke-test']);
-  assert.deepEqual(routeApi('/api/runs/smoke-test/artifact', new URLSearchParams('path=logs%2Fstart.log')), ['artifact', 'smoke-test', 'logs/start.log']);
-  assert.deepEqual(routeApi('/api/git-user'), ['git-user']);
-  assert.deepEqual(routeApi('/api/settings'), ['settings']);
-  assert.deepEqual(routeApi('/api/projects'), ['projects']);
-  assert.deepEqual(routeApi('/api/projects/default'), ['project', 'default']);
-  assert.deepEqual(routeApi('/api/projects/acme/doctor'), ['project-doctor', 'acme']);
-  assert.deepEqual(routeApi('/api/projects/acme/connections'), ['project-connections', 'acme']);
-  assert.deepEqual(routeApi('/api/unknown'), { notFound: true });
-});
-
-test('control-plane discovers project and global Tesseraft workflows', () => {
-  fs.mkdirSync(path.join(process.cwd(), '.agent-runs'), { recursive: true });
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-project-'));
-  const home = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'workflow-discovery-home-'));
-  const workflowEdn = (name, title) => [
-    '{:api-version "tesseraft.workflow/v1"',
-    ' :kind :workflow',
-    ` :metadata {:name "${name}" :title "${title}"}`,
-    ' :initial :done',
-    ' :states {:done {:type :terminal}}}'
-  ].join('\n');
-
-  try {
-    fs.mkdirSync(path.join(root, '.tesseraft', 'workflows', 'shared'), { recursive: true });
-    fs.mkdirSync(path.join(home, 'workflows', 'shared'), { recursive: true });
-    fs.mkdirSync(path.join(home, 'workflows', 'global-only'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.tesseraft', 'workflows', 'shared', 'workflow.edn'), workflowEdn('shared-demo', 'Project Shared'));
-    fs.writeFileSync(path.join(home, 'workflows', 'shared', 'workflow.edn'), workflowEdn('shared-demo', 'Global Shared'));
-    fs.writeFileSync(path.join(home, 'workflows', 'global-only', 'workflow.edn'), workflowEdn('global-demo', 'Global Only'));
-
-    const workflows = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, 'workflows'], { encoding: 'utf8' }));
-    const shared = workflows.workflows.find((workflow) => workflow.name === 'shared-demo');
-    const globalOnly = workflows.workflows.find((workflow) => workflow.name === 'global-demo');
-    assert.equal(shared.source, 'project');
-    assert.equal(shared.path, path.join('.tesseraft', 'workflows', 'shared', 'workflow.edn'));
-    assert.equal(globalOnly.source, 'global');
-    assert.equal(globalOnly.path, path.join(home, 'workflows', 'global-only', 'workflow.edn'));
-    assert.equal(workflows.workflows.filter((workflow) => workflow.name === 'shared-demo').length, 1);
-
-    const detail = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, 'workflow', 'shared-demo'], { encoding: 'utf8' }));
-    assert.equal(detail.workflow.source, 'project');
-    assert.equal(detail.workflow.normalized.metadata.title, 'Project Shared');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('web server exposes seeded explicit Connections Doctor project for manual review', async (t) => {
-  const cleanupFixture = seedConnectionsDoctorFixture();
-  t.after(cleanupFixture);
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const projectsResponse = await fetch(`${base}/api/projects`);
-  assert.equal(projectsResponse.status, 200);
-  const projects = await projectsResponse.json();
-  const ids = projects.projects.map((project) => project.project_id).sort();
-  assert.deepEqual(ids, ['default', 'doctor-explicit']);
-
-  const defaultResponse = await fetch(`${base}/api/projects/default/doctor`);
-  assert.equal(defaultResponse.status, 200);
-  const defaultDoctor = await defaultResponse.json();
-  assert.equal(defaultDoctor.project_id, 'default');
-
-  const explicitResponse = await fetch(`${base}/api/projects/doctor-explicit/doctor`);
-  assert.equal(explicitResponse.status, 200);
-  const explicitDoctor = await explicitResponse.json();
-  assert.equal(explicitDoctor.project_id, 'doctor-explicit');
-  assert.equal(explicitDoctor.checks.find((check) => check.id === 'workflow-discovery')?.status, 'ready');
-  assert.equal(explicitDoctor.checks.find((check) => check.id === 'runs-root')?.status, 'ready');
-  assert.equal(explicitDoctor.checks.find((check) => check.id === 'repository-root')?.status, 'invalid');
-  assert.notDeepEqual(defaultDoctor, explicitDoctor);
-  assert.doesNotMatch(JSON.stringify(defaultDoctor), /manual-connections-doctor-explicit-ws/);
-  assert.doesNotMatch(JSON.stringify(explicitDoctor), /SECRET_SENTINEL_VALUE|stdout|stderr|ghp_|token-preview/);
-
-  const missingResponse = await fetch(`${base}/api/projects/doctor-missing/doctor`);
-  assert.equal(missingResponse.status, 404);
-});
-
-test('web server serves React index/assets and JSON API routes', async (t) => {
-  removeRun('web-server-test');
-  t.after(() => removeRun('web-server-test'));
-
-  execFileSync('./bin/tesseraft', ['run', 'examples/smoke/workflow.edn', '--run-id', 'web-server-test', '--format', 'json'], {
-    cwd: process.cwd(),
-    stdio: 'pipe'
-  });
-
-  const server = createServer();
+test('server exposes static assets, health, catalogs, browsing, and JSON errors', async (t) => {
+  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
@@ -318,2119 +125,188 @@ test('web server serves React index/assets and JSON API routes', async (t) => {
   const index = await fetch(`${base}/`);
   assert.equal(index.status, 200);
   const indexText = await index.text();
-  assert.match(indexText, /Tesseraft Local Web UI/);
-  assert.match(indexText, /type="module"/);
-
-  const assetMatch = indexText.match(/src="([^\"]+\.js)"/);
-  assert.ok(assetMatch, 'expected built React JavaScript asset');
-  const asset = await fetch(`${base}${assetMatch[1]}`);
+  const assetPath = indexText.match(/src="([^\"]+\.js)"/)?.[1];
+  assert.ok(assetPath, 'the built shell references a JavaScript asset');
+  const asset = await fetch(`${base}${assetPath}`);
   assert.equal(asset.status, 200);
   assert.match(asset.headers.get('content-type') || '', /javascript/);
 
-  const doctorResponse = await fetch(`${base}/api/projects/default/doctor`);
-  assert.equal(doctorResponse.status, 200);
-  const doctor = await doctorResponse.json();
-  assert.equal(doctor.project_id, 'default');
-  assert.equal(doctor.checks.length, 12, 'WT4 appends work-tracker-config and work-tracker-credential checks');
-  assert.deepEqual(Object.keys(doctor.summary).sort(), ['invalid', 'not-configured', 'ready', 'unreachable'].sort());
-  assert.ok(doctor.checks.every((check) => ['ready', 'not-configured', 'unreachable', 'invalid'].includes(check.status)));
-  assert.doesNotMatch(JSON.stringify(doctor), /SECRET_SENTINEL|stdout|stderr|GH_TOKEN_VALUE/);
-  const trackerConfigCheck = doctor.checks.find((check) => check.id === 'work-tracker-config');
-  const trackerCredentialCheck = doctor.checks.find((check) => check.id === 'work-tracker-credential');
-  assert.ok(trackerConfigCheck && trackerCredentialCheck, 'work-tracker doctor checks are present');
-  assert.equal(trackerConfigCheck.mode, 'static');
-  assert.equal(trackerCredentialCheck.mode, 'static');
-  assert.equal(trackerConfigCheck.state, 'absent', 'the default project has no work tracker configured');
-  assert.equal(trackerConfigCheck.status, 'not-configured', 'absent is a non-failure state');
-  assert.ok(doctor.work_tracker, 'doctor report exposes a report-level work_tracker verdict');
-  assert.equal(doctor.work_tracker.state, 'absent');
-  assert.equal(doctor.work_tracker.provider, null);
+  const health = await fetch(`${base}/api/health`).then((response) => response.json());
+  assert.equal(health.status, 'ready');
+  assert.equal(health.checks.static_assets, true);
 
-  const providersResponse = await fetch(`${base}/api/work-tracker-providers`);
-  assert.equal(providersResponse.status, 200);
-  const providers = await providersResponse.json();
-  assert.deepEqual(providers.providers.map((p) => p.provider), ['github-issues', 'jira', 'plane']);
-  assert.ok(providers.providers.every((p) => Array.isArray(p.fields) && p.fields.length > 0));
-  assert.doesNotMatch(JSON.stringify(providers), /credential.?value/i);
+  const capabilities = await fetch(`${base}/api/capabilities`).then((response) => response.json());
+  assert.ok(capabilities.handlers.some((handler) => handler.id === 'noop/succeed'));
+  assert.deepEqual(capabilities.executors.map((executor) => executor.id), ['claude-code', 'pi-cli', 'pi-sdk']);
+  assert.deepEqual(capabilities.work_trackers.map((provider) => provider.provider), ['github-issues', 'jira', 'plane']);
+  assert.doesNotMatch(JSON.stringify(capabilities), /credential.?value|access.?token|password/i);
 
-  const workflowsResponse = await fetch(`${base}/api/workflows`);
-  assert.equal(workflowsResponse.status, 200);
-  const workflows = await workflowsResponse.json();
-  assert.ok(workflows.workflows.some((workflow) => workflow.name === 'smoke-demo'));
+  const providers = await fetch(`${base}/api/work-tracker-providers`).then((response) => response.json());
+  assert.deepEqual(providers.providers.map((provider) => provider.provider), ['github-issues', 'jira', 'plane']);
+  assert.ok(providers.providers.every((provider) => provider.fields.length > 0));
 
-  const graphResponse = await fetch(`${base}/api/workflows/smoke-demo/graph`);
-  assert.equal(graphResponse.status, 200);
-  const graph = await graphResponse.json();
-  assert.equal(graph.workflow_name, 'smoke-demo');
-  assert.ok(graph.nodes.some((node) => node.id === 'start'));
-  assert.ok(graph.edges.some((edge) => edge.from === 'start' && edge.to === 'done'));
+  const browse = await fetch(`${base}/api/browse?path=web`).then((response) => response.json());
+  assert.ok(browse.entries.some((entry) => entry.name === 'src' && entry.is_dir));
+  const escaped = await fetch(`${base}/api/browse?path=${encodeURIComponent('../')}`);
+  assert.equal(escaped.status, 400);
 
-  const runsResponse = await fetch(`${base}/api/runs`);
-  assert.equal(runsResponse.status, 200);
-  const runs = await runsResponse.json();
-  assert.ok(runs.runs.some((run) => run.run_id === 'web-server-test'));
-
-  const runResponse = await fetch(`${base}/api/runs/web-server-test`);
-  assert.equal(runResponse.status, 200);
-  const run = await runResponse.json();
-  assert.equal(run.run.run_id, 'web-server-test');
-  assert.equal(run.run.status, 'done');
-
-  const eventsResponse = await fetch(`${base}/api/runs/web-server-test/events`);
-  assert.equal(eventsResponse.status, 200);
-  const events = await eventsResponse.json();
-  assert.equal(events.run_id, 'web-server-test');
-  assert.ok(events.events.some((event) => event.event === 'run.finished'));
-
-  const streamResponse = await fetch(`${base}/api/runs/web-server-test/stream`);
-  assert.equal(streamResponse.status, 200);
-  assert.match(streamResponse.headers.get('content-type') || '', /text\/event-stream/);
-  const streamText = await streamResponse.text();
-  assert.match(streamText, /event: snapshot/);
-
-  const artifactsResponse = await fetch(`${base}/api/runs/web-server-test/artifacts`);
-  assert.equal(artifactsResponse.status, 200);
-  const artifacts = await artifactsResponse.json();
-  assert.ok(artifacts.artifacts.some((artifact) => artifact.path === 'state.edn'));
-  assert.ok(artifacts.artifacts.some((artifact) => artifact.path === 'events.jsonl'));
-
-  const artifactResponse = await fetch(`${base}/api/runs/web-server-test/artifact?path=${encodeURIComponent('events.jsonl')}`);
-  assert.equal(artifactResponse.status, 200);
-  const artifact = await artifactResponse.json();
-  assert.equal(artifact.artifact.path, 'events.jsonl');
-  assert.equal(artifact.previewable, true);
-  assert.match(artifact.content, /run.finished/);
+  const malformed = await fetch(`${base}/api/workflows/%E0%A4%A/graph`);
+  assert.equal(malformed.status, 400);
+  assert.equal((await malformed.json()).error.code, 'bad_request');
+  const missing = await fetch(`${base}/api/no-such-route`);
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.code, 'not_found');
 });
 
-test('configured Pi session adapter uses real SDK by default and fake only by explicit opt-in', async () => {
-  const adapterSource = fs.readFileSync('web/dist-server/lib/piSessionAdapter.js', 'utf8');
-  assert.match(adapterSource, /TESSERAFT_PI_ADAPTER === 'fake' \? createFakePiSessionAdapter\(\) : createRealPiSessionAdapter\(\)/);
-  assert.doesNotMatch(adapterSource, /typeof sessionManagerFactory !== "object"|typeof sessionManagerFactory !== 'object'/);
-  assert.match(adapterSource, /\.inMemory !== 'function'|\.inMemory !== "function"/);
+test('fake Pi adapter and HTTP routes preserve semantic chat messages', async (t) => {
+  const configured = createConfiguredPiSessionAdapter({ TESSERAFT_PI_ADAPTER: 'fake' });
+  await configured.createSession({ id: 'configured-fake' });
+  const configuredPrompt = await configured.sendPrompt('configured-fake', 'hello');
+  assert.deepEqual(configuredPrompt.messages.map((message) => message.role), ['system', 'user', 'assistant']);
 
-  const fakeAdapter = createConfiguredPiSessionAdapter({ TESSERAFT_PI_ADAPTER: 'fake' });
-  await fakeAdapter.createSession({ id: 'configured-fake' });
-  const sent = await fakeAdapter.sendPrompt('configured-fake', 'hello pi');
-  assert.ok(sent);
-  assert.match(sent.events[1].text, /Fake Pi adapter response/);
-  assert.deepEqual(sent.messages.map((message) => message.role), ['system', 'user', 'assistant']);
-});
-
-test('fake Pi session adapter creates sessions, prompts, and filtered events', async () => {
-  const adapter = createFakePiSessionAdapter();
-  const created = await adapter.createSession({ id: 'unit-pi', title: 'Unit Pi' });
-  assert.equal(created.id, 'unit-pi');
-  assert.equal(created.events[0].event, 'session.created');
-
-  const listed = await adapter.listSessions();
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].event_count, 1);
-
-  const sent = await adapter.sendPrompt('unit-pi', 'hello pi');
-  assert.ok(sent);
-  assert.equal(sent.events.length, 2);
-  assert.equal(sent.events[0].role, 'user');
-  assert.equal(sent.events[1].role, 'assistant');
-  assert.match(sent.events[1].text, /Fake Pi adapter response/);
-  assert.deepEqual(sent.messages.map((message) => message.role), ['system', 'user', 'assistant']);
-  assert.deepEqual((await adapter.listMessages('unit-pi', 1))?.map((message) => message.role), ['user', 'assistant']);
-
-  const filtered = await adapter.listEvents('unit-pi', 1);
-  assert.equal(filtered.length, 2);
-  assert.deepEqual(filtered.map((event) => event.sequence), [2, 3]);
-  assert.equal(await adapter.getSession('missing'), null);
-});
-
-test('Pi chat message derivation coalesces assistant deltas', () => {
   const messages = derivePiChatMessages([
-    { id: 'e1', session_id: 's1', sequence: 1, created_at: '2026-01-01T00:00:00.000Z', event: 'prompt.sent', role: 'user', text: 'Hello' },
-    { id: 'e2', session_id: 's1', sequence: 2, created_at: '2026-01-01T00:00:01.000Z', event: 'sdk.event', role: 'assistant', text: 'Hel' },
-    { id: 'e3', session_id: 's1', sequence: 3, created_at: '2026-01-01T00:00:02.000Z', event: 'sdk.event', role: 'assistant', text: 'lo' }
+    { id: 'e1', session_id: 's', sequence: 1, created_at: '2026-01-01T00:00:00Z', event: 'prompt.sent', role: 'user', text: 'Hello' },
+    { id: 'e2', session_id: 's', sequence: 2, created_at: '2026-01-01T00:00:01Z', event: 'message_update', text: 'Hel', data: { sdk_event: { assistantMessageEvent: { delta: 'Hel' } } } },
+    { id: 'e3', session_id: 's', sequence: 3, created_at: '2026-01-01T00:00:02Z', event: 'message_update', text: 'lo', data: { sdk_event: { assistantMessageEvent: { delta: 'lo' } } } }
   ]);
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].role, 'assistant');
-  assert.equal(messages[1].text, 'Hello');
-});
+  assert.deepEqual(messages.map((message) => [message.role, message.text]), [['user', 'Hello'], ['assistant', 'Hello']]);
 
-test('Pi chat message derivation includes real SDK assistant text deltas without explicit role', () => {
-  const messages = derivePiChatMessages([
-    { id: 'e1', session_id: 's1', sequence: 1, created_at: '2026-01-01T00:00:00.000Z', event: 'prompt.sent', role: 'user', text: 'Hello' },
-    { id: 'e2', session_id: 's1', sequence: 2, created_at: '2026-01-01T00:00:01.000Z', event: 'message_update', text: 'Hel', data: { sdk_event: { type: 'message_update', assistantMessageEvent: { delta: 'Hel' } } } },
-    { id: 'e3', session_id: 's1', sequence: 3, created_at: '2026-01-01T00:00:02.000Z', event: 'message_update', text: 'lo', data: { sdk_event: { type: 'message_update', assistantMessageEvent: { delta: 'lo' } } } }
-  ]);
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].role, 'assistant');
-  assert.equal(messages[1].text, 'Hello');
-});
-
-test('web server exposes fake Pi session routes as local JSON APIs', async (t) => {
   const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
   const port = await listen(server);
   t.after(() => close(server));
   const base = `http://127.0.0.1:${port}`;
-
-  const emptyList = await fetch(`${base}/api/pi-sessions`);
-  assert.equal(emptyList.status, 200);
-  assert.deepEqual(await emptyList.json(), { sessions: [] });
-
-  const createdResponse = await fetch(`${base}/api/pi-sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id: 'api-pi', title: 'API Pi' })
+  const created = await fetch(`${base}/api/pi-sessions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'api-pi', title: 'API Pi' })
   });
-  assert.equal(createdResponse.status, 201);
-  const created = await createdResponse.json();
-  assert.equal(created.session.id, 'api-pi');
-  assert.equal(created.session.title, 'API Pi');
-
-  const listResponse = await fetch(`${base}/api/pi-sessions`);
-  assert.equal(listResponse.status, 200);
-  const listed = await listResponse.json();
-  assert.equal(listed.sessions.length, 1);
-
-  const detailResponse = await fetch(`${base}/api/pi-sessions/api-pi`);
-  assert.equal(detailResponse.status, 200);
-  const detail = await detailResponse.json();
-  assert.equal(detail.session.events[0].event, 'session.created');
-  assert.equal(detail.session.messages[0].role, 'system');
-
-  const badPrompt = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt: '' })
+  assert.equal(created.status, 201);
+  const prompted = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Summarize' })
   });
-  assert.equal(badPrompt.status, 400);
-  assert.equal((await badPrompt.json()).error.code, 'bad_request');
-
-  const promptResponse = await fetch(`${base}/api/pi-sessions/api-pi/prompts`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt: 'Summarize events' })
-  });
-  assert.equal(promptResponse.status, 200);
-  const prompted = await promptResponse.json();
-  assert.equal(prompted.events.length, 2);
-  assert.deepEqual(prompted.messages.map((message) => message.role), ['system', 'user', 'assistant']);
-
-  const streamResponse = await fetch(`${base}/api/pi-sessions/api-pi/stream`);
-  assert.equal(streamResponse.status, 200);
-  assert.match(streamResponse.headers.get('content-type') || '', /text\/event-stream/);
-  const streamText = await readStreamUntil(streamResponse.body, /event: snapshot/);
-  assert.match(streamText, /event: snapshot/);
-  const snapshotJson = streamText.match(/data: (.*)/)?.[1];
-  assert.ok(snapshotJson, 'expected Pi session stream snapshot data');
-  const snapshot = JSON.parse(snapshotJson);
-  assert.deepEqual(snapshot.messages.map((message) => message.role), ['system', 'user', 'assistant']);
-  assert.equal(snapshot.messages.filter((message) => message.role === 'assistant').length, 1);
-
-  const eventsResponse = await fetch(`${base}/api/pi-sessions/api-pi/events?after=1`);
-  assert.equal(eventsResponse.status, 200);
-  const events = await eventsResponse.json();
-  assert.equal(events.session_id, 'api-pi');
+  assert.equal(prompted.status, 200);
+  assert.deepEqual((await prompted.json()).messages.map((message) => message.role), ['system', 'user', 'assistant']);
+  const events = await fetch(`${base}/api/pi-sessions/api-pi/events?after=1`).then((response) => response.json());
   assert.deepEqual(events.events.map((event) => event.sequence), [2, 3]);
-
-  const missingResponse = await fetch(`${base}/api/pi-sessions/missing/events`);
-  assert.equal(missingResponse.status, 404);
-  assert.equal((await missingResponse.json()).error.code, 'not_found');
 });
 
-test('Pi session stream serializes slow snapshots instead of overlapping polls', async (t) => {
-  const delegate = createFakePiSessionAdapter();
-  await delegate.createSession({ id: 'slow-stream', title: 'Slow stream' });
-  let active = 0;
-  let maximumActive = 0;
-  let calls = 0;
+test('Pi settings failures are stable actionable JSON errors', async (t) => {
   const adapter = {
-    ...delegate,
-    listMessages: async (sessionId) => {
-      active += 1;
-      calls += 1;
-      maximumActive = Math.max(maximumActive, active);
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 1600));
-        return await delegate.listMessages(sessionId);
-      } finally {
-        active -= 1;
-      }
-    }
+    createSession: async () => { throw new PiSettingsResolutionError('acme', 'missing', 'no catalog entry'); },
+    listSessions: async () => [], getSession: async () => null, sendPrompt: async () => null,
+    listMessages: async () => [], listEvents: async () => [], streamEvents: async () => {}
   };
   const server = createServer({ piSessionAdapter: adapter });
   const port = await listen(server);
   t.after(() => close(server));
-
-  const response = await fetch(`http://127.0.0.1:${port}/api/pi-sessions/slow-stream/stream`);
-  assert.equal(response.status, 200);
-  const reader = response.body.getReader();
-  await new Promise((resolve) => setTimeout(resolve, 3800));
-  await reader.cancel();
-
-  assert.ok(calls >= 2, `expected multiple snapshots, received ${calls}`);
-  assert.equal(maximumActive, 1, 'slow snapshot polls overlapped');
-});
-
-test('web server supports local smoke start-and-run, step, and resume mutations', async (t) => {
-  const runId = `web-mutation-${Date.now()}`;
-  removeRun(runId);
-  t.after(() => removeRun(runId));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const startResponse = await fetch(`${base}/api/runs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_name: 'smoke-demo', run_id: runId, inputs: { ticket: 'SMOKE-1' } })
+  const response = await fetch(`http://127.0.0.1:${port}/api/pi-sessions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}'
   });
-  assert.equal(startResponse.status, 202);
-  const started = await startResponse.json();
-  assert.equal(started.operation, 'start');
-  assert.equal(started.status, 'running');
-  assert.equal(started.code, 'background_started');
-  assert.equal(started.run_id, runId);
-
-  const completedRun = await waitForRunStatus(base, runId, 'done');
-  assert.equal(completedRun.state, 'done');
-
-  const duplicateResponse = await fetch(`${base}/api/runs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_name: 'smoke-demo', run_id: runId, inputs: {} })
-  });
-  assert.equal(duplicateResponse.status, 409);
-
-  const stepResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/step`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({})
-  });
-  assert.equal(stepResponse.status, 200);
-  const stepped = await stepResponse.json();
-  assert.equal(stepped.operation, 'step');
-  assert.equal(stepped.status, 'ok');
-  assert.equal(stepped.latest_runtime.run.status, 'done');
-  assert.equal(stepped.latest_runtime.run.state, 'done');
-
-  const resumeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/resume`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ max_steps: 1 })
-  });
-  assert.equal(resumeResponse.status, 202);
-  const resumed = await resumeResponse.json();
-  assert.equal(resumed.operation, 'resume');
-  assert.equal(resumed.status, 'running');
-  assert.equal(resumed.code, 'background_started');
-
-  const runResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
-  assert.equal(runResponse.status, 200);
-  const run = await runResponse.json();
-  assert.equal(run.run.run_id, runId);
-});
-
-test('completed runtime cleans up detached processes carrying its run owner marker', (t) => {
-  if (process.platform !== 'linux') return t.skip('/proc ownership cleanup is Linux-specific');
-  const runId = `owned-cleanup-${Date.now()}`;
-  const workflowName = 'owned-cleanup';
-  const fixtureDir = path.join(process.cwd(), '.agent-runs', 'test-fixtures', runId);
-  const workflowFile = path.join(fixtureDir, 'workflow.edn');
-  const helperFile = path.join(fixtureDir, 'launch-detached.sh');
-  const runDir = path.join(process.cwd(), '.agent-runs', workflowName, runId);
-  fs.mkdirSync(fixtureDir, { recursive: true });
-  fs.writeFileSync(helperFile, [
-    '#!/bin/sh',
-    'setsid sleep 60 </dev/null >/dev/null 2>&1 &',
-    'echo $! > "$AGENT_RUN_DIR/owned.pid"',
-    'printf \'{"status":"ok","ok":true}\\n\''
-  ].join('\n'));
-  fs.chmodSync(helperFile, 0o755);
-  fs.writeFileSync(workflowFile, [
-    `{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "${workflowName}"}`,
-    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
-    ' :policies {:require-timeouts true :require-max-rounds true}',
-    ' :initial :launch',
-    ` :states {:launch {:type :process :command [${JSON.stringify(helperFile)}] :runtime {:timeout "30s"} :next :done}`,
-    '          :done {:type :terminal :status :success}}}'
-  ].join('\n'));
-  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
-  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
-
-  execFileSync('./bin/tesseraft', ['run', workflowFile, '--run-id', runId, '--format', 'json'], {
-    cwd: process.cwd(),
-    stdio: 'pipe'
-  });
-
-  const ownedPid = Number(fs.readFileSync(path.join(runDir, 'owned.pid'), 'utf8').trim());
-  assert.ok(Number.isInteger(ownedPid) && ownedPid > 0);
-  assert.throws(() => process.kill(ownedPid, 0), /ESRCH/, 'detached run-owned process survived normal completion');
-  assert.equal(fs.existsSync(path.join(runDir, 'runtime-process.json')), false);
-});
-
-test('web server cancels a detached runtime and persists terminal cancellation', async (t) => {
-  const runId = `web-cancel-${Date.now()}`;
-  const workflowName = 'cancel-smoke';
-  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', workflowName);
-  const runDir = path.join(process.cwd(), '.agent-runs', workflowName, runId);
-  fs.rmSync(workflowDir, { recursive: true, force: true });
-  fs.rmSync(runDir, { recursive: true, force: true });
-  fs.mkdirSync(workflowDir, { recursive: true });
-  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), [
-    `{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "${workflowName}"}`,
-    ' :defaults {:max-rounds 1 :state-timeout "2m"}',
-    ' :policies {:require-timeouts true :require-max-rounds true}',
-    ' :initial :wait',
-    ' :states {:wait {:type :timer :duration "60s" :runtime {:timeout "90s"} :next :done}',
-    '          :done {:type :terminal :status :success}}}'
-  ].join('\n'));
-  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
-  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const startResponse = await fetch(`${base}/api/runs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_name: workflowName, run_id: runId, inputs: {} })
-  });
-  assert.equal(startResponse.status, 202);
-
-  const processFile = path.join(runDir, 'runtime-process.json');
-  for (let i = 0; i < 50 && !fs.existsSync(processFile); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.ok(fs.existsSync(processFile), 'detached resume did not persist its process metadata');
-  const runtimePid = JSON.parse(fs.readFileSync(processFile, 'utf8')).pid;
-
-  const cancelResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/cancel`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({})
-  });
-  assert.equal(cancelResponse.status, 200);
-  const cancelled = await cancelResponse.json();
-  assert.equal(cancelled.operation, 'cancel');
-  assert.equal(cancelled.status, 'ok');
-  assert.equal(cancelled.latest_runtime.run.status, 'cancelled');
-  assert.equal(cancelled.run_detail.run.liveness, 'cancelled');
-  assert.ok(!fs.existsSync(processFile), 'cancellation left stale process metadata');
-  assert.throws(() => process.kill(runtimePid, 0), /ESRCH/);
-  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
-  assert.match(events, /"event":"run.cancelled"/);
-  assert.match(events, /"owned_processes_enumerated":true/);
-});
-
-test('web server exposes approval pause, decide, and resume via the control plane', async (t) => {
-  const runId = `web-approval-${Date.now()}`;
-  const approvalRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
-  fs.rmSync(approvalRunDir, { recursive: true, force: true });
-  const workflowRunDir = path.join(process.cwd(), '.agent-runs', 'approval-smoke', runId);
-  t.after(() => fs.rmSync(approvalRunDir, { recursive: true, force: true }));
-
-  // A throwaway approval workflow written to the project-local discovery
-  // root (.tesseraft/workflows, gitignored) so the control-plane resolves it
-  // by name without editing any committed workflow definition file.
-  const workflowDir = path.join(process.cwd(), '.tesseraft', 'workflows', 'approval-smoke');
-  fs.rmSync(workflowDir, { recursive: true, force: true });
-  fs.mkdirSync(workflowDir, { recursive: true });
-  t.after(() => fs.rmSync(workflowDir, { recursive: true, force: true }));
-  const workflowFile = path.join(workflowDir, 'workflow.edn');
-  fs.writeFileSync(workflowFile, [
-    '{:api-version "tesseraft.workflow/v1" :kind :workflow :metadata {:name "approval-smoke"}',
-    ' :defaults {:max-rounds 1 :state-timeout "1m"}',
-    ' :policies {:require-timeouts true :require-max-rounds true}',
-    ' :initial :start',
-    ' :states {:start {:type :timer :duration "1ms" :next :gate}',
-    '          :gate {:type :approval :title "Gate" :message "Approve." :timeout "1m"',
-    '                 :artifact {:path "design/design.md" :kind "design-doc"}',
-    '                 :transitions [{:when {:decision "approve"} :next :done}',
-    '                                {:when {:decision "changes-requested"} :next :revise}]}',
-    '          :revise {:type :timer :duration "1ms" :next :failed}',
-    '          :done {:type :terminal :status :success}',
-    '          :failed {:type :terminal :status :failure}}}'
-  ].join('\n'));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  // Start the workflow; the background resume loops until it parks at the
-  // :gate approval node (blocked stops run-until-done!). Poll for blocked.
-  const startResponse = await fetch(`${base}/api/runs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_name: 'approval-smoke', run_id: runId, inputs: {} })
-  });
-  assert.equal(startResponse.status, 202);
-  const parked = await waitForRunStatus(base, runId, 'blocked');
-  assert.equal(parked.state, 'gate');
-
-  // Approvals list exposes the pending request.
-  const approvalsResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals`);
-  assert.equal(approvalsResponse.status, 200);
-  const approvals = await approvalsResponse.json();
-  assert.ok(approvals.approvals.length >= 1);
-  const approvalId = approvals.approvals[0].approval_id;
-
-  // P0.2 presentation contract: the durable request record carries a
-  // materialized presentation (question/artifacts/decisions/routing) so the
-  // UI renders the decision screen from the record instead of hard-coded
-  // labels. Synthesized here because the node authored no `:presentation`.
-  const pending = approvals.approvals[0];
-  assert.equal(pending.routing?.kind, 'self');
-  assert.ok(Array.isArray(pending.artifacts) && pending.artifacts.length >= 1);
-  assert.equal(pending.artifacts[0].path, 'design/design.md');
-  assert.ok(Array.isArray(pending.decisions) && pending.decisions.length === 2);
-  const approveDecision = pending.decisions.find((d) => d.decision === 'approve');
-  const changesDecision = pending.decisions.find((d) => d.decision === 'changes-requested');
-  assert.ok(approveDecision, 'expected an approve decision option');
-  assert.ok(changesDecision, 'expected a changes-requested decision option');
-  assert.equal(approveDecision.next, 'done');
-  assert.equal(changesDecision.next, 'revise');
-
-  // Add a line-anchored comment on the referenced artifact.
-  const commentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: 'design/design.md', body: 'Tighten scope?', anchor: { start_line: 3, end_line: 5 } })
-  });
-  assert.equal(commentResponse.status, 200);
-  const comment = await commentResponse.json();
-  assert.equal(comment.comment.path, 'design/design.md');
-  assert.deepEqual(comment.comment.anchor, { start_line: 3, end_line: 5 });
-
-  // List comments.
-  const listResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
-  assert.equal(listResponse.status, 200);
-  const listed = await listResponse.json();
-  assert.equal(listed.comments.length, 1);
-  assert.match(listed.comments[0].body, /Tighten scope/);
-
-  // Regression R2-1: appending a SECOND comment on the same artifact must
-  // preserve the first comment and return both, in order. Previously the
-  // append used `(when (fs/exists? cf) (read-json cf) [])`, which dropped the
-  // [] fallback so `existing` was nil on a missing file — masked for the
-  // first comment by `(vec nil)`, but never actually validated for append.
-  const secondCommentResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: 'design/design.md', body: 'Second nit: timeout too short?' })
-  });
-  assert.equal(secondCommentResponse.status, 200);
-  const secondComment = await secondCommentResponse.json();
-  assert.equal(secondComment.comment.path, 'design/design.md');
-
-  const listAfterSecond = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments?path=${encodeURIComponent('design/design.md')}`);
-  assert.equal(listAfterSecond.status, 200);
-  const listedAfterSecond = await listAfterSecond.json();
-  assert.equal(listedAfterSecond.comments.length, 2);
-  assert.match(listedAfterSecond.comments[0].body, /Tighten scope/);
-  assert.match(listedAfterSecond.comments[1].body, /Second nit/);
-
-  // Unsafe path is rejected.
-  const unsafeResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/comments`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: '../../etc/passwd', body: 'x' })
-  });
-  assert.ok(unsafeResponse.status >= 400);
-
-  // Decide approve -> run advances to :done.
-  const decideResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ decision: 'approve', summary: 'LGTM' })
-  });
-  assert.equal(decideResponse.status, 200);
-  const decided = await decideResponse.json();
-  assert.equal(decided.operation, 'decide');
-  assert.equal(decided.decision, 'approve');
-
-  const doneRun = await waitForRunStatus(base, runId, 'done');
-  assert.equal(doneRun.state, 'done');
-
-  // Approval summaries include the durable decision after decide so UI refresh
-  // filters out completed approvals instead of re-rendering a stale panel.
-  const approvalsAfterDecisionResponse = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals`);
-  assert.equal(approvalsAfterDecisionResponse.status, 200);
-  const approvalsAfterDecision = await approvalsAfterDecisionResponse.json();
-  const decidedSummary = approvalsAfterDecision.approvals.find((approval) => approval.approval_id === approvalId);
-  assert.equal(decidedSummary.decision.decision, 'approve');
-  assert.equal(decidedSummary.decision.summary, 'LGTM');
-
-  // A second decide on the same approval is rejected (idempotent-ish).
-  const replay = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ decision: 'approve' })
-  });
-  assert.ok(replay.status >= 400);
-});
-
-test('web server reports mutation validation errors as JSON', async (t) => {
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const badJson = await fetch(`${base}/api/runs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: '{not-json'
-  });
-  assert.equal(badJson.status, 400);
-  const badJsonBody = await badJson.json();
-  assert.equal(badJsonBody.error.code, 'bad_request');
-
-  const badResume = await fetch(`${base}/api/runs/no-such-run/resume`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ max_steps: 0 })
-  });
-  assert.ok([400, 404].includes(badResume.status));
-});
-
-test('control-plane delete-run removes done runs and refuses executing runs', async (t) => {
-  const runsRoot = path.join('.agent-runs', `delete-fixtures-${Date.now()}`);
-  const doneRunDir = path.join(process.cwd(), runsRoot, 'wf', 'done-run');
-  const executingRunDir = path.join(process.cwd(), runsRoot, 'wf', 'executing-run');
-  t.after(() => fs.rmSync(path.join(process.cwd(), runsRoot), { recursive: true, force: true }));
-
-  fs.mkdirSync(doneRunDir, { recursive: true });
-  fs.writeFileSync(path.join(doneRunDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "done-run" :status "done" :state :done}}');
-  fs.writeFileSync(path.join(doneRunDir, 'events.jsonl'), '');
-
-  fs.mkdirSync(executingRunDir, { recursive: true });
-  fs.writeFileSync(path.join(executingRunDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "executing-run" :status "running" :state :work :updated-at "2999-01-01T00:00:00Z"}}');
-  fs.writeFileSync(path.join(executingRunDir, 'events.jsonl'), JSON.stringify({ event: 'node.started', state: 'work', attempt: 1, at: '2999-01-01T00:00:00Z' }));
-
-  const doneDelete = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'done-run'], { encoding: 'utf8' }));
-  assert.equal(doneDelete.status, 200);
-  assert.equal(doneDelete.deleted, true);
-  assert.equal(doneDelete.run_id, 'done-run');
-  assert.equal(fs.existsSync(doneRunDir), false);
-
-  let conflictStatus = 0;
-  let conflictBody;
-  try {
-    execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'executing-run'], { encoding: 'utf8', stdio: 'pipe' });
-  } catch (error) {
-    conflictStatus = error.status ?? null;
-    conflictBody = JSON.parse(error.stdout);
-  }
-  assert.ok(conflictStatus === 1, `expected nonzero exit for executing delete, got ${conflictStatus}`);
-  assert.equal(conflictBody.error.code, 'conflict');
-  assert.equal(conflictBody.error.details.liveness, 'executing');
-  assert.equal(fs.existsSync(executingRunDir), true);
-
-  let missingStatus = 0;
-  let missingBody;
-  try {
-    execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', process.cwd(), '--runs-root', runsRoot, 'delete-run', 'no-such-run'], { encoding: 'utf8', stdio: 'pipe' });
-  } catch (error) {
-    missingStatus = error.status ?? null;
-    missingBody = JSON.parse(error.stdout);
-  }
-  assert.ok(missingStatus === 1, `expected nonzero exit for missing delete, got ${missingStatus}`);
-  assert.equal(missingBody.status, 404);
-  assert.equal(missingBody.error.code, 'not_found');
-});
-
-test('web server deletes done runs via DELETE /api/runs/:runId and refuses executing runs', async (t) => {
-  const runsRoot = path.join('.agent-runs', `delete-web-${Date.now()}`);
-  t.after(() => fs.rmSync(path.join(process.cwd(), runsRoot), { recursive: true, force: true }));
-
-  const make = (runId, status, state, events) => {
-    const dir = path.join(process.cwd(), runsRoot, 'wf', runId);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'state.edn'), `{:workflow {:name "wf" :version "v1"} :run {:id "${runId}" :status "${status}" :state ${state}${status === 'running' ? ' :updated-at "2999-01-01T00:00:00Z"' : ''}}}`);
-    fs.writeFileSync(path.join(dir, 'events.jsonl'), events || '');
-    return dir;
-  };
-  const doneDir = make('web-delete-done', 'done', ':done');
-  const executingDir = make('web-delete-exec', 'running', ':work', JSON.stringify({ event: 'node.started', state: 'work', attempt: 1, at: '2999-01-01T00:00:00Z' }));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const doneResponse = await fetch(`${base}/api/runs/web-delete-done`, { method: 'DELETE' });
-  assert.equal(doneResponse.status, 200);
-  const doneBody = await doneResponse.json();
-  assert.equal(doneBody.operation, 'delete');
-  assert.equal(doneBody.status, 'ok');
-  assert.equal(doneBody.run_id, 'web-delete-done');
-  assert.equal(doneBody.deleted, true);
-  assert.equal(fs.existsSync(doneDir), false);
-
-  const executingResponse = await fetch(`${base}/api/runs/web-delete-exec`, { method: 'DELETE' });
-  assert.equal(executingResponse.status, 409);
-  const executingBody = await executingResponse.json();
-  assert.equal(executingBody.error.code, 'conflict');
-  assert.equal(executingBody.error.details.liveness, 'executing');
-  assert.equal(fs.existsSync(executingDir), true);
-});
-
-test('GET /api/browse lists repo-rooted directory entries and rejects path escapes', async (t) => {
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const root = await fetch(`${base}/api/browse?path=.`);
-  assert.equal(root.status, 200);
-  const rootBody = await root.json();
-  assert.ok(Array.isArray(rootBody.entries));
-  assert.ok(rootBody.entries.some((entry) => entry.name === 'web' && entry.is_dir === true));
-  assert.ok(rootBody.entries.some((entry) => entry.name === 'package.json' && entry.is_file === true));
-  // Hidden files are omitted.
-  assert.ok(!rootBody.entries.some((entry) => entry.name === '.git'));
-
-  const sub = await fetch(`${base}/api/browse?path=web`);
-  assert.equal(sub.status, 200);
-  const subBody = await sub.json();
-  assert.ok(subBody.is_dir === true);
-  assert.ok(subBody.entries.some((entry) => entry.name === 'src' && entry.is_dir === true));
-
-  const escape = await fetch(`${base}/api/browse?path=${encodeURIComponent('../')}`);
-  assert.equal(escape.status, 400);
-  const escapeBody = await escape.json();
-  assert.equal(escapeBody.error.code, 'bad_request');
-
-  const missing = await fetch(`${base}/api/browse?path=does-not-exist-xyz`);
-  assert.equal(missing.status, 404);
-});
-
-test('routeApi maps the browse route', () => {
-  assert.deepEqual(routeApi('/api/browse'), ['browse']);
-});
-
-test('web server reports not found and malformed API routes as JSON errors', async (t) => {
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const missing = await fetch(`${base}/api/workflows/does-not-exist`);
-  assert.equal(missing.status, 404);
-  const missingBody = await missing.json();
-  assert.equal(missingBody.error.code, 'not_found');
-
-  const malformed = await fetch(`${base}/api/workflows/%E0%A4%A/graph`);
-  assert.equal(malformed.status, 400);
-  const malformedBody = await malformed.json();
-  assert.equal(malformedBody.error.code, 'bad_request');
-
-  const unknown = await fetch(`${base}/api/nope`);
-  assert.equal(unknown.status, 404);
-  const unknownBody = await unknown.json();
-  assert.equal(unknownBody.error.code, 'not_found');
-});
-
-test('web server exposes git-user read and write via the control plane', async (t) => {
-  const configFile = path.join(process.cwd(), '.tesseraft', 'git-user.json');
-  fs.rmSync(configFile, { force: true });
-  t.after(() => fs.rmSync(configFile, { force: true }));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const initial = await fetch(`${base}/api/git-user`);
-  assert.equal(initial.status, 200);
-  const initialBody = await initial.json();
-  assert.equal(initialBody.git_user.source, 'none');
-  assert.equal(initialBody.git_user.name, null);
-
-  const badWrite = await fetch(`${base}/api/git-user`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Bot', email: 'not-an-email' })
-  });
-  assert.equal(badWrite.status, 400);
-  assert.equal((await badWrite.json()).error.code, 'bad_request');
-  assert.equal(fs.existsSync(configFile), false);
-
-  const write = await fetch(`${base}/api/git-user`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Tess Bot', email: 'tess@example.com' })
-  });
-  assert.equal(write.status, 200);
-  const written = await write.json();
-  assert.equal(written.git_user.name, 'Tess Bot');
-  assert.equal(written.git_user.email, 'tess@example.com');
-  assert.equal(written.git_user.source, 'project');
-
-  const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  assert.equal(stored.name, 'Tess Bot');
-  assert.equal(stored.email, 'tess@example.com');
-
-  const refreshed = await fetch(`${base}/api/git-user`);
-  assert.equal(refreshed.status, 200);
-  const refreshedBody = await refreshed.json();
-  assert.equal(refreshedBody.git_user.source, 'project');
-  assert.equal(refreshedBody.git_user.name, 'Tess Bot');
-});
-
-test('SC-004 web server exposes legacy settings credential state without value-derived previews', async (t) => {
-  const configFile = path.join(process.cwd(), '.tesseraft', 'settings.json');
-  fs.rmSync(configFile, { force: true });
-  t.after(() => fs.rmSync(configFile, { force: true }));
-
-  const server = createServer();
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-
-  const initial = await fetch(`${base}/api/settings`);
-  assert.equal(initial.status, 200);
-  const initialBody = await initial.json();
-  assert.equal(initialBody.settings.source, 'none');
-  assert.equal(initialBody.settings.pi_default_provider, null);
-  assert.equal(initialBody.settings.color_scheme, 'classic');
-  assert.equal(initialBody.settings.github_token.present, false);
-  assert.equal(initialBody.settings.jira_token.present, false);
-
-  const badWrite = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_provider: `a${'\n'}b` })
-  });
-  assert.equal(badWrite.status, 400);
-  assert.equal((await badWrite.json()).error.code, 'bad_request');
-  assert.equal(fs.existsSync(configFile), false);
-
-  const badScheme = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ color_scheme: 'cyberpunk' })
-  });
-  assert.equal(badScheme.status, 400);
-  assert.equal((await badScheme.json()).error.code, 'bad_request');
-  assert.equal(fs.existsSync(configFile), false, 'invalid schemes must not mutate settings');
-
-  const write = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      pi_default_provider: 'openai',
-      pi_default_model: 'gpt-4o-mini',
-      github_token: 'ghp_secretvalue1234',
-      jira_token: 'jira-token-abcd',
-      default_repo_root: '/tmp/my-repo',
-      color_scheme: 'matrix'
-    })
-  });
-  assert.equal(write.status, 200);
-  const written = await write.json();
-  assert.equal(written.settings.source, 'project');
-  assert.equal(written.settings.pi_default_provider, 'openai');
-  assert.equal(written.settings.pi_default_model, 'gpt-4o-mini');
-  assert.equal(written.settings.default_repo_root, '/tmp/my-repo');
-  assert.equal(written.settings.color_scheme, 'matrix');
-  // SC-004: public settings views expose only credential state, never value-derived previews.
-  assert.equal(written.settings.github_token.present, true);
-  assert.ok(
-    !('preview' in written.settings.github_token),
-    `SC-004 legacy settings github_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.github_token)}`
-  );
-  assert.equal(written.settings.jira_token.present, true);
-  assert.ok(
-    !('preview' in written.settings.jira_token),
-    `SC-004 legacy settings jira_token must not expose a value-derived preview; got ${JSON.stringify(written.settings.jira_token)}`
-  );
-
-  const stored = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  assert.equal(stored.github_token, 'ghp_secretvalue1234');
-  assert.equal(stored.jira_token, 'jira-token-abcd');
-  assert.equal(stored.color_scheme, 'matrix');
-
-  const matrixGet = await fetch(`${base}/api/settings`).then((response) => response.json());
-  assert.equal(matrixGet.settings.color_scheme, 'matrix');
-
-  // The masked GET round-trips: sending the sentinel preserves the token.
-  const unchanged = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_provider: 'anthropic', github_token: null })
-  });
-  assert.equal(unchanged.status, 200);
-  const unchangedBody = await unchanged.json();
-  assert.equal(unchangedBody.settings.pi_default_provider, 'anthropic');
-  assert.equal(unchangedBody.settings.github_token.present, true);
-  assert.ok(
-    !('preview' in unchangedBody.settings.github_token),
-    `SC-004 unchanged legacy settings token must preserve state without exposing a value-derived preview; got ${JSON.stringify(unchangedBody.settings.github_token)}`
-  );
-  // And the stored value is unchanged.
-  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).github_token, 'ghp_secretvalue1234');
-
-  // Clearing the provider while a model is still set is an inconsistent
-  // state and must be rejected (cross-field validation).
-  const inconsistent = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_provider: null })
-  });
-  assert.equal(inconsistent.status, 400);
-  assert.equal((await inconsistent.json()).error.code, 'bad_request');
-  // The stored file is unchanged: provider still 'anthropic'.
-  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).pi_default_provider, 'anthropic');
-
-  // Clearing both provider and model removes them and is allowed.
-  const cleared = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_provider: null, pi_default_model: null })
-  });
-  assert.equal(cleared.status, 200);
-  const clearedBody = await cleared.json();
-  assert.equal(clearedBody.settings.pi_default_provider, null);
-  assert.equal(clearedBody.settings.pi_default_model, null);
-
-  // Setting a model without a provider is also rejected.
-  const modelOnly = await fetch(`${base}/api/settings`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pi_default_model: 'gpt-4o-mini' })
-  });
-  assert.equal(modelOnly.status, 400);
-  assert.equal((await modelOnly.json()).error.code, 'bad_request');
-});
-
-test('control-plane derived attempts do not treat exit code zero as a failure', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'exit-zero-'));
-  const runDir = path.join(root, 'wf', 'exit-zero-run');
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "exit-zero-run" :status "running" :state :next}}');
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
-    JSON.stringify({ event: 'node.started', state: 'start', attempt: 1, at: '2026-01-01T00:00:00Z' }),
-    JSON.stringify({ event: 'node.finished', state: 'start', at: '2026-01-01T00:00:01Z', result: { status: 'ok', 'exit-code': 0 } })
-  ].join('\n'));
-
-  try {
-    const run = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'run', 'exit-zero-run'], { encoding: 'utf8' }));
-    assert.equal(run.run.attempts[0].status, 'ok');
-    assert.equal(run.run.attempts[0].error, undefined);
-    assert.deepEqual(run.run.failures, []);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('control-plane artifact reads reject unsafe paths', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'artifact-safety-'));
-  const runDir = path.join(root, 'wf', 'safe-run');
-  const outside = path.join(root, 'outside.txt');
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "safe-run" :status "done" :state :done}}');
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '');
-  fs.writeFileSync(path.join(runDir, 'note.md'), '# hello\n');
-  fs.writeFileSync(outside, 'secret');
-  fs.symlinkSync(outside, path.join(runDir, 'escape.txt'));
-
-  try {
-    const ok = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', 'note.md'], { encoding: 'utf8' }));
-    assert.equal(ok.previewable, true);
-    assert.match(ok.content, /hello/);
-
-    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', '../outside.txt'], { encoding: 'utf8', stdio: 'pipe' }));
-    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', outside], { encoding: 'utf8', stdio: 'pipe' }));
-    assert.throws(() => execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'artifact', 'safe-run', 'escape.txt'], { encoding: 'utf8', stdio: 'pipe' }));
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('POST /api/pi-sessions surfaces pi_settings_resolution failures as 400 {error:{code,message}}', async (t) => {
-  const errAdapter = {
-    createSession: async () => { throw new PiSettingsResolutionError('acme', 'nope', 'no catalog entry for provider "acme" model "nope"'); },
-    listSessions: async () => [],
-    getSession: async () => null,
-    sendPrompt: async () => null,
-    listMessages: async () => [],
-    listEvents: async () => [],
-    streamEvents: async () => {}
-  };
-  const server = createServer({ piSessionAdapter: errAdapter });
-  const port = await listen(server);
-  t.after(() => close(server));
-  const base = `http://127.0.0.1:${port}`;
-  const res = await fetch(`${base}/api/pi-sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) });
-  assert.equal(res.status, 400);
-  const body = await res.json();
-  assert.equal(body.status, 400);
+  assert.equal(response.status, 400);
+  const body = await response.json();
   assert.equal(body.error.code, 'pi_settings_resolution');
   assert.match(body.error.message, /acme/);
-  assert.match(body.error.message, /nope/);
   assert.match(body.error.message, /pi auth/);
-  assert.equal(typeof body.error.message, 'string');
-  assert.ok(body.error.message.length > 0, 'actionable message text is exposed for the UI to render');
 });
 
-test('control-plane comment add appends a second comment to the same artifact (R2-1)', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'comment-append-'));
-  const runDir = path.join(root, 'wf', 'append-run');
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'state.edn'), '{:workflow {:name "wf" :version "v1"} :run {:id "append-run" :status "blocked" :state :gate}}');
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), '');
-  fs.mkdirSync(path.join(runDir, 'design'), { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'design', 'design.md'), '# Design\n');
-  const artifact = 'design/design.md';
+test('v2 project APIs isolate durable config and scoped runs', async () => {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tesseraft-web-v2-'));
+  const home = path.join(sandbox, 'home');
+  const allowed = path.join(sandbox, 'projects');
+  const project = path.join(allowed, 'alpha');
+  const projectId = 'web-alpha';
+  const runId = `web-run-${Date.now()}`;
+  fs.mkdirSync(project, { recursive: true });
+  writeDescriptor(project, projectId);
+  writeSmokeWorkflow(project);
 
-  try {
-    const first = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'First comment on the artifact'], { encoding: 'utf8' }));
-    assert.equal(first.comment.path, artifact);
-    assert.match(first.comment.body, /First comment/);
-
-    const second = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comment', 'add', 'append-run', '--path', artifact, '--body', 'Second comment on the artifact'], { encoding: 'utf8' }));
-    assert.equal(second.comment.path, artifact);
-    assert.match(second.comment.body, /Second comment/);
-
-    const listed = JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--runs-root', 'wf', 'comments', 'append-run', '--path', artifact], { encoding: 'utf8' }));
-    assert.equal(listed.comments.length, 2);
-    assert.match(listed.comments[0].body, /First comment/);
-    assert.match(listed.comments[1].body, /Second comment/);
-
-    // The persisted comment file on disk holds both, in order. comments-file
-    // maps <run-dir>/comments/<safe-path>/.json (the safe path becomes a dir
-    // and .json the file name), so design/design.md -> comments/design/design.md/.json.
-    const persisted = JSON.parse(fs.readFileSync(path.join(runDir, 'comments', artifact, '.json'), 'utf8'));
-    assert.ok(Array.isArray(persisted));
-    assert.equal(persisted.length, 2);
-    assert.match(persisted[0].body, /First comment/);
-    assert.match(persisted[1].body, /Second comment/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: routeApi + read-only HTTP + masked connections (design §4.6)', async () => {
-  // routeApi project entries (covered above for the pure router; here also via
-  // the live server for GET surfaces that never write to disk).
-  const server = createServer(createFakePiSessionAdapter());
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    // GET /api/projects returns a non-empty list (implicit default synthesized).
-    const listRes = await fetch(`${base}/api/projects`);
-    assert.equal(listRes.status, 200);
-    const list = await listRes.json();
-    assert.ok(Array.isArray(list.projects) && list.projects.length >= 1);
-    assert.ok(list.projects.some((p) => p.project_id === 'default'), 'default project present');
-
-    // GET /api/projects/default returns the aggregate without raw tokens.
-    const detailRes = await fetch(`${base}/api/projects/default`);
-    assert.equal(detailRes.status, 200);
-    const detail = await detailRes.json();
-    assert.equal(detail.project_id, 'default');
-    // settings tokens must be masked objects, never raw strings.
-    if (detail.settings && detail.settings.github_token) {
-      assert.equal(typeof detail.settings.github_token, 'object');
-      assert.ok(!('preview' in detail.settings.github_token) || typeof detail.settings.github_token.preview !== 'string' || detail.settings.github_token.preview.length <= 4);
-      assert.ok(!('token' in detail.settings.github_token));
-    }
-
-    // GET /api/projects/<malformed> is a 400 (bad_request), not a 500.
-    const badRes = await fetch(`${base}/api/projects/Bad-Id`);
-    assert.ok(badRes.status === 400 || badRes.status === 404);
-
-    // PUT connections with a raw token payload is rejected (400) without
-    // shelling out, so no secret ever reaches the control plane.
-    const rawTokenRes = await fetch(`${base}/api/projects/default/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jira: { token: 'ghp_supersecret' } })
+  await withEnvironment({ TESSERAFT_HOME: home }, async () => {
+    const server = createServer({
+      piSessionAdapter: createFakePiSessionAdapter(),
+      browserAllowedProjectRoots: [allowed]
     });
-    assert.equal(rawTokenRes.status, 400);
-    const rawTokenBody = await rawTokenRes.json();
-    assert.match(rawTokenBody.error.message, /credential/i);
-
-    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-    const manifestPath = path.join(projectsDir, 'wt3-http-review.json');
-    const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
-    fs.mkdirSync(projectsDir, { recursive: true });
-    fs.writeFileSync(manifestPath, JSON.stringify({
-      project_id: 'wt3-http-review',
-      name: 'WT3 HTTP Review',
-      workspace_root: '.',
-      runs_root: '.agent-runs',
-      discovery: { 'workflow-roots': ['examples'] },
-      connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
-    }, null, 2));
+    const port = await listen(server);
+    const base = `http://127.0.0.1:${port}`;
     try {
-      const badArray = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify([])
+      const outside = await fetch(`${base}/api/projects`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project_root: sandbox })
       });
-      assert.equal(badArray.status, 400, 'HTTP rejects malformed non-object connection bodies');
+      assert.equal(outside.status, 400);
+      assert.equal((await outside.json()).error.code, 'project_root_not_allowed');
 
-      const unknownRole = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ unexpected_scope: { value: 1 } })
+      const registered = await fetch(`${base}/api/projects`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project_root: project })
       });
-      assert.equal(unknownRole.status, 400, 'HTTP rejects unsupported connection roles instead of treating them as no-ops');
-      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
-        project_id: 'wt3-http-review',
-        name: 'WT3 HTTP Review',
-        workspace_root: '.',
-        runs_root: '.agent-runs',
-        discovery: { 'workflow-roots': ['examples'] },
-        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
-      }, null, 2), 'malformed HTTP updates leave project bytes unchanged');
+      assert.equal(registered.status, 201);
+      const registeredBody = await registered.json();
+      assert.equal(registeredBody.project_id, projectId);
+      assert.equal(registeredBody.workspace_root, fs.realpathSync(project));
 
-      const badVersion = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
+      const registry = JSON.parse(fs.readFileSync(path.join(home, 'projects', 'registry.json'), 'utf8'));
+      assert.deepEqual(registry, { version: 2, projects: { [projectId]: { workspace_root: fs.realpathSync(project) } } });
+
+      const detail = await fetch(`${base}/api/projects/${projectId}`).then((response) => response.json());
+      assert.equal(detail.project_id, projectId);
+      assert.equal(detail.source, 'registration');
+
+      const secret = await fetch(`${base}/api/projects/${projectId}/connections`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ 'work-tracker': { token: 'must-not-persist' } })
+      });
+      assert.equal(secret.status, 400);
+      assert.doesNotMatch(fs.readFileSync(path.join(project, '.tesseraft', 'project.json'), 'utf8'), /must-not-persist/);
+
+      const connections = await fetch(`${base}/api/projects/${projectId}/connections`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          work_tracker: {
-            provider: 'jira',
-            schema_version: 99,
-            credential_ref: 'env:WT3_HTTP_JIRA',
-            config: { base_url: 'https://jira.example', project_key: 'WT3' }
+          'code-host': { provider: 'github', 'auth-mode': 'ambient' },
+          'work-tracker': {
+            provider: 'plane', 'schema-version': 1, 'credential-ref': 'env:PLANE_TOKEN',
+            config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'ws', 'project-id': 'project' }
           }
         })
       });
-      assert.equal(badVersion.status, 400, 'HTTP rejects unsupported work_tracker schema_version');
+      assert.equal(connections.status, 200);
+      assert.equal((await connections.json()).connections['work-tracker'].provider, 'plane');
 
-      const badLegacyNested = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jira: { base_url: 'https://new.example', unexpected_scope: { x: 1 } } })
+      const preferences = await fetch(`${base}/api/settings`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ color_scheme: 'matrix', editor_layout: 'compact' })
       });
-      assert.equal(badLegacyNested.status, 400, 'HTTP rejects unknown nested legacy Jira fields');
-      assert.equal(fs.readFileSync(manifestPath, 'utf8'), JSON.stringify({
-        project_id: 'wt3-http-review',
-        name: 'WT3 HTTP Review',
-        workspace_root: '.',
-        runs_root: '.agent-runs',
-        discovery: { 'workflow-roots': ['examples'] },
-        connections: { github: { 'credential-ref': 'env:WT3_HTTP_GITHUB' } }
-      }, null, 2), 'malformed legacy role update leaves project bytes unchanged');
+      assert.equal(preferences.status, 200);
+      assert.equal((await preferences.json()).settings.color_scheme, 'matrix');
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'preferences.json'), 'utf8')), {
+        version: 1, preferences: { color_scheme: 'matrix', editor_layout: 'compact' }
+      });
 
-      const duplicateAlias = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ github: { credential_ref: 'env:ONE', 'credential-ref': 'env:TWO' } })
+      const identity = await fetch(`${base}/api/projects/${projectId}/git-user`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Tess Bot', email: 'tess@example.com' })
       });
-      assert.equal(duplicateAlias.status, 400, 'HTTP rejects duplicate legacy connection aliases');
+      assert.equal(identity.status, 200);
+      assert.equal((await identity.json()).git_user.source, 'project-override');
+      const identityStore = JSON.parse(fs.readFileSync(path.join(home, 'git-identities.json'), 'utf8'));
+      assert.deepEqual(identityStore.projects[projectId], { name: 'Tess Bot', email: 'tess@example.com' });
 
-      const validSnake = await fetch(`${base}/api/projects/wt3-http-review/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          work_tracker: {
-            provider: 'jira',
-            schema_version: 1,
-            credential_ref: 'env:WT3_HTTP_JIRA',
-            config: { base_url: 'https://jira.example', project_key: 'WT3' }
-          }
-        })
+      const started = await fetch(`${base}/api/projects/${projectId}/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workflow_name: 'web-smoke', run_id: runId, inputs: {} })
       });
-      const validBody = await validSnake.json();
-      assert.equal(validSnake.status, 200, `HTTP accepts snake_case tracker aliases; got ${validSnake.status} ${JSON.stringify(validBody)}`);
-      assert.equal(validBody.connections['work-tracker'].provider, 'jira');
-      assert.deepEqual(validBody.connections['work-tracker'].config, { 'base-url': 'https://jira.example', 'project-key': 'WT3' });
-      assert.ok(validBody.connections.github, 'HTTP work-tracker update preserves GitHub connection');
+      assert.equal(started.status, 202);
+      assert.equal((await started.json()).run_id, runId);
+      const run = await waitForRunStatus(base, projectId, runId, 'done');
+      assert.equal(run.state, 'done');
+
+      const events = await fetch(`${base}/api/projects/${projectId}/runs/${runId}/events`).then((response) => response.json());
+      assert.ok(events.events.some((event) => event.event === 'run.finished'));
+      const artifacts = await fetch(`${base}/api/projects/${projectId}/runs/${runId}/artifacts`).then((response) => response.json());
+      assert.ok(artifacts.artifacts.some((artifact) => artifact.path === 'events.jsonl'));
+
+      const removedRun = await fetch(`${base}/api/projects/${projectId}/runs/${runId}`, { method: 'DELETE' });
+      assert.equal(removedRun.status, 200);
+      assert.equal((await removedRun.json()).deleted, true);
+      const unregistered = await fetch(`${base}/api/projects/${projectId}`, { method: 'DELETE' });
+      assert.equal(unregistered.status, 200);
+      assert.equal((await unregistered.json()).deleted, true);
+      assert.equal(fs.existsSync(path.join(project, '.tesseraft', 'project.json')), true);
     } finally {
-      if (previous === null) fs.rmSync(manifestPath, { force: true });
-      else fs.writeFileSync(manifestPath, previous);
+      await close(server);
     }
-  } finally {
-    await close(server);
-  }
-});
-
-test('WT4 HTTP work-tracker editor round trip: set, inspect, switch provider, clear, idempotent clear', async () => {
-  const server = createServer(createFakePiSessionAdapter());
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-  const manifestPath = path.join(projectsDir, 'wt4-http-editor.json');
-  const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
-  fs.mkdirSync(projectsDir, { recursive: true });
-  fs.writeFileSync(manifestPath, JSON.stringify({
-    project_id: 'wt4-http-editor',
-    name: 'WT4 HTTP Editor',
-    workspace_root: '.',
-    runs_root: '.agent-runs',
-    discovery: { 'workflow-roots': ['examples'] },
-    connections: {}
-  }, null, 2));
-  try {
-    // Reject a raw-token payload before it ever reaches the control plane.
-    const rawToken = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ work_tracker: { provider: 'plane', token: 'raw-secret-value' } })
-    });
-    assert.equal(rawToken.status, 400);
-
-    // Reject an unknown top-level connection role.
-    const unknownRole = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ not_a_real_role: {} })
-    });
-    assert.equal(unknownRole.status, 400);
-
-    // Set a Plane tracker.
-    const setPlane = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        work_tracker: {
-          provider: 'plane',
-          credential_ref: 'env:WT4_HTTP_PLANE',
-          config: { api_base_url: 'https://plane.example', workspace_slug: 'ws', project_id: 'pid' }
-        }
-      })
-    });
-    assert.equal(setPlane.status, 200);
-    const setPlaneBody = await setPlane.json();
-    assert.equal(setPlaneBody.connections['work-tracker'].provider, 'plane');
-
-    // Inspect.
-    const inspect = await fetch(`${base}/api/projects/wt4-http-editor/connections`);
-    assert.equal(inspect.status, 200);
-    const inspected = await inspect.json();
-    assert.equal(inspected.connections['work-tracker'].provider, 'plane');
-    assert.equal(inspected.connections['work-tracker']['credential-state'].present, false, 'the referenced env var is not set in this test process');
-
-    // Switch to github-issues.
-    const switchProvider = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        work_tracker: {
-          provider: 'github-issues',
-          credential_ref: 'env:WT4_HTTP_GH_ISSUES',
-          config: { repository: 'owner/repo' }
-        }
-      })
-    });
-    assert.equal(switchProvider.status, 200);
-    const switched = await switchProvider.json();
-    assert.equal(switched.connections['work-tracker'].provider, 'github-issues');
-
-    // Doctor now reports an unresolved (statically-valid-but-uncredentialed) tracker.
-    const doctorAfterSet = await fetch(`${base}/api/projects/wt4-http-editor/doctor`);
-    const doctorAfterSetBody = await doctorAfterSet.json();
-    assert.equal(doctorAfterSetBody.work_tracker.state, 'unresolved');
-    assert.equal(doctorAfterSetBody.work_tracker.provider, 'github-issues');
-
-    // Clear.
-    const clear = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ clear_work_tracker: true })
-    });
-    assert.equal(clear.status, 200);
-    const cleared = await clear.json();
-    assert.equal(cleared.connections['work-tracker'], undefined);
-
-    // Clearing again is idempotent, not an error.
-    const clearAgain = await fetch(`${base}/api/projects/wt4-http-editor/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ clear_work_tracker: true })
-    });
-    assert.equal(clearAgain.status, 200);
-    const clearedAgain = await clearAgain.json();
-    assert.equal(clearedAgain.connections['work-tracker'], undefined);
-
-    const doctorAfterClear = await fetch(`${base}/api/projects/wt4-http-editor/doctor`);
-    const doctorAfterClearBody = await doctorAfterClear.json();
-    assert.equal(doctorAfterClearBody.work_tracker.state, 'absent');
-  } finally {
-    if (previous === null) fs.rmSync(manifestPath, { force: true });
-    else fs.writeFileSync(manifestPath, previous);
-    await close(server);
-  }
-});
-
-test('SC-001 tesseraft credential refs resolve from the selected project local store across control-plane and doctor', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-tesseraft-selected-store-'));
-  try {
-    const ambientHome = path.join(root, 'ambient-home');
-    const selectedHome = path.join(root, 'selected-home');
-    fs.mkdirSync(ambientHome, { recursive: true });
-    fs.mkdirSync(selectedHome, { recursive: true });
-    fs.writeFileSync(path.join(ambientHome, 'credentials.json'), JSON.stringify({
-      version: 1,
-      credentials: { SC001_AMBIENT_ONLY_TOKEN: 'SC001_TESSERAFT_AMBIENT_SENTINEL' }
-    }, null, 2));
-    fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
-      version: 1,
-      credentials: { SC001_LOCAL_TOKEN: 'SC001_TESSERAFT_LOCAL_SENTINEL' }
-    }, null, 2));
-
-    const runCp = (args) => {
-      try {
-        return {
-          threw: false,
-          body: JSON.parse(execFileSync('./bin/tesseraft', [
-            'control-plane', '--workspace-root', root, '--tesseraft-home', ambientHome, ...args
-          ], { encoding: 'utf8', stdio: 'pipe' }))
-        };
-      } catch (error) {
-        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
-      }
-    };
-
-    const ambientOnly = runCp([
-      'project', 'create', 'sc001-ambient-only',
-      '--tesseraft-home', selectedHome,
-      '--github-credential-ref', 'tesseraft:SC001_AMBIENT_ONLY_TOKEN'
-    ]);
-    assert.equal(ambientOnly.threw, false, `SC-001 ambient-only project create should succeed; got ${JSON.stringify(ambientOnly.body)}`);
-
-    const ambientOnlyConnections = runCp(['project', 'connections', 'sc001-ambient-only']);
-    assert.equal(ambientOnlyConnections.threw, false, `SC-001 ambient-only connections lookup should succeed; got ${JSON.stringify(ambientOnlyConnections.body)}`);
-    const ambientOnlyState = ambientOnlyConnections.body.connections.github['credential-state'];
-    assert.equal(ambientOnlyState.present, false, `SC-001 selected project store must not fall back to ambient credentials; got ${JSON.stringify(ambientOnlyState)}`);
-    assert.equal(ambientOnlyState.state, 'absent');
-    assert.doesNotMatch(JSON.stringify(ambientOnlyConnections.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
-
-    const ambientOnlyDoctor = runCp(['--project-id', 'sc001-ambient-only', 'doctor']);
-    assert.equal(ambientOnlyDoctor.threw, false, `SC-001 ambient-only doctor lookup should succeed; got ${JSON.stringify(ambientOnlyDoctor.body)}`);
-    const ambientOnlyCredentialCheck = ambientOnlyDoctor.body.checks.find((check) => check.id === 'github-credential');
-    assert.equal(ambientOnlyCredentialCheck?.status, 'not-configured', `SC-001 doctor must not resolve tesseraft: refs from ambient home; got ${JSON.stringify(ambientOnlyCredentialCheck)}`);
-    assert.doesNotMatch(JSON.stringify(ambientOnlyDoctor.body), /SC001_TESSERAFT_AMBIENT_SENTINEL/);
-
-    const created = runCp([
-      'project', 'create', 'sc001-local',
-      '--tesseraft-home', selectedHome,
-      '--github-credential-ref', 'tesseraft:SC001_LOCAL_TOKEN'
-    ]);
-    assert.equal(
-      created.threw,
-      false,
-      `SC-001 tesseraft: refs must be accepted for project credential refs; got ${JSON.stringify(created.body)}`
-    );
-
-    const connections = runCp(['project', 'connections', 'sc001-local']);
-    assert.equal(connections.threw, false, `SC-001 connections lookup should succeed; got ${JSON.stringify(connections.body)}`);
-    const state = connections.body.connections.github['credential-state'];
-    assert.equal(state.present, true, `SC-001 tesseraft: refs should resolve from the selected project store; got ${JSON.stringify(state)}`);
-    assert.equal(state['credential-ref'], 'tesseraft:SC001_LOCAL_TOKEN');
-    assert.doesNotMatch(JSON.stringify(connections.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
-
-    const doctor = runCp(['--project-id', 'sc001-local', 'doctor']);
-    assert.equal(doctor.threw, false, `SC-001 doctor lookup should succeed; got ${JSON.stringify(doctor.body)}`);
-    const credentialCheck = doctor.body.checks.find((check) => check.id === 'github-credential');
-    assert.equal(credentialCheck?.status, 'ready', `SC-001 doctor must use the same selected-store tesseraft: resolver; got ${JSON.stringify(credentialCheck)}`);
-    assert.doesNotMatch(JSON.stringify(doctor.body), /SC001_TESSERAFT_LOCAL_SENTINEL|SC001_TESSERAFT_AMBIENT_SENTINEL/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('SC-001 runtime starts preserve selected project credential context across relocated workspaces', async () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-runtime-project-context-'));
-  const controlWorkspace = path.join(root, 'control');
-  const runtimeWorkspace = path.join(root, 'runtime-workspace');
-  const selectedHome = path.join(root, 'selected-home');
-  const otherHome = path.join(root, 'other-home');
-  const projectsDir = path.join(controlWorkspace, '.tesseraft', 'projects');
-  const workflowDir = path.join(runtimeWorkspace, '.tesseraft', 'workflows', 'runtime-context');
-  fs.mkdirSync(projectsDir, { recursive: true });
-  fs.mkdirSync(workflowDir, { recursive: true });
-  fs.mkdirSync(selectedHome, { recursive: true });
-  fs.mkdirSync(otherHome, { recursive: true });
-  fs.writeFileSync(path.join(workflowDir, 'workflow.edn'), `{:api-version "tesseraft.workflow/v1"
- :kind :workflow
- :metadata {:name "runtime-context" :title "Runtime Context"}
- :defaults {:max-rounds 1 :state-timeout "1m"}
- :policies {:require-timeouts true :require-max-rounds true}
- :initial :start
- :states {:start {:type :deterministic
-                  :handler :noop/succeed
-                  :runtime {:timeout "10s"}
-                  :next :done}
-          :done {:type :terminal :status :success}}}
-`);
-  fs.writeFileSync(path.join(projectsDir, 'selected.json'), JSON.stringify({
-    project_id: 'selected',
-    name: 'Selected',
-    workspace_root: runtimeWorkspace,
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'], 'tesseraft-home': selectedHome },
-    connections: { github: { 'credential-ref': 'tesseraft:GH_TOKEN' } }
-  }, null, 2));
-  fs.writeFileSync(path.join(selectedHome, 'credentials.json'), JSON.stringify({
-    version: 1,
-    credentials: { GH_TOKEN: 'SC001_RUNTIME_SELECTED_SENTINEL' }
-  }, null, 2));
-  fs.writeFileSync(path.join(otherHome, 'credentials.json'), JSON.stringify({
-    version: 1,
-    credentials: { GH_TOKEN: 'SC001_RUNTIME_OTHER_SENTINEL' }
-  }, null, 2));
-
-  const child = spawn(process.execPath, ['web/dist-server/server.js', '--host', '127.0.0.1', '--port', '0'], {
-    cwd: process.cwd(),
-    env: { ...process.env, TESSERAFT_WORKSPACE_ROOT: controlWorkspace, TESSERAFT_HOME: otherHome },
-    stdio: ['ignore', 'pipe', 'pipe']
   });
-  let stderr = '';
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  try {
-    const base = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`project-context server did not start: ${stderr}`)), 10000);
-      child.once('error', (error) => { clearTimeout(timeout); reject(error); });
-      child.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`project-context server exited with ${code}: ${stderr}`)); });
-      child.stdout.on('data', (chunk) => {
-        const match = String(chunk).match(/http:\/\/127\.0\.0\.1:(\d+)/);
-        if (match) { clearTimeout(timeout); resolve(`http://127.0.0.1:${match[1]}`); }
-      });
-    });
-
-    const startResponse = await fetch(`${base}/api/projects/selected/runs`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflow_name: 'runtime-context', run_id: 'runtime-context-run', inputs: {}, max_steps: 1 })
-    });
-    assert.equal(startResponse.status, 202, `start should succeed through selected project context: ${JSON.stringify(await startResponse.clone().json().catch(() => ({})))}`);
-    const started = await startResponse.json();
-    const runDir = started.cli.result.run.dir;
-
-    const probeCode = `(require '[tesseraft.runtime.store :as s] '[tesseraft.adapters.builtin :as b] '[babashka.fs :as fs] '[cheshire.core :as json])
-(let [run-dir ${JSON.stringify(runDir)}
-      ctx (s/load-context run-dir)
-      opts (b/github-command-opts ctx {})
-      token (get-in opts [:extra-env "GH_TOKEN"])]
-  (s/write-runtime-json! ctx (fs/path run-dir "adapter-output.json") {:adapter opts :token token})
-  (s/event! ctx {:event "adapter.output" :adapter opts :token token})
-  (println (json/generate-string {:run (select-keys (:run ctx) [:project-id :workspace-root :runs-root :tesseraft-home :workflow-roots]) :opts opts :token token})))`;
-    const probe = JSON.parse(execFileSync('bb', ['--config', 'bb.edn', '-e', probeCode], { encoding: 'utf8' }));
-    assert.equal(probe.token, 'SC001_RUNTIME_SELECTED_SENTINEL', `real GitHub adapter options should use selected project local store: ${JSON.stringify(probe)}`);
-    assert.notEqual(probe.token, 'SC001_RUNTIME_OTHER_SENTINEL', 'ambient/other Tesseraft home must not be selected');
-    assert.equal(probe.run['tesseraft-home'], selectedHome);
-    assert.deepEqual(probe.run['workflow-roots'], ['.tesseraft/workflows']);
-
-    const durableBytes = [
-      fs.readFileSync(path.join(runDir, 'state.edn'), 'utf8'),
-      fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'),
-      fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8')
-    ].join('\n');
-    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_SELECTED_SENTINEL/);
-    assert.doesNotMatch(durableBytes, /SC001_RUNTIME_OTHER_SENTINEL/);
-    assert.match(fs.readFileSync(path.join(runDir, 'adapter-output.json'), 'utf8'), /\[redacted\]/);
-  } finally {
-    child.kill('SIGTERM');
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('SC-002 missing and unavailable credential refs expose stable non-secret states', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc002-stable-credential-states-'));
-  try {
-    const home = path.join(root, 'home');
-    const runCp = (args) => {
-      try {
-        return {
-          threw: false,
-          body: JSON.parse(execFileSync('./bin/tesseraft', [
-            'control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args
-          ], { encoding: 'utf8', stdio: 'pipe' }))
-        };
-      } catch (error) {
-        return { threw: true, body: JSON.parse(String(error.stdout || '{}')) };
-      }
-    };
-
-    const missingName = 'SC002_MISSING_TOKEN_DO_NOT_DEFINE';
-    delete process.env[missingName];
-    assert.equal(runCp(['project', 'create', 'sc002-missing', '--github-credential-ref', `env:${missingName}`]).threw, false);
-    const missingConnections = runCp(['project', 'connections', 'sc002-missing']);
-    assert.equal(missingConnections.threw, false, `SC-002 missing selected-store lookup should not fail; got ${JSON.stringify(missingConnections.body)}`);
-    const missingState = missingConnections.body.connections.github['credential-state'];
-    assert.equal(
-      missingState.state,
-      'absent',
-      `SC-002 missing selected-store value must be classified as absent with a stable state field; got ${JSON.stringify(missingState)}`
-    );
-    assert.equal(missingState['credential-ref'], `env:${missingName}`);
-    assert.doesNotMatch(JSON.stringify(missingConnections.body), /SC002_SECRET_SENTINEL|SC002_ENV_FALLBACK_VALUE/);
-
-    assert.equal(runCp(['project', 'create', 'sc002-gha', '--github-credential-ref', 'github-actions:SC002_TOKEN']).threw, false);
-    const ghaConnections = runCp(['project', 'connections', 'sc002-gha']);
-    assert.equal(ghaConnections.threw, false, `SC-002 github-actions lookup should not fail; got ${JSON.stringify(ghaConnections.body)}`);
-    const ghaState = ghaConnections.body.connections.github['credential-state'];
-    assert.equal(
-      ghaState.state,
-      'unresolved',
-      `SC-002 locally unavailable github-actions store must be classified as unresolved with a stable state field; got ${JSON.stringify(ghaState)}`
-    );
-    assert.equal(ghaState['credential-ref'], 'github-actions:SC002_TOKEN');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('SC-003 nested raw-secret connection payloads are rejected before persistence', async () => {
-  const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-  const manifestPath = path.join(projectsDir, 'sc003-raw.json');
-  const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
-  const server = createServer(createFakePiSessionAdapter());
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    fs.mkdirSync(projectsDir, { recursive: true });
-    const manifestBytes = JSON.stringify({
-      project_id: 'sc003-raw',
-      name: 'SC003 Raw Secret Guard',
-      workspace_root: '.',
-      runs_root: '.agent-runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
-      connections: { github: { 'credential-ref': 'env:SC003_GITHUB_TOKEN' } }
-    }, null, 2);
-    fs.writeFileSync(manifestPath, manifestBytes);
-
-    const response = await fetch(`${base}/api/projects/sc003-raw/connections`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        github: {
-          metadata: [{ access_token: 'SC003_NESTED_SECRET_SENTINEL' }],
-          nested: { 'api-key': 'SC003_NESTED_API_KEY_SENTINEL' }
-        },
-        jira: {
-          credentials: [{ password: 'SC003_NESTED_PASSWORD_SENTINEL' }]
-        }
-      })
-    });
-    const body = await response.json();
-    assert.equal(
-      response.status,
-      400,
-      `SC-003 nested raw-secret keys in maps/arrays must be rejected before connection persistence; got ${response.status} ${JSON.stringify(body)}`
-    );
-    assert.match(body.error?.message || '', /credential|secret|token|password|api-key/i);
-    assert.doesNotMatch(JSON.stringify(body), /SC003_NESTED_SECRET_SENTINEL|SC003_NESTED_API_KEY_SENTINEL|SC003_NESTED_PASSWORD_SENTINEL/);
-    assert.equal(fs.readFileSync(manifestPath, 'utf8'), manifestBytes, 'SC-003 rejected connection writes must leave manifest bytes unchanged');
-  } finally {
-    await close(server);
-    if (previous === null) fs.rmSync(manifestPath, { force: true });
-    else fs.writeFileSync(manifestPath, previous);
-  }
-});
-
-test('SC-001 HTTP connections accepts tesseraft credential refs without raw values', async () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'sc001-http-tesseraft-ref-'));
-  const server = createServer(createFakePiSessionAdapter());
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-    const manifestPath = path.join(projectsDir, 'sc001-http.json');
-    const previous = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : null;
-    fs.mkdirSync(projectsDir, { recursive: true });
-    fs.writeFileSync(manifestPath, JSON.stringify({
-      project_id: 'sc001-http',
-      name: 'SC001 HTTP Tesseraft',
-      workspace_root: '.',
-      runs_root: '.agent-runs',
-      discovery: { 'workflow-roots': ['examples'] },
-      connections: { github: { 'credential-ref': 'env:SC001_HTTP_INITIAL' } }
-    }, null, 2));
-    try {
-      const response = await fetch(`${base}/api/projects/sc001-http/connections`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ github: { credential_ref: 'tesseraft:SC001_HTTP_TOKEN' } })
-      });
-      const body = await response.json();
-      assert.equal(response.status, 200, `HTTP connections must accept tesseraft: refs; got ${response.status} ${JSON.stringify(body)}`);
-      assert.equal(body.connections.github['credential-ref'], 'tesseraft:SC001_HTTP_TOKEN');
-      assert.doesNotMatch(JSON.stringify(body), /SC001_HTTP_SECRET_SENTINEL/);
-    } finally {
-      if (previous === null) fs.rmSync(manifestPath, { force: true });
-      else fs.writeFileSync(manifestPath, previous);
-    }
-  } finally {
-    await close(server);
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: control-plane CRUD + credential-ref validation against a temp workspace', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-crud-'));
-  let outsideDescriptorRoot = '';
-  try {
-    const cp = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8' }));
-
-    // List synthesizes the implicit default when no manifests exist.
-    const listed = cp(['projects']);
-    assert.ok(listed.projects.some((p) => p.project_id === 'default'));
-
-    // Create a project with connection credential-refs.
-    const created = cp(['project', 'create', 'acme', '--name', 'Acme', '--jira-credential-ref', 'env:JIRA_TOKEN', '--github-credential-ref', 'env:GITHUB_TOKEN']);
-    assert.equal(created.project_id, 'acme');
-    assert.equal(created.connections.jira['credential-ref'], 'env:JIRA_TOKEN');
-
-    // Duplicate create exits nonzero (control plane emits an :error body).
-    let dupThrew = false;
-    try { cp(['project', 'create', 'acme']); } catch { dupThrew = true; }
-    assert.equal(dupThrew, true);
-
-    const descriptorRoot = path.join(root, 'descriptor-project');
-    outsideDescriptorRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'outside-local-register-'));
-    fs.mkdirSync(path.join(descriptorRoot, '.tesseraft'), { recursive: true });
-    fs.writeFileSync(path.join(descriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
-      project_id: 'local-acme',
-      name: 'Local Acme',
-      runs_root: 'runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
-      connections: { github: { 'credential-ref': 'env:LOCAL_DESCRIPTOR_GITHUB_TOKEN' } }
-    }, null, 2));
-    fs.mkdirSync(path.join(outsideDescriptorRoot, '.tesseraft'), { recursive: true });
-    fs.writeFileSync(path.join(outsideDescriptorRoot, '.tesseraft', 'project.json'), JSON.stringify({
-      version: 1,
-      project_id: 'outside-local-acme',
-      name: 'Outside Local Acme',
-      runs_root: 'runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-    }, null, 2));
-    const home = path.join(root, 'home');
-    const cpHome = (args) => JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, '--tesseraft-home', home, ...args], { encoding: 'utf8' }));
-
-    const outsideRegistered = cpHome(['project', 'register', outsideDescriptorRoot]);
-    assert.equal(outsideRegistered.project_id, 'outside-local-acme', 'trusted local CLI register accepts descriptor roots outside the invocation workspace');
-    assert.equal(outsideRegistered.source, 'registration');
-
-    const registered = cpHome(['project', 'register', descriptorRoot]);
-    assert.equal(registered.project_id, 'local-acme', 'local CLI register derives project id from descriptor');
-    assert.equal(registered.source, 'registration', 'local CLI register stores a user-local registration');
-    assert.equal(registered.connections.github['credential-ref'], 'env:LOCAL_DESCRIPTOR_GITHUB_TOKEN', 'local CLI register persists descriptor-owned connections');
-    const registryPath = path.join(home, 'projects', 'registry.json');
-    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-    assert.equal(registry.version, 1, 'local CLI register writes the versioned user-local registry');
-    assert.equal(path.normalize(registry.projects?.['local-acme']?.workspace_root || ''), fs.realpathSync(descriptorRoot));
-    assert.equal(registry.projects?.['local-acme']?.connections, undefined, 'user-local registry entries must not persist descriptor-owned connections');
-
-    const registeredDetail = cpHome(['project', 'local-acme']);
-    assert.equal(registeredDetail.project_id, 'local-acme', 'local CLI detail resolves registered descriptor identity');
-    assert.equal(registeredDetail.source, 'registration');
-
-    const unregistered = cpHome(['project', 'unregister', 'local-acme']);
-    assert.equal(unregistered.project_id, 'local-acme');
-    assert.equal(unregistered.deleted, true, 'local CLI unregister removes the user-local registration');
-    const registryAfter = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-    assert.equal(registryAfter.projects?.['local-acme'], undefined, 'local CLI unregister removes only the registry mapping');
-    assert.equal(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'local-acme.json')), false, 'local CLI register/unregister must not use legacy workspace manifest storage');
-    assert.equal(fs.existsSync(path.join(descriptorRoot, '.tesseraft', 'project.json')), true, 'local CLI unregister leaves the descriptor unchanged');
-
-    // Get returns the persisted manifest (no raw tokens present).
-    const got = cp(['project', 'acme']);
-    assert.equal(got.name, 'Acme');
-    assert.equal(got.connections.github['credential-ref'], 'env:GITHUB_TOKEN');
-
-    // Connections endpoint returns masked state and never the raw token.
-    const conns = cp(['project', 'connections', 'acme']);
-    assert.ok(conns.connections.jira || conns.connections.github);
-
-    // Migrate the default project from legacy settings works only when no
-    // default manifest exists yet.
-    const migrated = cp(['project', 'migrate']);
-    assert.equal(migrated.project_id, 'default');
-    assert.match(String(migrated['migrated-from'] || ''), /legacy-settings/);
-
-    // Portable migration fails closed on malformed durable registry state.
-    const portableRoot = path.join(root, 'portable-migration-root');
-    fs.mkdirSync(portableRoot, { recursive: true });
-    const legacyManifest = path.join(root, 'legacy-portable.json');
-    const legacyBytes = JSON.stringify({
-      project_id: 'portable-acme',
-      name: 'Portable Acme',
-      workspace_root: portableRoot,
-      runs_root: 'runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-    }, null, 2);
-    fs.writeFileSync(legacyManifest, legacyBytes);
-    const malformedRegistryBytes = JSON.stringify({ version: 1, projects: [] }, null, 2);
-    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-    fs.writeFileSync(registryPath, malformedRegistryBytes);
-    let malformed;
-    try {
-      cpHome(['project', 'migrate', 'portable-acme', '--legacy-manifest', legacyManifest, '--project-root', portableRoot]);
-    } catch (error) {
-      malformed = JSON.parse(String(error.stdout || '{}'));
-    }
-    assert.equal(malformed?.status, 400, 'portable migration must reject malformed registry state');
-    assert.equal(malformed?.error?.code, 'invalid_project_registry');
-    assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'malformed registry bytes must be preserved exactly');
-    assert.equal(fs.existsSync(path.join(portableRoot, '.tesseraft', 'project.json')), false, 'failed migration must not leave a descriptor behind');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-    if (outsideDescriptorRoot) fs.rmSync(outsideDescriptorRoot, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: path-confinement rejects runs_root and workspace_root escapes (review issues 1 & 2)', () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.agent-runs', 'project-confinement-'));
-  try {
-    const cp = (args) => {
-      try {
-        return { out: JSON.parse(execFileSync('./bin/tesseraft', ['control-plane', '--workspace-root', root, ...args], { encoding: 'utf8', stdio: 'pipe' })), threw: false };
-      } catch (e) {
-        return { out: JSON.parse(String(e.stdout || '{}')), threw: true, stderr: String(e.stderr || '') };
-      }
-    };
-
-    // runs_root traversal escapes are rejected and not persisted.
-    const rr = cp(['project', 'create', 'escape-runs', '--runs-root', '../../../tmp/escape']);
-    assert.equal(rr.threw, true, 'runs_root escape must exit nonzero');
-    assert.equal(rr.out.status, 400, rr.out);
-    assert.match(rr.out.error.message, /runs_root/);
-    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-runs.json')), 'escaped runs_root manifest must not be written');
-
-    // workspace_root relative escape is rejected and not persisted.
-    const wr = cp(['project', 'create', 'escape-ws-rel', '--workspace-root', '../etc/passwd']);
-    assert.equal(wr.threw, true, 'relative workspace_root escape must exit nonzero');
-    assert.equal(wr.out.status, 400, wr.out);
-    assert.match(wr.out.error.message, /workspace_root/);
-    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-rel.json')), 'escaped workspace_root manifest must not be written');
-
-    // workspace_root absolute escape is rejected and not persisted.
-    const wa = cp(['project', 'create', 'escape-ws-abs', '--workspace-root', '/tmp/escape']);
-    assert.equal(wa.threw, true, 'absolute workspace_root escape must exit nonzero');
-    assert.equal(wa.out.status, 400, wa.out);
-    assert.match(wa.out.error.message, /workspace_root/);
-    assert.ok(!fs.existsSync(path.join(root, '.tesseraft', 'projects', 'escape-ws-abs.json')), 'absolute escaped workspace_root manifest must not be written');
-
-    // Sanity: a legitimately scoped project still creates.
-    const ok = cp(['project', 'create', 'ok-proj', '--runs-root', '.agent-runs']);
-    assert.equal(ok.threw, false, ok.out && ok.out.error);
-    assert.equal(ok.out.project_id, 'ok-proj');
-    assert.ok(fs.existsSync(path.join(root, '.tesseraft', 'projects', 'ok-proj.json')));
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP create rejects path escapes with 400 and honors nested discovery.workflow-roots (review issues 1, 2, 3)', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-create-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-create-home');
-  const escapeRoot = path.join(allowedRoot, 'escape-project');
-  const nestedRoot = path.join(allowedRoot, 'nested-project');
-  const connectionRoot = path.join(allowedRoot, 'descriptor-connections-project');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(path.join(escapeRoot, '.tesseraft'), { recursive: true });
-  fs.writeFileSync(path.join(escapeRoot, '.tesseraft', 'project.json'), JSON.stringify({
-    version: 1,
-    project_id: 'http-escape',
-    runs_root: '../../../tmp/escape',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-  }, null, 2));
-  fs.mkdirSync(path.join(nestedRoot, '.tesseraft'), { recursive: true });
-  fs.writeFileSync(path.join(nestedRoot, '.tesseraft', 'project.json'), JSON.stringify({
-    version: 1,
-    project_id: 'nested-discovery',
-    name: 'Nested',
-    discovery: { 'workflow-roots': ['examples/smoke'] }
-  }, null, 2));
-  fs.mkdirSync(path.join(connectionRoot, '.tesseraft'), { recursive: true });
-  fs.writeFileSync(path.join(connectionRoot, '.tesseraft', 'project.json'), JSON.stringify({
-    version: 1,
-    project_id: 'descriptor-connections',
-    name: 'Descriptor Connections',
-    connections: { github: { 'credential-ref': 'env:DESCRIPTOR_GITHUB_TOKEN' } }
-  }, null, 2));
-
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    // POST /api/projects with an escaping descriptor runs_root returns 400, never 201.
-    const escapeRes = await fetch(`${base}/api/projects`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_root: escapeRoot })
-    });
-    assert.equal(escapeRes.status, 400, 'escaped runs_root must be 400, not 201');
-    const escapeBody = await escapeRes.json();
-    assert.match(escapeBody.error.message, /runs_root|workspace_root|path/i, escapeBody);
-    // A follow-up GET must 404 (no manifest created).
-    const gone = await fetch(`${base}/api/projects/http-escape`);
-    assert.equal(gone.status, 404, 'escaped project must not have been persisted');
-
-    // POST with the descriptor-backed design-doc nested discovery shape is honored.
-    const nested = await fetch(`${base}/api/projects`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_root: nestedRoot })
-    });
-    assert.equal(nested.status, 201, 'nested discovery create should succeed');
-    const nestedBody = await nested.json();
-    assert.deepEqual(nestedBody.discovery['workflow-roots'], ['examples/smoke'], 'nested discovery.workflow-roots must be honored');
-
-    // A follow-up GET confirms the nested roots were persisted.
-    const refetch = await fetch(`${base}/api/projects/nested-discovery`);
-    assert.equal(refetch.status, 200);
-    const refetched = await refetch.json();
-    assert.deepEqual(refetched.discovery['workflow-roots'], ['examples/smoke']);
-
-    // Browser registration derives connections from the descriptor, not caller-supplied body fields.
-    const connCreated = await fetch(`${base}/api/projects`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        project_root: connectionRoot,
-        connections: { github: { credential_ref: 'env:CALLER_GITHUB_TOKEN' } }
-      })
-    });
-    assert.equal(connCreated.status, 201, 'descriptor connection registration should succeed');
-    const connBody = await connCreated.json();
-    assert.equal(connBody.connections.github['credential-ref'], 'env:DESCRIPTOR_GITHUB_TOKEN', 'browser registration must derive connections from descriptor');
-    assert.doesNotMatch(JSON.stringify(connBody), /CALLER_GITHUB_TOKEN/, 'caller-supplied connections must not override descriptor state');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-    // Clean up created manifests so listProjects synthesizes the implicit
-    // default for later tests (default is only implicit when no manifests exist).
-    const projectsDir = path.join(process.cwd(), '.tesseraft', 'projects');
-    for (const id of ['nested-discovery', 'http-escape', 'descriptor-connections']) {
-      fs.rmSync(path.join(projectsDir, `${id}.json`), { force: true });
-    }
-  }
-});
-
-test('project abstraction: HTTP portable migration rolls back when final resolution fails', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-resolution-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-resolution-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-resolution-fails',
-    name: 'HTTP Resolution Fails',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    discovery: { unexpected: true }
-  }, null, 2));
-  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-resolution-fails/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    assert.equal(res.status, 400, 'HTTP migration should fail when final project resolution rejects the migrated descriptor');
-    const body = await res.json();
-    assert.equal(body.error?.code, 'invalid_project_descriptor', `HTTP migration should surface final resolution descriptor validation; got ${JSON.stringify(body)}`);
-    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'HTTP failed migration must preserve legacy source bytes');
-    assert.equal(fs.existsSync(descriptorPath), false, 'HTTP failed migration must remove the migration-created descriptor');
-    assert.equal(fs.existsSync(registryPath), false, 'HTTP failed migration must remove the migration-created user registry');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP portable migration rejects malformed registry without durable writes', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-portable',
-    name: 'HTTP Portable',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-  }, null, 2));
-  const malformedRegistryBytes = JSON.stringify({ version: 1, projects: [] }, null, 2);
-  fs.writeFileSync(registryPath, malformedRegistryBytes);
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-portable/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    assert.equal(res.status, 400, 'HTTP migration must reject malformed registry projects state');
-    const body = await res.json();
-    assert.equal(body.error?.code, 'invalid_project_registry');
-    assert.equal(fs.readFileSync(registryPath, 'utf8'), malformedRegistryBytes, 'HTTP migration must preserve malformed registry bytes exactly');
-    assert.equal(fs.existsSync(path.join(projectRoot, '.tesseraft', 'project.json')), false, 'HTTP failed migration must not leave a descriptor behind');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP registry delete rejects whitespace-only registry root without rewriting durable bytes', async () => {
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-registry-whitespace-home');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-  const invalidRegistryBytes = JSON.stringify({
-    version: 1,
-    projects: {
-      'http-whitespace': { workspace_root: '   ', source: 'registration' }
-    }
-  }, null, 2);
-  fs.writeFileSync(registryPath, invalidRegistryBytes);
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter() });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-whitespace`, { method: 'DELETE' });
-    assert.equal(res.status, 400, 'HTTP registry mutation must reject whitespace-only workspace_root');
-    const body = await res.json();
-    assert.equal(body.error?.code, 'invalid_project_registry', `HTTP mutation should report invalid registry state; got ${JSON.stringify(body)}`);
-    assert.match(body.error?.message || '', /workspace_root/i);
-    assert.equal(fs.readFileSync(registryPath, 'utf8'), invalidRegistryBytes, 'HTTP mutation must preserve invalid registry bytes exactly');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP portable migration rejects whitespace-only registry root without durable writes', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-whitespace-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-whitespace-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-whitespace-migrate',
-    name: 'HTTP Whitespace Migrate',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-  }, null, 2));
-  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
-  const invalidRegistryBytes = JSON.stringify({
-    version: 1,
-    projects: {
-      'other-project': { workspace_root: '   ', source: 'registration' }
-    }
-  }, null, 2);
-  fs.writeFileSync(registryPath, invalidRegistryBytes);
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-whitespace-migrate/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    assert.equal(res.status, 400, 'HTTP migration must reject whitespace-only registry workspace_root');
-    const body = await res.json();
-    assert.equal(body.error?.code, 'invalid_project_registry');
-    assert.equal(fs.readFileSync(registryPath, 'utf8'), invalidRegistryBytes, 'HTTP migration must preserve invalid registry bytes exactly');
-    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'HTTP migration must preserve legacy source bytes');
-    assert.equal(fs.existsSync(descriptorPath), false, 'HTTP migration must not create a descriptor when registry state is invalid');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP portable migration returns structured errors for unreadable roots without writes', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-unreadable-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-unreadable-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const missingProjectRoot = path.join(allowedRoot, 'missing-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-unreadable-roots',
-    name: 'HTTP Unreadable Roots',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-  }, null, 2));
-  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const missingProject = await fetch(`${base}/api/projects/http-unreadable-roots/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: missingProjectRoot })
-    });
-    assert.equal(missingProject.status, 400, 'missing request project_root should be a structured 400 validation error');
-    const missingProjectBody = await missingProject.json();
-    assert.equal(missingProjectBody.error?.code, 'invalid_project_root', `missing project_root should not be a generic internal_error; got ${JSON.stringify(missingProjectBody)}`);
-
-    const missingLegacyRoot = path.join(allowedRoot, 'missing-legacy-root');
-    fs.writeFileSync(legacyManifest, JSON.stringify({
-      project_id: 'http-unreadable-roots',
-      name: 'HTTP Unreadable Roots',
-      workspace_root: missingLegacyRoot,
-      runs_root: 'runs',
-      discovery: { 'workflow-roots': ['.tesseraft/workflows'] }
-    }, null, 2));
-    const missingLegacy = await fetch(`${base}/api/projects/http-unreadable-roots/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    assert.equal(missingLegacy.status, 400, 'missing legacy workspace_root should be a structured 400 validation error');
-    const missingLegacyBody = await missingLegacy.json();
-    assert.equal(missingLegacyBody.error?.code, 'invalid_legacy_workspace_root', `missing legacy workspace_root should not be a generic internal_error; got ${JSON.stringify(missingLegacyBody)}`);
-
-    assert.equal(fs.readFileSync(legacyManifest, 'utf8').includes('missing-legacy-root'), true, 'failed validation must not rewrite legacy source bytes');
-    assert.equal(fs.existsSync(descriptorPath), false, 'failed validation must not create a descriptor');
-    assert.equal(fs.existsSync(registryPath), false, 'failed validation must not create a registry');
-    fs.writeFileSync(legacyManifest, legacyBefore);
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP portable migration preserves work-tracker and legacy GitHub/Jira connections', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-connections-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-migrate-connections',
-    name: 'HTTP Migrate Connections',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    discovery: { 'workflow-roots': ['.tesseraft/workflows'] },
-    connections: {
-      github: { 'credential-ref': 'env:WT3_HTTP_MIG_GITHUB' },
-      jira: { 'base-url': 'https://legacy-jira.example', 'credential-ref': 'env:WT3_HTTP_MIG_JIRA' },
-      'work-tracker': { provider: 'plane', 'credential-ref': 'env:WT3_HTTP_MIG_PLANE', config: { 'api-base-url': 'https://plane.example', 'workspace-slug': 'ws', 'project-id': 'pid' } }
-    }
-  }, null, 2));
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-migrate-connections/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    const body = await res.json();
-    assert.equal(res.status, 200, `HTTP migration should succeed with valid legacy connections; got ${res.status} ${JSON.stringify(body)}`);
-    assert.equal(body.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'HTTP migration preserves legacy GitHub connection');
-    assert.equal(body.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'HTTP migration preserves legacy Jira connection');
-    assert.equal(body.connections?.['work-tracker']?.provider, 'plane', 'HTTP migration preserves work-tracker connection');
-    const descriptor = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
-    assert.equal(descriptor.connections?.github?.['credential-ref'], 'env:WT3_HTTP_MIG_GITHUB', 'migrated descriptor persists GitHub connection');
-    assert.equal(descriptor.connections?.jira?.['base-url'], 'https://legacy-jira.example', 'migrated descriptor persists Jira connection');
-    assert.equal(descriptor.connections?.['work-tracker']?.provider, 'plane', 'migrated descriptor persists work-tracker connection');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
-});
-
-test('project abstraction: HTTP portable migration rejects secret-bearing work-tracker without descriptor or registry writes', async () => {
-  const allowedRoot = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-allowed-root');
-  const registryHome = path.join(process.cwd(), '.agent-runs', 'web-http-migrate-secret-home');
-  const projectRoot = path.join(allowedRoot, 'portable-project');
-  const legacyManifest = path.join(allowedRoot, 'legacy-portable.json');
-  const registryPath = path.join(registryHome, 'projects', 'registry.json');
-  const descriptorPath = path.join(projectRoot, '.tesseraft', 'project.json');
-  const previousHome = process.env.TESSERAFT_HOME;
-  fs.mkdirSync(projectRoot, { recursive: true });
-  fs.writeFileSync(legacyManifest, JSON.stringify({
-    project_id: 'http-migrate-secret',
-    name: 'HTTP Migrate Secret',
-    workspace_root: projectRoot,
-    runs_root: 'runs',
-    connections: {
-      'work-tracker': {
-        provider: 'jira',
-        'credential-ref': 'env:WT3_HTTP_MIG_SECRET',
-        config: { 'base-url': 'https://jira.example', 'project-key': 'SEC', nested: [{ refresh_token: 'WT3_HTTP_MIGRATE_SECRET_SENTINEL' }] }
-      }
-    }
-  }, null, 2));
-  const legacyBefore = fs.readFileSync(legacyManifest, 'utf8');
-  process.env.TESSERAFT_HOME = registryHome;
-  const server = createServer({ piSessionAdapter: createFakePiSessionAdapter(), browserAllowedProjectRoots: [allowedRoot] });
-  const port = await listen(server);
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    const res = await fetch(`${base}/api/projects/http-migrate-secret/migrate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ legacy_manifest: legacyManifest, project_root: projectRoot })
-    });
-    const bodyText = await res.text();
-    assert.equal(res.status, 400, `HTTP migration must reject nested raw secret work-tracker payloads; got ${res.status} ${bodyText}`);
-    assert.doesNotMatch(bodyText, /WT3_HTTP_MIGRATE_SECRET_SENTINEL/, 'rejected HTTP migration must not echo the secret value');
-    assert.equal(fs.readFileSync(legacyManifest, 'utf8'), legacyBefore, 'rejected HTTP migration must preserve legacy source bytes');
-    assert.equal(fs.existsSync(descriptorPath), false, 'rejected HTTP migration must not create a descriptor');
-    assert.equal(fs.existsSync(registryPath), false, 'rejected HTTP migration must not create a registry');
-  } finally {
-    await close(server);
-    if (previousHome === undefined) delete process.env.TESSERAFT_HOME;
-    else process.env.TESSERAFT_HOME = previousHome;
-    fs.rmSync(allowedRoot, { recursive: true, force: true });
-    fs.rmSync(registryHome, { recursive: true, force: true });
-  }
+  fs.rmSync(sandbox, { recursive: true, force: true });
 });

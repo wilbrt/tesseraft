@@ -15,7 +15,7 @@ delete-refuses-executing-runs) is already auto-covered by
   - `POST /api/runs/:runId/approvals/:approvalId` — approval decide (~line 821).
   - `DELETE /api/runs/:runId` — delete; **refuses executing runs** (~line 813).
 - Run records (source of truth): `.agent-runs/<workflow>/<run-id>/`
-  (see `docs/WORKFLOW_RUNS.md`).
+  (see `docs/reference/WORKFLOW_RUNS.md`).
 - Automated gate: `npm run web:test` → `test/web-server.test.js` tests
   "smoke start-and-run, step, and resume", "approval pause, decide, and
   resume", "delete-run ... refuses executing runs", and DELETE route tests.

@@ -2,6 +2,7 @@
   (:require
     [tesseraft.cli-args :as cli-args]
     [tesseraft.runtime.core :as runtime]
+    [tesseraft.runtime.operations :as operations]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]
     [cheshire.core :as json]
@@ -23,6 +24,7 @@
       (let [[a b & more] xs
             rest-xs (rest xs)]
         (case a
+          "apply" (recur rest-xs (assoc acc :command "apply"))
           "start" (recur rest-xs (assoc acc :command "start"))
           "step" (recur rest-xs (assoc acc :command "step"))
           "resume" (recur rest-xs (assoc acc :command "resume"))
@@ -30,7 +32,10 @@
           "cancel" (recur rest-xs (assoc acc :command "cancel"))
           "inspect" (recur rest-xs (assoc acc :command "inspect"))
           "decide" (recur rest-xs (assoc acc :command "decide"))
-          "--input" (let [[k v] (parse-input (cli-args/require-value a b))] (recur more (assoc-in acc [:inputs k] v)))
+          "--input" (if (= "apply" (:command acc))
+                      (recur more (assoc acc :input-source (cli-args/require-value a b)))
+                      (let [[k v] (parse-input (cli-args/require-value a b))]
+                        (recur more (assoc-in acc [:inputs k] v))))
           "--run-id" (recur more (assoc acc :run-id (cli-args/require-value a b)))
           "--project-id" (recur more (assoc acc :project-id (cli-args/require-value a b)))
           "--runs-root" (recur more (assoc acc :runs-root (cli-args/require-value a b)))
@@ -78,9 +83,9 @@
 (defn usage! []
   (binding [*out* *err*]
     (println "Usage:")
-    (println "  tesseraft-run <workflow.edn> --input ticket=PROJ-123")
+    (println "  tesseraft-run <workflow.edn> --input item-id=PROJ-123")
     (println "  tesseraft-run <workflow.edn> --executor mock --run-id dry-run-demo")
-    (println "  tesseraft-run start <workflow.edn> --input ticket=PROJ-123")
+    (println "  tesseraft-run start <workflow.edn> --input item-id=PROJ-123")
     (println "  tesseraft-run step --run-dir .agent-runs/name/run-id")
     (println "  tesseraft-run resume --run-dir .agent-runs/name/run-id --max-steps 100")
     (println "  tesseraft-run retry --run-dir .agent-runs/name/run-id [--max-steps 100] [--reason \"...\"] [--repin]")
@@ -119,6 +124,13 @@
   (try
     (let [opts (validate-options! (parse-args args))]
       (case (:command opts)
+        "apply"
+        (let [result (if (= "-" (:input-source opts))
+                       (operations/apply-operation (json/parse-string (slurp *in*) true))
+                       {:status 400 :error {:code "bad_request" :message "apply requires --input -" :details {}}})]
+          (println (json/generate-string result {:pretty true}))
+          (when (:error result) (System/exit 1)))
+
         "start"
         (do (when (str/blank? (:workflow opts)) (usage!))
             (print-result opts (runtime/start! (:workflow opts) opts)))

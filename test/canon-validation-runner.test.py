@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "examples" / "canon-tdd-to-pr" / "scripts" / "run_validation.py"
+RUNNER = ROOT / "examples" / "catalog" / "canon-tdd-to-pr" / "scripts" / "run_validation.py"
 
 
 class ValidationRunnerTest(unittest.TestCase):

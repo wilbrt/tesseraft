@@ -19,7 +19,7 @@ browser**.
     rejects unsafe paths with 400 (~lines 788/797).
 - Workflow package files (source of truth): `.tesseraft/workflows/<name>/`
   (see `docs/SPEC.md`).
-- Lint contract: `schemas/lint-result.schema.json`, `docs/LINTER.md`.
+- Lint contract: `schemas/lint-result.schema.json`, `docs/reference/LINTER.md`.
 - Asset path regex (confinement): `ASSET_PATH_RE` in `web/src-server/routes/api.ts`
   (~line 268): `^[A-Za-z0-9][A-Za-z0-9._/-]*\.(md\.tmpl|md|tmpl|txt)$`.
 - Browse confinement: `GET /api/browse` repo-rooted, rejects escapes
