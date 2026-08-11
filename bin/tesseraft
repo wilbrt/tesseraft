@@ -2,6 +2,11 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BUNDLED_BIN_DIR="$ROOT_DIR/node_modules/.bin"
+if [[ -d "$BUNDLED_BIN_DIR" ]]; then
+  PATH="$BUNDLED_BIN_DIR${PATH:+:$PATH}"
+  export PATH
+fi
 VERSION="$(awk -F'"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' "$ROOT_DIR/package.json")"
 if [[ -z "$VERSION" ]]; then
   echo "tesseraft: package version is missing" >&2

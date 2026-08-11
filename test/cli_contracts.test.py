@@ -203,6 +203,25 @@ def test_version_and_provider_listing_are_stable_and_secret_free():
     assert "SECRET_SENTINEL" not in providers.stdout
 
 
+def test_launcher_exposes_bundled_pi_without_a_global_install(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for command in ("bash", "dirname", "awk", "bb"):
+        executable = shutil.which(command)
+        assert executable, f"{command} is required for this contract test"
+        (fake_bin / command).symlink_to(executable)
+
+    result = run_command(
+        [BIN, "control-plane", "capabilities"],
+        env={"PATH": str(fake_bin)},
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    pi = next(executor for executor in payload["executors"] if executor["id"] == "pi-cli")
+    assert pi["availability"] == {"status": "ready", "executable": "pi"}
+
+
 def test_dependency_doctor_rejects_unknown_profiles_with_clean_usage():
     result = run_command([BIN, "doctor", "--profile", "unknown"])
     assert result.returncode == 2
