@@ -19,13 +19,20 @@ push to GitHub, and create pull requests.
 
 Before running side-effecting nodes, make sure you have:
 
-- `bb`, `pi`, and `gh` installed and on `PATH`;
+- `bb`, Python, Git, and `gh` installed and on `PATH`;
+- the repository's npm dependencies installed with `npm ci`; this provides the
+  pinned Pi CLI under `node_modules/.bin`, which `./bin/tesseraft` adds to
+  workflow `PATH`;
 - for `playwright-code-review-loop`, `deterministic-code-review-loop`, and `supervised-deterministic-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
 - GitHub SSH write access for branch publication;
 - the base branch available, usually `main`;
 - an optional deterministic `--run-id` so the run directory is easy to inspect.
+
+Check the executable layer with `./bin/tesseraft doctor --profile workflow`.
+Windows users can install and verify the complete layer with the
+[WSL 2 quickstart](../guides/WINDOWS_QUICKSTART.md).
 
 ## Safe checks before running
 

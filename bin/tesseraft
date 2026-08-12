@@ -58,7 +58,7 @@ case "$cmd" in
       profile="$2"
       shift 2
     fi
-    [[ "$#" -eq 0 ]] || { echo "Usage: tesseraft doctor [--profile core|web|test|e2e]" >&2; exit 2; }
+    [[ "$#" -eq 0 ]] || { echo "Usage: tesseraft doctor [--profile core|web|workflow|test|e2e]" >&2; exit 2; }
     exec "$ROOT_DIR/scripts/check_deps.sh" "$profile"
     ;;
   ""|-h|--help|help)
@@ -72,7 +72,7 @@ case "$cmd" in
     echo "  control-plane  Inspect and mutate projects, workflows, settings, and runs"
     echo "  migrate   Inspect or apply project, credential, and workflow migrations"
     echo "  web       Serve the local Web console and project-scoped API"
-    echo "  doctor    Verify pinned dependencies for a core, web, test, or e2e profile"
+    echo "  doctor    Verify dependencies for a core, web, workflow, test, or e2e profile"
     echo "  version   Print version information"
     ;;
   *)

@@ -225,7 +225,7 @@ def test_launcher_exposes_bundled_pi_without_a_global_install(tmp_path):
 def test_dependency_doctor_rejects_unknown_profiles_with_clean_usage():
     result = run_command([BIN, "doctor", "--profile", "unknown"])
     assert result.returncode == 2
-    assert "core|web|test|e2e" in result.stderr
+    assert "core|web|workflow|test|e2e" in result.stderr
     assert "Stack trace" not in result.stderr
 
 
@@ -269,6 +269,48 @@ def test_test_dependency_doctor_keeps_exact_babashka_pin(tmp_path):
     )
     assert result.returncode == 1
     assert "bb expected 1.12.218, found 1.13.219" in result.stderr
+
+
+def test_workflow_dependency_doctor_accepts_supported_python_and_checks_commands(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    versions = {
+        "bb": "babashka v1.12.218",
+        "node": "v22.23.2",
+        "npm": "11.18.0",
+        "python3": "3.12",
+    }
+    for command, version in versions.items():
+        executable = fake_bin / command
+        executable.write_text(f'#!/bin/sh\nprintf "{version}\\n"\n')
+        executable.chmod(0o755)
+    for command in ("git", "gh"):
+        executable = fake_bin / command
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+
+    result = run_command(
+        [BIN, "doctor", "--profile", "workflow"],
+        env={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "python3 3.12" in result.stdout
+    assert "compatible; pinned baseline 3.11" in result.stdout
+    assert "ok: gh" in result.stdout
+    assert "ok: pi" in result.stdout
+
+
+def test_installers_expose_python_and_wsl_bootstrap_contracts():
+    generic = run_command([str(ROOT / "scripts" / "install.sh"), "--help"])
+    assert generic.returncode == 0, generic.stderr
+    assert "Python" in generic.stdout
+    assert "--install-deps" in generic.stdout
+
+    wsl = run_command([str(ROOT / "scripts" / "install-wsl.sh"), "--help"])
+    assert wsl.returncode == 0, wsl.stderr
+    assert "GitHub CLI" in wsl.stdout
+    assert "including Pi" in wsl.stdout
 
 
 def test_node_and_fragment_export_import_round_trip(workspace_layout):

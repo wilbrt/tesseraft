@@ -8,9 +8,10 @@ source "$SCRIPT_DIR/toolchain.sh"
 profile="${1:-core}"
 case "$profile" in
   core) tools=(babashka) ;;
-  web) tools=(babashka nodejs npm) ;;
+  web) tools=(babashka nodejs npm python) ;;
+  workflow) tools=(babashka nodejs npm python) ;;
   test|e2e) tools=(babashka nodejs npm python) ;;
-  *) echo "usage: scripts/check_deps.sh [core|web|test|e2e]" >&2; exit 2 ;;
+  *) echo "usage: scripts/check_deps.sh [core|web|workflow|test|e2e]" >&2; exit 2 ;;
 esac
 
 actual_version() {
@@ -51,10 +52,28 @@ same_major_at_least() {
       (actual_minor == expected_minor && actual_patch >= expected_patch)) ))
 }
 
+version_at_least() {
+  local actual="$1" expected="$2"
+  local version_re='^([0-9]+)\.([0-9]+)(\.[0-9]+)?$'
+  local actual_major actual_minor expected_major expected_minor
+
+  [[ "$actual" =~ $version_re ]] || return 1
+  actual_major="${BASH_REMATCH[1]}"
+  actual_minor="${BASH_REMATCH[2]}"
+  [[ "$expected" =~ $version_re ]] || return 1
+  expected_major="${BASH_REMATCH[1]}"
+  expected_minor="${BASH_REMATCH[2]}"
+
+  (( actual_major > expected_major ||
+     (actual_major == expected_major && actual_minor >= expected_minor) ))
+}
+
 compatible_version() {
   local tool="$1" actual="$2" expected="$3"
-  if [[ "$tool" == "babashka" && ( "$profile" == "core" || "$profile" == "web" ) ]]; then
+  if [[ "$tool" == "babashka" && ( "$profile" == "core" || "$profile" == "web" || "$profile" == "workflow" ) ]]; then
     same_major_at_least "$actual" "$expected"
+  elif [[ "$tool" == "python" && ( "$profile" == "web" || "$profile" == "workflow" ) ]]; then
+    version_at_least "$actual" "$expected"
   else
     [[ "$actual" == "$expected" ]]
   fi
@@ -79,6 +98,17 @@ for tool in "${tools[@]}"; do
     fi
   fi
 done
+
+if [[ "$profile" == "workflow" ]]; then
+  for cmd in git gh pi; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "missing: $cmd" >&2
+      missing=1
+    else
+      echo "ok: $cmd -> $(command -v "$cmd")"
+    fi
+  done
+fi
 
 if [[ "$profile" == "e2e" && "$missing" -eq 0 ]]; then
   expected_playwright="$(node -p 'require("./package.json").devDependencies["@playwright/test"]')"
