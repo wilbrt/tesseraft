@@ -92,7 +92,10 @@ Tesseraft is installed. Authentication is intentionally interactive; finish it w
   ssh -T git@github.com
   npm exec -- pi
 
-Inside Pi, run /login, select a provider, then use /model to select a model.
+For OpenCode Go, copy an access token from https://opencode.ai/auth. Inside Pi,
+run /login, select OpenCode Go, paste the token, then use /model to select a
+model. Pi stores the token for future Tesseraft runs. For a non-interactive run,
+set OPENCODE_API_KEY instead.
 After authentication, start Tesseraft with:
 
   ./bin/tesseraft web

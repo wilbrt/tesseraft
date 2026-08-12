@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -69,6 +70,20 @@ class DesignInPracticeWorkflowTest(unittest.TestCase):
             prompt = (PACKAGE / "prompts" / f"{state}.md.tmpl").read_text()
             self.assertIn("Testing is NOT your job", prompt)
             self.assertIn("Do NOT run tests", prompt)
+
+    def test_repository_pinned_pi_catalog_contains_primary_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.copy()
+            env["PI_CODING_AGENT_DIR"] = tmp
+            env["OPENCODE_API_KEY"] = "catalog-check-only"
+            result = subprocess.run(
+                [str(ROOT / "node_modules" / ".bin" / "pi"), "--offline",
+                 "--list-models", "opencode-go"],
+                cwd=ROOT, text=True, capture_output=True, env=env,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertIn("kimi-k3", result.stdout)
+        self.assertIn("kimi-k2.7-code", result.stdout)
 
     def valid_design(self, run_dir):
         design = run_dir / "design"

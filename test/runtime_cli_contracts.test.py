@@ -27,8 +27,8 @@ def test_agent_provider_model_and_thinking_reach_pi_and_durable_log(workspace_la
  :initial :agent
  :states {:agent {:type :agent
                   :executor :pi-cli
-                  :provider "openai"
-                  :model "gpt-4o-mini"
+                  :provider "opencode-go"
+                  :model "kimi-k3"
                   :thinking "medium"
                   :prompt-template "prompts/agent.md.tmpl"
                   :runtime {:cwd "." :timeout "10s"}
@@ -39,8 +39,8 @@ def test_agent_provider_model_and_thinking_reach_pi_and_durable_log(workspace_la
     invalid = workspace / "agent-model-provider-invalid.workflow.edn"
     invalid.write_text(
         workflow.read_text()
-        .replace(':provider "openai"', ':provider ""')
-        .replace(':model "gpt-4o-mini"', ':model 123')
+        .replace(':provider "opencode-go"', ':provider ""')
+        .replace(':model "kimi-k3"', ':model 123')
         .replace(':thinking "medium"', ':thinking "maximum"')
     )
     lint = run_command([BIN, "lint", str(workflow), "--format", "json"])
@@ -69,12 +69,14 @@ run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
     body = json.loads(result.stdout)
     run_dir = Path(body["run"]["dir"])
     argv = argv_path.read_text().splitlines()
-    assert argv[argv.index("--provider") + 1] == "openai"
-    assert argv[argv.index("--model") + 1] == "gpt-4o-mini"
+    # Authentication belongs to Pi. In particular, Tesseraft must invoke Pi
+    # when OpenCode Go is stored by /login and OPENCODE_API_KEY is unset.
+    assert argv[argv.index("--provider") + 1] == "opencode-go"
+    assert argv[argv.index("--model") + 1] == "kimi-k3"
     assert argv[argv.index("--thinking") + 1] == "medium"
     log = (run_dir / "logs/agent-1.log").read_text()
-    assert "PROVIDER: openai" in log
-    assert "MODEL: gpt-4o-mini" in log
+    assert "PROVIDER: opencode-go" in log
+    assert "MODEL: kimi-k3" in log
     assert "THINKING: medium" in log
 
 
