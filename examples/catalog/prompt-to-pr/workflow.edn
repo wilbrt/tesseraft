@@ -34,6 +34,8 @@
   {:type :agent
    :title "Design"
    :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
    :prompt-template "prompts/design.md.tmpl"
    :prompt-output "prompts/generated/design-{{run.attempt}}.md"
    :session-name "prompt-to-pr-design-{{run.attempt}}"
@@ -57,6 +59,8 @@
   {:type :agent
    :title "Execute"
    :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k2.7-code"
    :prompt-template "prompts/execute.md.tmpl"
    :prompt-output "prompts/generated/execute-{{run.round}}.md"
    :session-name "prompt-to-pr-execute-{{run.round}}"
@@ -72,6 +76,8 @@
   {:type :agent
    :title "Review"
    :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
    :prompt-template "prompts/review.md.tmpl"
    :prompt-output "prompts/generated/review-{{run.round}}.md"
    :session-name "prompt-to-pr-review-{{run.round}}"
@@ -87,6 +93,8 @@
   {:type :agent
    :title "Draft PR metadata"
    :executor :pi-cli
+   :provider "opencode-go"
+   :model "kimi-k3"
    :prompt-template "prompts/pr-draft.md.tmpl"
    :prompt-output "prompts/generated/pr-draft.md"
    :session-name "prompt-to-pr-draft"

@@ -76,16 +76,29 @@ The SSH test normally exits after GitHub confirms your account; it does not open
 a remote shell. If `gh auth login` offers to create or upload an SSH key, accept
 that option unless you already manage a WSL-local key.
 
-Start the repository-pinned Pi CLI:
+For OpenCode Go, create or copy an access token from
+[opencode.ai/auth](https://opencode.ai/auth), then start the repository-pinned
+Pi CLI:
 
 ```bash
 npm exec -- pi
 ```
 
-In Pi, run `/login` and select the provider you use, then run `/model` to choose
-a model. Pi credentials are stored in the Linux user's WSL home. A separate Pi
-or GitHub login made on the Windows side is not automatically available inside
-WSL.
+In Pi, run `/login`, select **OpenCode Go**, and paste the access token. Then run
+`/model` and select an `opencode-go` model. Pi stores the credential in
+`~/.pi/agent/auth.json` with user-only permissions, so future Tesseraft runs use
+it automatically. You do not need the OpenCode CLI, a global Pi install, or a
+Pi extension. A Pi or GitHub login made on the Windows side is not automatically
+available inside WSL.
+
+For a non-interactive shell or CI job, supply the same token through the
+environment instead of storing it:
+
+```bash
+export OPENCODE_API_KEY='<access-token>'
+```
+
+Do not commit that value or place it in a workflow file.
 
 If a Tesseraft project relies on default Pi settings rather than provider/model
 values pinned in its workflow, save the selected values globally:

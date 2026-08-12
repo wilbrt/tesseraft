@@ -28,6 +28,10 @@ Before running side-effecting nodes, make sure you have:
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
 - GitHub SSH write access for branch publication;
+- Pi authentication for the provider used by the workflow. For OpenCode Go,
+  run `npm exec -- pi`, use `/login`, and paste an access token from
+  [opencode.ai/auth](https://opencode.ai/auth). Headless runs can set
+  `OPENCODE_API_KEY` instead;
 - the base branch available, usually `main`;
 - an optional deterministic `--run-id` so the run directory is easy to inspect.
 

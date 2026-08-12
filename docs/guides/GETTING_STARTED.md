@@ -29,6 +29,9 @@ node web/server.js
 `npm ci` installs the repository-pinned Pi CLI under `node_modules/.bin`; the
 Tesseraft launcher adds that directory to `PATH`. Use `doctor --profile workflow`
 when preparing to run agent workflows; it additionally checks for Git, `gh`,
-and Pi.
+and Pi. To use OpenCode Go, run `npm exec -- pi`, enter `/login`, select
+**OpenCode Go**, and paste an access token from
+[opencode.ai/auth](https://opencode.ai/auth). Tesseraft then uses Pi's stored
+credential automatically; `OPENCODE_API_KEY` is the non-interactive alternative.
 
 Next, read the [project model](../reference/PROJECTS.md), browse the [tutorial and catalog examples](../../examples/README.md), or inspect the [workflow contract](../../SPEC.md).
