@@ -10,6 +10,7 @@ This guide covers the side-effecting implementation workflows:
 - `examples/catalog/design-in-practice-to-pr/workflow.edn`
 - `examples/catalog/canon-tdd-to-pr/workflow.edn`
 - `examples/catalog/focused-tdd-to-pr/workflow.edn`
+- `examples/catalog/design-interrogated-tdd-to-pr/workflow.edn`
 
 Linting and prompt-collection checks are safe. Full or unbounded runs invoke Pi
 with `--approve` and can create worktrees, change files in the target repository,
@@ -39,6 +40,7 @@ bb test
 ./bin/tesseraft lint examples/catalog/design-in-practice-to-pr/workflow.edn --strict
 ./bin/tesseraft lint examples/catalog/canon-tdd-to-pr/workflow.edn
 ./bin/tesseraft lint examples/catalog/focused-tdd-to-pr/workflow.edn
+./bin/tesseraft lint examples/catalog/design-interrogated-tdd-to-pr/workflow.edn
 ```
 
 For a prompt-collection-only check, start a run and execute just the first node:
@@ -115,6 +117,15 @@ supervision when failure/work fingerprints repeat. Its first two steps are
 safe deterministic intake/context collection; design invokes Pi, worktree
 creation is the first Git side effect, and `create-pr` is the push/GitHub
 boundary. See [DESIGN_IN_PRACTICE_TO_PR.md](../guides/DESIGN_IN_PRACTICE_TO_PR.md).
+
+The design-interrogated focused-TDD variant uses
+`examples/catalog/design-interrogated-tdd-to-pr/workflow.edn` and
+`.agent-runs/design-interrogated-tdd-to-pr/<id>`. An independent design gate
+can return material architecture or duplication critiques to the designer
+before worktree creation. After implementation, validation, or review fails, a
+high-capability failure designer must diagnose the cause and write correction
+guidance before the lower-cost implementer runs again. See
+[DESIGN_INTERROGATED_TDD_WORKFLOW.md](../guides/DESIGN_INTERROGATED_TDD_WORKFLOW.md).
 
 ## Inspecting run state and artifacts
 

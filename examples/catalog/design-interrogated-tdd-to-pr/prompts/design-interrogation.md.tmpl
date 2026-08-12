@@ -1,0 +1,30 @@
+Fresh Pi session: INTERROGATE THE PROPOSED DESIGN INDEPENDENTLY.
+
+Inputs:
+- User prompt: {{run.dir}}/prompt/prompt.md
+- Proposed design and validation plan: {{run.dir}}/design/
+- Repository root and current base-branch code: {{inputs.repo-root}}
+- Base branch: {{inputs.base-branch}}
+
+Goal:
+Determine whether the plan is the best small coherent design for this repository before implementation starts, with special attention to architectural drift and code duplication.
+
+Rules:
+- Read source, tests, history, and repository guidance deeply enough to challenge the plan with concrete evidence. Do not edit source, tests, the proposed design, or the validation plan.
+- Search explicitly for existing implementations, abstractions, helpers, schemas, data flows, and test utilities that overlap the proposed work.
+- Trace affected producers, consumers, persistence formats, APIs, and compatibility boundaries. Look for parallel paths that would create two sources of truth.
+- Challenge misplaced responsibilities, leaky layering, avoidable coupling, duplicated policy, premature generalization, and changes that solve a symptom at the wrong boundary.
+- Check that the validation plan exercises the real architectural seams and important regressions.
+- Prefer the simplest repository-native design. Do not demand a broad refactor merely for stylistic purity.
+- Fail only for material design risks that should be resolved before code is written. Each issue must cite repository evidence, explain impact, and give an executable acceptance criterion.
+- Pass when no material blocker remains, even if optional improvements exist.
+- Do not commit, push, call external services, or create a PR.
+
+Write:
+- Report: {{run.dir}}/design-interrogation/report-{{run.attempt}}.md
+- Status: {{run.dir}}/design-interrogation/status-{{run.attempt}}.json
+- Current material issues on failure only: {{run.dir}}/design-interrogation/issues-{{run.attempt}}.json
+
+Statuses:
+{"status":"pass","summary":"design passed architecture and duplication interrogation","issues_file":null}
+{"status":"fail","summary":"material design risks require revision","issues_file":"design-interrogation/issues-{{run.attempt}}.json"}
