@@ -37,6 +37,13 @@ def test_maintained_workflows_lint(relative):
     assert json.loads(result.stdout)["ok"] is True
 
 
+def test_prompt_to_pr_pins_available_opencode_go_models():
+    workflow = (ROOT / "examples" / "catalog" / "prompt-to-pr" / "workflow.edn").read_text()
+    assert workflow.count(':provider "opencode-go"') == 4
+    assert workflow.count(':model "kimi-k3"') == 3
+    assert workflow.count(':model "kimi-k2.7-code"') == 1
+
+
 def test_every_valid_fixture_manifest_lints():
     manifests = sorted((ROOT / "test" / "fixtures" / "valid").rglob("*.edn"))
     manifests = [
