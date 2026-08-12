@@ -25,7 +25,7 @@
     "web:e2e:ui": "npm run test:e2e:ui"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.2",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "express": "5.2.1",
     "react": "19.2.7",
     "react-dom": "19.2.7"

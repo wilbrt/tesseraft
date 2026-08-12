@@ -4,6 +4,21 @@
 
 This is a side-effecting workflow. A real run invokes the Pi CLI executor with the `opencode-go` provider, creates a Git worktree, edits and commits files, executes repository commands, pushes a branch, and creates a GitHub pull request. Design, independent review, and supervision use `kimi-k3` with high thinking; implementation and corrections use `kimi-k2.7-code`. Use `start`, `step`, and bounded `resume` as described in [WORKFLOW_RUNS.md](../reference/WORKFLOW_RUNS.md).
 
+## Authenticate OpenCode Go
+
+The repository-pinned Pi CLI supports OpenCode Go directly; no OpenCode CLI or
+third-party Pi extension is required. Copy an access token from
+[opencode.ai/auth](https://opencode.ai/auth), then run:
+
+```bash
+npm exec -- pi
+```
+
+Inside Pi, run `/login`, select **OpenCode Go**, and paste the token. Pi stores
+it in `~/.pi/agent/auth.json`, and Tesseraft delegates authentication to Pi when
+the workflow invokes its pinned models. For CI or another non-interactive run,
+set `OPENCODE_API_KEY` instead. Never put the token in a workflow or commit it.
+
 ## State sequence
 
 ```text
