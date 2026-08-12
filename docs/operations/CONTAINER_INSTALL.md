@@ -2,14 +2,15 @@
 
 On Linux containers and Debian/Ubuntu hosts, `scripts/install.sh` installs the
 **whole stack** by default: the Babashka CLI
-(`lint`/`run`/`node`/`control-plane`) **and** the Node.js/npm tier for the Web UI
-(Workflow Studio / Run Console). Use `--core-only` to skip the Node.js requirement.
+(`lint`/`run`/`node`/`control-plane`), Node.js/npm for the Web UI, and Python for
+workflow helper scripts. Use `--core-only` to skip the Node.js/npm and Python
+requirements.
 
 | Tier | Commands | Install-time deps |
 |------|----------|-------------------|
-| **Whole stack** (default) | `lint`, `run`, `node`, `control-plane`, `web` | Babashka static binary + Node.js + npm |
+| **Whole stack** (default) | `lint`, `run`, `node`, `control-plane`, `web` | Babashka static binary + Node.js + npm + Python |
 | **Core only** (`--core-only`) | `lint`, `run`, `node`, `control-plane` | Babashka static binary only |
-| **Agent** | running `:executor :pi-cli` workflows | `pi` CLI + provider keys — a **run-time** concern, mounted at `docker run`, not installed here |
+| **Agent** | running `:executor :pi-cli` workflows | Pinned Pi from `npm ci` + provider credentials supplied at run time |
 
 Babashka publishes [static Linux binaries](https://github.com/babashka/babashka/releases)
 (amd64 + aarch64) with sha256 sidecar files, so there's no JDK build step. The
@@ -38,8 +39,9 @@ ENV PATH="/opt/tesseraft/bin:${PATH}"
 
 `scripts/install.sh` flags:
 
-- `--core-only` — do not require Node.js/npm (CLI tier only).
-- `--install-node` — on Debian/Ubuntu, install the declared Node.js release via NodeSource first (whole-stack).
+- `--core-only` — do not require Node.js/npm/Python (CLI tier only).
+- `--install-deps` — on Debian/Ubuntu, install the checksummed, declared Node.js release and install Python (whole-stack).
+- `--install-node` — backward-compatible alias for `--install-deps`.
 - `--prefix DIR` — where to place `bb` (default `/usr/local`).
 - `--bb-version TAG` — explicitly override the Babashka release declared in `.tool-versions`.
 
@@ -80,15 +82,14 @@ the pinned toolchain without downloading dependencies during startup.
 
 ## Running agent workflows
 
-Agent workflows (`:executor :pi-cli`) are intentionally **not** part of the
-install. They need the `pi` CLI and provider API keys, which are secrets. Mount
-them at run time:
+The image's `npm ci` installs the pinned Pi CLI, and the Tesseraft launcher adds
+it to workflow `PATH`. Agent workflows still need provider credentials, which
+are secrets and must be supplied at run time:
 
 ```bash
 docker run --rm \
   -v "$PWD:/workspace" -w /workspace \
   -e OPENAI_API_KEY \
-  -v ~/.local/bin/pi:/usr/local/bin/pi:ro \
   tesseraft run examples/catalog/prompt-to-pr/workflow.edn --run-id local
 ```
 

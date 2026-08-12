@@ -1,6 +1,7 @@
 # Guides
 
 - [Getting started](GETTING_STARTED.md)
+- [Windows quickstart (WSL 2)](WINDOWS_QUICKSTART.md)
 - [Canonical TDD workflow](CANON_TDD_WORKFLOW.md)
 - [Focused TDD workflow](FOCUSED_TDD_WORKFLOW.md)
 - [Design-interrogated TDD workflow](DESIGN_INTERROGATED_TDD_WORKFLOW.md)
