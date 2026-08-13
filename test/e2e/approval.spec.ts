@@ -23,16 +23,16 @@ test('submits one allowed approval decision and verifies durable runtime state',
   await expect(inspection).toContainText('State');
   await expect(inspection).toContainText(isolatedApprovalRun.expectedBlockedState);
 
-  const approvalPanel = page.getByRole('region', { name: 'Approval decision' });
-  await expect(approvalPanel).toBeVisible();
-  await expect(approvalPanel).toContainText(isolatedApprovalRun.expectedBlockedState);
-  await expect(approvalPanel).toContainText(isolatedApprovalRun.approvalId);
-  await expect(approvalPanel).toContainText(isolatedApprovalRun.question);
-  await expect(approvalPanel).toContainText(isolatedApprovalRun.artifactPath);
-  await expect(approvalPanel).toContainText(isolatedApprovalRun.artifactKind);
-  for (const decision of isolatedApprovalRun.decisions) {
-    await expect(approvalPanel.getByRole('button', { name: decision, exact: true })).toBeVisible();
-  }
+  await page.getByRole('button', { name: /Approvals: review pending decisions/ }).click();
+  const approvalInbox = page.locator('[aria-label="Approval inbox"]');
+  await expect(approvalInbox).toBeVisible();
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.expectedBlockedState);
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.approvalId);
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.question);
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.artifactPath);
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.artifactKind);
+  await expect(approvalInbox.getByRole('button', { name: /^Approve/ })).toBeVisible();
+  await expect(approvalInbox.getByRole('button', { name: /^Request changes/ })).toBeVisible();
 
   const approvalsBefore = await isolatedApprovalRun.apiJson<{ approvals: Array<{ approval_id: string; question?: string; artifacts?: Array<{ path?: string; kind?: string }>; decisions?: Array<{ decision: string; next?: string }>; decision?: unknown }> }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approvals`);
   const pending = approvalsBefore.approvals.find((approval) => approval.approval_id === isolatedApprovalRun.approvalId);
@@ -42,10 +42,17 @@ test('submits one allowed approval decision and verifies durable runtime state',
   expect(pending?.artifacts?.[0]).toMatchObject({ path: isolatedApprovalRun.artifactPath, kind: isolatedApprovalRun.artifactKind });
   expect(pending?.decisions?.map((decision) => decision.decision)).toEqual(isolatedApprovalRun.decisions);
 
-  await approvalPanel.getByLabel('Summary (optional)').fill(isolatedApprovalRun.summary);
-  await approvalPanel.getByRole('button', { name: isolatedApprovalRun.expectedDecision, exact: true }).click();
+  const addedLine = approvalInbox.locator('.approval-source-row.added .line-number');
+  await expect(addedLine).toBeVisible();
+  await addedLine.click();
+  await approvalInbox.getByPlaceholder('Explain what should change at this line…').fill(isolatedApprovalRun.annotation);
+  await approvalInbox.getByRole('button', { name: 'Add annotation' }).click();
+  await expect(approvalInbox).toContainText(isolatedApprovalRun.annotation);
+  await approvalInbox.getByLabel('Overall message').fill(isolatedApprovalRun.summary);
+  await approvalInbox.getByRole('button', { name: /^Request changes/ }).click();
 
-  await expect(approvalPanel).toBeHidden({ timeout: 15_000 });
+  await expect(approvalInbox.getByRole('heading', { name: 'You’re caught up' })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: /Runs: operate and inspect run status/ }).click();
   await page.getByLabel('Show finished runs').check();
 
   await expect.poll(async () => {
@@ -63,20 +70,22 @@ test('submits one allowed approval decision and verifies durable runtime state',
   await expect(inspection).toContainText(isolatedApprovalRun.expectedTerminalState, { timeout: 15_000 });
   await expect(inspection).toContainText('Inactive', { timeout: 15_000 });
 
-  const approvalAfter = await isolatedApprovalRun.apiJson<{ approval: { approval_id: string; decision?: { approval_id: string; decision: string; summary?: string | null } | null } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approval/${encodeURIComponent(isolatedApprovalRun.approvalId)}`);
+  const approvalAfter = await isolatedApprovalRun.apiJson<{ approval: { approval_id: string; decision?: { approval_id: string; decision: string; message?: string | null; summary?: string | null; annotations?: Array<{ artifact_path: string; body: string; anchor: { side?: string; line?: number } }> } | null } }>(`/api/projects/default/runs/${encodeURIComponent(isolatedApprovalRun.runId)}/approval/${encodeURIComponent(isolatedApprovalRun.approvalId)}`);
   expect(approvalAfter.approval.decision).toMatchObject({
     approval_id: isolatedApprovalRun.approvalId,
     decision: isolatedApprovalRun.expectedDecision,
-    summary: isolatedApprovalRun.summary
+    message: isolatedApprovalRun.summary,
+    annotations: [{ artifact_path: isolatedApprovalRun.artifactPath, body: isolatedApprovalRun.annotation, anchor: { side: 'new', line: 1 } }]
   });
 
   const decisionPath = path.join(isolatedApprovalRun.runDir, 'approvals', `${isolatedApprovalRun.approvalId}-decision.json`);
   expect(path.resolve(decisionPath).startsWith(path.resolve(isolatedApprovalRun.workspaceRoot) + path.sep)).toBeTruthy();
-  const decisionRecord = JSON.parse(await fs.readFile(decisionPath, 'utf8')) as { approval_id: string; decision: string; summary?: string | null };
+  const decisionRecord = JSON.parse(await fs.readFile(decisionPath, 'utf8')) as { approval_id: string; decision: string; message?: string | null; annotations?: Array<{ artifact_path: string; body: string }> };
   expect(decisionRecord).toMatchObject({
     approval_id: isolatedApprovalRun.approvalId,
     decision: isolatedApprovalRun.expectedDecision,
-    summary: isolatedApprovalRun.summary
+    message: isolatedApprovalRun.summary,
+    annotations: [{ artifact_path: isolatedApprovalRun.artifactPath, body: isolatedApprovalRun.annotation }]
   });
 
   expect(pageErrors.map((error) => error.message)).toEqual([]);

@@ -6,8 +6,8 @@ import { runControlPlane } from './cli.js';
  * matching the control-plane convention. Returns undefined when no configured
  * identity exists (the runtime then falls back to a default author).
  */
-export const makeGitUserAuthor = async (_req: Request): Promise<{ name: string; email: string } | undefined> => {
-  const result = await runControlPlane(['git-user']);
+export const makeGitUserAuthor = async (_req: Request, projectId?: string): Promise<{ name: string; email: string } | undefined> => {
+  const result = await runControlPlane([...(projectId ? ['--project-id', projectId] : []), 'git-user']);
   const body = result.body as { git_user?: { name?: string | null; email?: string | null } } | undefined;
   const user = body?.git_user;
   if (user && user.name && user.email) return { name: String(user.name), email: String(user.email) };

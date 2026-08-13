@@ -180,8 +180,8 @@
    :artifact {:path "feedback/current.json" :kind "feedback"}
    :presentation {:question "Should this run retry from the current evidence or stop?"
                   :artifacts [{:path "feedback/current.json" :kind "feedback"}]
-                  :decisions [{:decision "retry" :label "Retry" :consequences "Return to implementation with current supervision."}
-                              {:decision "stop" :label "Stop" :consequences "Record run learning and end without creating a PR."}]
+                  :decisions [{:decision "retry" :label "Retry" :consequence "Return to implementation with current supervision."}
+                              {:decision "stop" :label "Stop" :consequence "Record run learning and end without creating a PR." :intent :danger :requires-message true}]
                   :routing {:kind :self}}
    :transitions [{:when {:decision "retry"} :next :implement}
                  {:when {:decision "stop"} :next :record-learning}]}

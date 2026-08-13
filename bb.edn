@@ -16,6 +16,9 @@
   control-plane {:doc "Local control-plane inspection and mutation commands"
                  :requires ([tesseraft.control-plane.cli :as cli])
                  :task (apply cli/-main *command-line-args*)}
+  approvals {:doc "Review and decide pending approvals"
+             :requires ([tesseraft.approvals.cli :as cli])
+             :task (apply cli/-main *command-line-args*)}
   migrate {:doc "Inspect and apply versioned project and workflow migrations"
            :requires ([tesseraft.migration.cli :as cli])
            :task (apply cli/-main *command-line-args*)}

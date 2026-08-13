@@ -123,6 +123,8 @@
 (def load-approval approvals/load-approval)
 (def get-run-approvals approvals/get-run-approvals)
 (def get-run-approval approvals/get-run-approval)
+(def pending-approval? approvals/pending-approval?)
+(def get-pending-approvals approvals/get-pending-approvals)
 (def get-run-comments approvals/get-run-comments)
 (def timestamp approvals/timestamp)
 (def random-id approvals/random-id)

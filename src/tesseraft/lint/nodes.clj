@@ -206,15 +206,34 @@
                          "Timer node must declare :duration")])
 
                  :approval
+                 (let [transition-decisions (->> (spec/transitions n) (keep #(get-in % [:when :decision])) (map str) vec)
+                       presentation-decisions (->> (get-in n [:presentation :decisions]) (map :decision) (map str) vec)
+                       artifacts (get-in n [:presentation :artifacts])]
                  (concat
                    (when-not (:message n)
                      [(err :approval-missing-message [:states id :message]
                            "Approval node must declare :message")])
+                   (when (empty? transition-decisions)
+                     [(err :approval-missing-decision-transition [:states id :transitions]
+                           "Approval node must declare at least one :decision transition")])
+                   (when (and (:presentation n) (str/blank? (str (get-in n [:presentation :question]))))
+                     [(err :approval-missing-question [:states id :presentation :question]
+                           "Approval presentation must declare a question")])
+                   (when (and (:presentation n) (not= (set transition-decisions) (set presentation-decisions)))
+                     [(err :approval-decision-mismatch [:states id :presentation :decisions]
+                           "Approval presentation decisions must exactly match outgoing decision transitions")])
+                   (when (not= (count presentation-decisions) (count (set presentation-decisions)))
+                     [(err :approval-duplicate-decision [:states id :presentation :decisions]
+                           "Approval presentation decision keys must be unique")])
+                   (for [[idx artifact] (map-indexed vector artifacts)
+                         :when (not (spec/safe-relative-path? (:path artifact)))]
+                     (err :invalid-artifact-path [:states id :presentation :artifacts idx :path]
+                          (str "Approval artifact paths must be safe relative paths: " (:path artifact))))
                    (when (and (get-in wf [:policies :require-timeouts])
                               (nil? (:timeout n))
                               (nil? (get-in wf [:defaults :approval-timeout])))
                      [(warn :approval-missing-timeout [:states id :timeout]
-                            "Approval node has no timeout")]))
+                            "Approval node has no timeout")])))
 
                  :router []
                  :terminal []

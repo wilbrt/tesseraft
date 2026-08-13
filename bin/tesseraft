@@ -37,6 +37,10 @@ case "$cmd" in
     shift
     exec bb --config "$ROOT_DIR/bb.edn" control-plane "$@"
     ;;
+  approvals)
+    shift
+    exec bb --config "$ROOT_DIR/bb.edn" approvals "$@"
+    ;;
   migrate)
     shift
     exec bb --config "$ROOT_DIR/bb.edn" migrate "$@"
@@ -70,6 +74,7 @@ case "$cmd" in
     echo "  node      Validate and manage self-contained node packages"
     echo "  fragment  Validate and manage self-contained fragment packages"
     echo "  control-plane  Inspect and mutate projects, workflows, settings, and runs"
+    echo "  approvals Review and decide pending approvals"
     echo "  migrate   Inspect or apply project, credential, and workflow migrations"
     echo "  web       Serve the local Web console and project-scoped API"
     echo "  doctor    Verify dependencies for a core, web, workflow, test, or e2e profile"
@@ -77,7 +82,7 @@ case "$cmd" in
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Usage: tesseraft <lint|run|node|fragment|control-plane|migrate|web|doctor|version> [args]" >&2
+    echo "Usage: tesseraft <lint|run|node|fragment|control-plane|approvals|migrate|web|doctor|version> [args]" >&2
     exit 2
     ;;
 esac

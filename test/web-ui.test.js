@@ -83,11 +83,12 @@ test('App composes the console while useConsoleData owns reads and SSE state', (
   assert.match(controls, /Delete selected run/);
 });
 
-test('run inspection, comments, and approvals stay in focused components', () => {
+test('run inspection and comments stay focused while approvals get a context-first workspace', () => {
+  const app = source('web/src/App.tsx');
   const runPanels = source('web/src/components/RunPanels.tsx');
   const inspection = source('web/src/components/RunInspection.tsx');
   const artifacts = source('web/src/components/ArtifactBrowser.tsx');
-  const approvals = source('web/src/components/ApprovalPanel.tsx');
+  const approvals = source('web/src/components/ApprovalInbox.tsx');
   assert.match(runPanels, /Attempt timeline/);
   assert.match(runPanels, /Issues to inspect/);
   assert.match(inspection, /Latest attempt/);
@@ -95,9 +96,13 @@ test('run inspection, comments, and approvals stay in focused components', () =>
   assert.match(artifacts, /Artifact browser/);
   assert.match(artifacts, /Comments on/);
   assert.match(artifacts, /start_line/);
-  assert.match(approvals, /Manual input · approval/);
-  assert.match(approvals, /approval\?\.decisions/);
-  assert.match(approvals, /approval\.routing/);
+  assert.match(app, /Approvals <span>review<\/span>/);
+  assert.match(app, /<ApprovalInbox/);
+  assert.match(approvals, /Approval inbox/);
+  assert.match(approvals, /Approval evidence viewer/);
+  assert.match(approvals, /artifact_line/);
+  assert.match(approvals, /Resume the run immediately/);
+  assert.doesNotMatch(approvals, /modal/i);
 });
 
 test('Settings composes one authority per concern', () => {

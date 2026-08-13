@@ -10,7 +10,16 @@ tesseraft control-plane --project-id example workflows
 tesseraft control-plane --project-id example runs
 tesseraft control-plane --project-id example run <run-id>
 tesseraft control-plane --project-id example doctor
+tesseraft approvals
+tesseraft approvals list --format json
 ```
+
+`tesseraft approvals` is an interactive inbox over every pending approval in
+the current project. It shows the declared question, context artifacts, and
+decision consequences one request at a time. A decision may include an overall
+message and structured artifact annotations, and the reviewer chooses whether
+to resume the run immediately. `tesseraft approvals decide` exposes the same
+contract for scripts; run `tesseraft approvals --help` for its flags.
 
 Mutations are also available through focused commands and the structured `control-plane apply --input -` boundary. Operations include:
 
@@ -71,6 +80,16 @@ Browser registration is confined to roots supplied by `browserAllowedProjectRoot
 | `GET/POST` | `/api/projects/{id}/runs/{run}/comments` | Read/add artifact comments |
 | `GET` | `/api/projects/{id}/runs/{run}/approvals` | List approval requests and decisions |
 | `POST` | `/api/projects/{id}/runs/{run}/approvals/{approval}` | Persist a decision |
+| `GET` | `/api/projects/{id}/approvals` | List actionable approvals across project runs |
+| `POST` | `/api/projects/{id}/approvals/{approval}/decisions` | Decide one approval and optionally resume its run |
+
+The aggregate decision body requires `run_id` and `decision`. Optional fields
+are `message`, `annotations`, `resume`, and `max_steps`. Each annotation has a
+declared context `artifact_path`, a human `body`, and an `anchor` such as a diff
+file, side, and line. The server validates the decision against the request's
+declared options
+before writing anything. `resume: true` launches a detached bounded resume only
+after the decision advances the approval node successfully.
 
 Deprecated unscoped workflow/run aliases delegate to the same default-project services and emit a `Deprecation` response header. Tesseraft’s own browser client always uses project-scoped routes.
 
@@ -86,7 +105,7 @@ Deprecated unscoped workflow/run aliases delegate to the same default-project se
 ## Safety and concurrency
 
 - Durable JSON/EDN writes use atomic sibling replacement and forced flushes; append-only logs use the runtime single-writer lock.
-- Run mutation checks reject duplicate starts, live single-writer conflicts, unsafe artifact paths, invalid approval replays, and deletion of executing runs.
+- Run mutation checks reject duplicate starts, live single-writer conflicts, unsafe artifact paths, invalid approval replays, stale approval requests, and deletion of executing runs.
 - Secret-bearing request keys are rejected before child-process invocation. Public errors, events, and doctor reports pass through centralized redaction.
 - The server binds to loopback by default. A non-loopback bind requires `--acknowledge-remote-exposure` because no remote authentication layer is provided.
 

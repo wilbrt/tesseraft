@@ -16,6 +16,26 @@ const inspectRuntime = async (runDir: string): Promise<unknown> => {
   const inspected = await runRuntime(['inspect', '--run-dir', runDir, '--format', 'json']);
   return inspected.status === 200 ? inspected.body : null;
 };
+const decideApproval = async (req: Request, res: Response, runId: string, approvalId: string, projectId?: string): Promise<void> => {
+  const body = (req.body || {}) as JsonRecord;
+  const resume = body.resume === true;
+  const maxSteps = typeof body.max_steps === 'number' ? body.max_steps : 100;
+  if (resume && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) {
+    return jsonResponse(res, 400, errorBody(400, 'bad_request', 'max_steps must be an integer from 1 to 1000'));
+  }
+  const author = await makeGitUserAuthor(req, projectId);
+  const decided = await runControlPlaneOperation({ operation: 'run.decide', project_id: projectId, payload: { ...body, run_id: runId, approval_id: approvalId, author } });
+  if (decided.status !== 200) return jsonResponse(res, decided.status, decided.body);
+  const result = operationResult(decided.body);
+  const run = result?.run && typeof result.run === 'object' ? result.run as JsonRecord : null;
+  const runDir = typeof run?.dir === 'string' ? run.dir : undefined;
+  const terminal = typeof run?.status === 'string' && ['done', 'failed', 'error', 'cancelled'].includes(run.status);
+  const background = resume && runDir && !terminal
+    ? startRuntimeOperation({ operation: 'run.resume', payload: { run_dir: runDir, max_steps: maxSteps } })
+    : undefined;
+  const detail = await refreshedRun(runId, projectId);
+  jsonResponse(res, 200, { operation: 'decide', status: resume && background ? 'running' : 'ok', run_id: runId, approval_id: approvalId, decision: body.decision, resumed: Boolean(background), background, result, run_detail: detail.status === 200 ? detail.body : null });
+};
 const snapshot = async (runId: string, projectId?: string): Promise<unknown> => {
   const args = projectId ? ['--project-id', projectId] : [];
   const [detail, events, artifacts, runs] = await Promise.all([
@@ -88,11 +108,7 @@ const registerMutations = (router: Router, prefix: string, scoped: boolean): voi
   router.post(`${prefix}/runs/:runId/approvals/:approvalId`, (req, res, next) => {
     const id = project(req, res); const runId = decodedParam(req, res, 'runId', 'run id'); const approvalId = decodedParam(req, res, 'approvalId', 'approval id');
     if (id === null || !runId || !approvalId) return;
-    void makeGitUserAuthor(req).then((author) => runControlPlaneOperation({ operation: 'run.decide', project_id: id, payload: { ...(req.body || {}), run_id: runId, approval_id: approvalId, author } })).then(async (r) => {
-      if (r.status !== 200) return jsonResponse(res, r.status, r.body);
-      const detail = await refreshedRun(runId, id);
-      jsonResponse(res, 200, { operation: 'decide', status: 'ok', run_id: runId, approval_id: approvalId, decision: req.body?.decision, result: operationResult(r.body), run_detail: detail.status === 200 ? detail.body : null });
-    }).catch(next);
+    void decideApproval(req, res, runId, approvalId, id).catch(next);
   });
   router.post(`${prefix}/runs/:runId/comments`, (req, res, next) => {
     const id = project(req, res); const runId = decodedParam(req, res, 'runId', 'run id'); if (id === null || !runId) return;
@@ -117,6 +133,14 @@ export const createRunsRouter = (): Router => {
   router.get('/runs/:runId/comments', (req, res, next) => { const id = decodedParam(req, res, 'runId', 'run id'); if (id) legacy(['comments', id, '--path', typeof req.query.path === 'string' ? req.query.path : ''])(req, res, next); });
 
   router.get('/projects/:projectId/runs', (req, res, next) => { const id = projectIdParam(req, res); if (id) controlPlaneGet(['--project-id', id, 'runs'])(req, res, next); });
+  router.get('/projects/:projectId/approvals', (req, res, next) => { const id = projectIdParam(req, res); if (id) controlPlaneGet(['--project-id', id, 'pending-approvals'])(req, res, next); });
+  router.post('/projects/:projectId/approvals/:approvalId/decisions', (req, res, next) => {
+    const id = projectIdParam(req, res); const approvalId = decodedParam(req, res, 'approvalId', 'approval id');
+    const runId = typeof req.body?.run_id === 'string' ? req.body.run_id : '';
+    if (!id || !approvalId) return;
+    if (!runId) return jsonResponse(res, 400, errorBody(400, 'bad_request', 'run_id is required'));
+    void decideApproval(req, res, runId, approvalId, id).catch(next);
+  });
   for (const [suffix, command] of [['', 'run'], ['/events', 'events'], ['/artifacts', 'artifacts'], ['/approvals', 'approvals']] as const) router.get(`/projects/:projectId/runs/:runId${suffix}`, (req, res, next) => { const id = projectIdParam(req, res); const run = decodedParam(req, res, 'runId', 'run id'); if (id && run) controlPlaneGet(['--project-id', id, command, run])(req, res, next); });
   router.get('/projects/:projectId/runs/:runId/artifact', (req, res, next) => { const id = projectIdParam(req, res); const run = decodedParam(req, res, 'runId', 'run id'); const p = typeof req.query.path === 'string' ? req.query.path : ''; if (id && run && p) controlPlaneGet(['--project-id', id, 'artifact', run, p])(req, res, next); else if (id && run) jsonResponse(res, 400, errorBody(400, 'bad_request', 'Missing artifact path')); });
   router.get('/projects/:projectId/runs/:runId/approval/:approvalId', (req, res, next) => { const id = projectIdParam(req, res); const run = decodedParam(req, res, 'runId', 'run id'); const approval = decodedParam(req, res, 'approvalId', 'approval id'); if (id && run && approval) controlPlaneGet(['--project-id', id, 'approval', run, approval])(req, res, next); });

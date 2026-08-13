@@ -69,3 +69,31 @@
         (is (= "executing" (:liveness (control-plane/derive-liveness summary attempts)))))
       (finally
         (fs/delete-tree base)))))
+
+(deftest pending-approval-inbox-requires-current-blocked-state-and-attempt
+  (let [base (temp-dir "tesseraft-pending-approvals")
+        current (str base "/runs/review/current")
+        stale (str base "/runs/review/stale")]
+    (try
+      (doseq [dir [current stale]]
+        (fs/create-dirs (str dir "/approvals")))
+      (spit (str current "/state.edn")
+            (pr-str {:workflow {:name "review"}
+                     :run {:id "current" :dir current :status "blocked" :state :gate :attempt 2}}))
+      (spit (str current "/approvals/gate-2.json")
+            "{\"approval_id\":\"gate-2\",\"run_id\":\"current\",\"state\":\"gate\",\"attempt\":2,\"question\":\"Ship?\",\"status\":\"pending\"}")
+      (spit (str stale "/state.edn")
+            (pr-str {:workflow {:name "review"}
+                     :run {:id "stale" :dir stale :status "running" :state :after :attempt 2}}))
+      (spit (str stale "/approvals/gate-1.json")
+            "{\"approval_id\":\"gate-1\",\"run_id\":\"stale\",\"state\":\"gate\",\"attempt\":1,\"question\":\"Old?\",\"status\":\"pending\"}")
+      (let [result (control-plane/get-pending-approvals {:workspace-root base :runs-root "runs"} "default")]
+        (is (= 1 (count (:approvals result))))
+        (is (= "current" (get (first (:approvals result)) "run_id")))
+        (is (= "gate-2" (get (first (:approvals result)) "approval_id"))))
+      (spit (str current "/approvals/gate-2-decision.json")
+            "{\"approval_id\":\"gate-2\",\"decision\":\"approve\"}")
+      (is (empty? (:approvals (control-plane/get-pending-approvals
+                                {:workspace-root base :runs-root "runs"} "default"))))
+      (finally
+        (fs/delete-tree base)))))

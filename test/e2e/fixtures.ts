@@ -42,6 +42,7 @@ type Pw7ApprovalScenario = {
   artifactPath: string;
   artifactKind: string;
   summary: string;
+  annotation: string;
   decisions: string[];
 };
 
@@ -124,7 +125,10 @@ const pw7WorkflowEdn = (name: string, question: string, artifactPath: string, ar
                    :title "PW7 approval gate"
                    :message "${question}"
                    :timeout "1m"
-                   :artifact {:path "${artifactPath}" :kind "${artifactKind}"}
+                   :presentation {:question "${question}"
+                                  :artifacts [{:path "${artifactPath}" :kind "${artifactKind}" :label "Proposed patch"}]
+                                  :decisions [{:decision "approve" :label "Approve" :consequence "Ship the proposed patch." :intent "primary"}
+                                              {:decision "changes-requested" :label "Request changes" :consequence "Return the run for revision." :intent "danger" :requires-message true}]}
                    :transitions [{:when {:decision "approve"} :next :done}
                                   {:when {:decision "changes-requested"} :next :revise}]}
           :revise {:type :timer
@@ -246,14 +250,13 @@ export const test = base.extend<{}, WorkerFixtures>({
     const workflowDir = isolatedWorkspace.workflowPackagePath(workflowName);
     const workflowPath = path.join(workflowDir, 'workflow.edn');
     const question = `PW7 approval question for ${runId}: approve the isolated artifact?`;
-    const artifactPath = 'review-evidence/pw7-approval-context.md';
-    const artifactKind = 'approval-context';
+    const artifactPath = 'review-evidence/pw7-change.diff';
+    const artifactKind = 'diff';
     const summary = `PW7 UI summary for ${runId}`;
+    const annotation = `PW7 inline feedback for ${runId}`;
 
     await fs.mkdir(workflowDir, { recursive: true });
-    await fs.mkdir(path.join(isolatedWorkspace.workspaceRoot, path.dirname(artifactPath)), { recursive: true });
     await fs.writeFile(workflowPath, pw7WorkflowEdn(workflowName, question, artifactPath, artifactKind));
-    await fs.writeFile(path.join(isolatedWorkspace.workspaceRoot, artifactPath), `# PW7 approval context\n\nRun: ${runId}\nWorkflow: ${workflowName}\n`);
     expectUnder(isolatedWorkspace.workspaceRoot, workflowPath);
 
     const startResponse = await fetch(`${isolatedWorkspace.baseURL}/api/projects/default/runs`, {
@@ -270,6 +273,8 @@ export const test = base.extend<{}, WorkerFixtures>({
     const blocked = await isolatedWorkspace.apiJson<{ run: { path: string } }>(`/api/projects/default/runs/${encodeURIComponent(runId)}`);
     const runDir = path.resolve(isolatedWorkspace.workspaceRoot, blocked.run.path);
     expectUnder(isolatedWorkspace.workspaceRoot, runDir);
+    await fs.mkdir(path.join(runDir, path.dirname(artifactPath)), { recursive: true });
+    await fs.writeFile(path.join(runDir, artifactPath), `diff --git a/src/example.ts b/src/example.ts\n--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-old-${runId}\n+new-${runId}\n`);
     const approvals = await isolatedWorkspace.apiJson<{ approvals: Array<{ approval_id: string; state: string; question?: string; decision?: unknown }> }>(`/api/projects/default/runs/${encodeURIComponent(runId)}/approvals`);
     const pending = approvals.approvals.find((approval) => approval.state === 'gate-1' && approval.question === question && !approval.decision);
     expect(pending, 'PW7 pending approval record').toBeTruthy();
@@ -282,12 +287,13 @@ export const test = base.extend<{}, WorkerFixtures>({
       runDir,
       approvalId: pending!.approval_id,
       expectedBlockedState: 'gate-1',
-      expectedDecision: 'approve',
-      expectedTerminalState: 'done',
+      expectedDecision: 'changes-requested',
+      expectedTerminalState: 'failed',
       question,
       artifactPath,
       artifactKind,
       summary,
+      annotation,
       decisions: ['approve', 'changes-requested']
     });
   }, { scope: 'worker' }],

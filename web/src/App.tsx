@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { WorkflowPanels } from './components/WorkflowPanels';
 import { WorkflowStudio } from './components/WorkflowStudio';
 import { RunListTable } from './components/RunListTable';
-import { ApprovalPanel } from './components/ApprovalPanel';
+import { ApprovalInbox } from './components/ApprovalInbox';
 import { RunControls } from './components/RunControls';
 import { PiSessionsPanel } from './components/PiSessionsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -14,7 +14,7 @@ import { isActiveRun } from './lib/runConsole';
 import { ProjectContext, loadProjectId, storeProjectId } from './lib/project';
 import './style.css';
 
-type ActiveTab = 'workflows' | 'runs' | 'pi-sessions' | 'settings' | 'studio';
+type ActiveTab = 'workflows' | 'runs' | 'approvals' | 'pi-sessions' | 'settings' | 'studio';
 
 export const App = () => {
   const [projectId, setProjectIdState] = useState<string>(loadProjectId);
@@ -31,6 +31,7 @@ export const App = () => {
   const activeSectionLabel: Record<ActiveTab, string> = {
     workflows: 'Workflows',
     runs: 'Runs',
+    approvals: 'Approvals',
     'pi-sessions': 'Pi Sessions',
     'settings': 'Settings',
     studio: 'Workflow Studio'
@@ -63,6 +64,7 @@ export const App = () => {
         <nav className="tabs" aria-label="Run Console sections">
           <button type="button" className={activeTab === 'workflows' ? 'active' : ''} aria-pressed={activeTab === 'workflows'} aria-label="Workflows: inspect workflow graphs" onClick={() => setActiveTab('workflows')}>Workflows <span>inspect</span></button>
           <button type="button" className={activeTab === 'runs' ? 'active' : ''} aria-pressed={activeTab === 'runs'} aria-label="Runs: operate and inspect run status" onClick={() => setActiveTab('runs')}>Runs <span>operate</span></button>
+          <button type="button" className={activeTab === 'approvals' ? 'active' : ''} aria-pressed={activeTab === 'approvals'} aria-label="Approvals: review pending decisions" onClick={() => setActiveTab('approvals')}>Approvals <span>review</span></button>
           <button type="button" className={activeTab === 'pi-sessions' ? 'active' : ''} aria-pressed={activeTab === 'pi-sessions'} aria-label="Pi Sessions: chat with Pi sessions" onClick={() => setActiveTab('pi-sessions')}>Pi Sessions <span>chat</span></button>
           <button type="button" className={activeTab === 'settings' ? 'active' : ''} aria-pressed={activeTab === 'settings'} aria-label="Settings: configure Pi defaults, credential references, repo root, and git identity" onClick={() => setActiveTab('settings')}>Settings <span>config</span></button>
           <button type="button" className={activeTab === 'studio' ? 'active' : ''} aria-pressed={activeTab === 'studio'} aria-label="Workflow Studio: author workflows on a canvas" onClick={() => { setActiveTab('studio'); setStudioWorkflowName(studioWorkflowName); }}>Studio <span>author</span></button>
@@ -86,13 +88,13 @@ export const App = () => {
               onToggleRow={handleToggleRow}
               onSelectNode={setSelectedNodeId}
             />
-            <ApprovalPanel runId={selectedRun} onRefresh={refreshAfterMutation} />
           </>
         )}
+        {activeTab === 'approvals' && <ApprovalInbox />}
         {activeTab === 'pi-sessions' && <PiSessionsPanel />}
         {activeTab === 'settings' && <FullWidthPage><SettingsPanel onColorSchemeChange={setColorScheme} /></FullWidthPage>}
         {activeTab === 'studio' && <WorkflowStudio initialWorkflowName={studioWorkflowName} onExit={() => setActiveTab('workflows')} onWorkflowsChanged={refreshWorkflows} />}
-        {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
+        {activeTab !== 'pi-sessions' && activeTab !== 'settings' && activeTab !== 'studio' && activeTab !== 'approvals' && <RunControls workflows={workflows.data} selectedWorkflow={selectedWorkflow} workflowDetail={workflowDetail} selectedRun={selectedRun} runDetail={runDetail} onRefresh={refreshAfterMutation} wizardOpen={wizardOpen} onWizardOpenChange={setWizardOpen} />}
       </main>
     </div>
     </ProjectContext.Provider>

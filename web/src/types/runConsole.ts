@@ -59,8 +59,10 @@ export type EventRecord = { event?: string; type?: string; state?: string; from?
 export type Comment = { id: string; path: string; anchor?: { start_line?: number | null; end_line?: number | null } | null; body: string; author?: { name?: string; email?: string } | string | null; created_at?: string };
 export type CommentsResponse = { run_id: string; path: string; comments: Comment[] };
 export type ApprovalArtifact = { path?: string; kind?: string; label?: string; render?: string; required?: boolean };
-export type ApprovalDecisionOption = { decision: string; label?: string; next?: string; consequence?: string };
+export type ApprovalDecisionOption = { decision: string; label?: string; next?: string; consequence?: string; consequences?: string; intent?: string; requires_message?: boolean; 'requires-message'?: boolean };
 export type ApprovalRouting = { kind?: string };
+export type ApprovalAnnotationAnchor = { kind: 'diff' | 'text'; file?: string; side?: 'old' | 'new'; line?: number; artifact_line?: number; start_line?: number; end_line?: number };
+export type ApprovalAnnotation = { id: string; artifact_path: string; body: string; anchor: ApprovalAnnotationAnchor };
 export type ApprovalRequest = {
   approval_id: string;
   run_id: string;
@@ -78,9 +80,14 @@ export type ApprovalRequest = {
   requested_at?: string;
   status?: string;
   decision?: ApprovalDecision | null;
+  project_id?: string;
+  workflow_name?: string;
+  run_status?: string;
+  run_path?: string;
 };
-export type ApprovalDecision = { approval_id: string; decision: string; summary?: string | null; author: { name: string; email: string }; decided_at: string };
+export type ApprovalDecision = { approval_id: string; decision: string; message?: string | null; summary?: string | null; annotations?: ApprovalAnnotation[]; author: { name: string; email: string }; decided_at: string };
 export type ApprovalsResponse = { run_id: string; approvals: ApprovalRequest[] };
+export type PendingApprovalsResponse = { project_id: string; approvals: ApprovalRequest[] };
 export type ApprovalResponse = { approval: ApprovalRequest };
 export type MutationResult = { operation?: string; status?: string; code?: string; run_id?: string; approval_id?: string; decision?: string; cli?: unknown; latest_runtime?: unknown; run_detail?: unknown };
 
