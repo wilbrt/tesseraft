@@ -288,9 +288,33 @@ export type WorkflowContract = {
   "type": "approval";
   "title"?: string;
   "message": string;
-  "artifact"?: string;
+  "timeout"?: string;
+  "artifact"?: string | {
+  "path": string;
+  "kind"?: string;
+  "label"?: string;
+  "render"?: string;
+  "required"?: boolean;
+};
   "presentation"?: {
-
+  "question": string;
+  "artifacts"?: Array<{
+  "path": string;
+  "kind"?: string;
+  "label"?: string;
+  "render"?: string;
+  "required"?: boolean;
+}>;
+  "decisions": Array<{
+  "decision": string;
+  "label"?: string;
+  "consequence"?: string;
+  "intent"?: "default" | "primary" | "danger";
+  "requires-message"?: boolean;
+}>;
+  "routing"?: {
+  "kind"?: "self";
+};
 };
   "transitions": Array<{
   "when"?: Record<string, string | number | boolean | null>;

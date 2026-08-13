@@ -19,9 +19,12 @@
 
 (defn render-artifact [ctx node]
   (when-let [art (:artifact node)]
-    (cond-> art
-      (string? (:path art))
-      (assoc :path (spec/render-template-string (:path art) ctx)))))
+    (cond
+      (string? art) {:path (spec/render-template-string art ctx)}
+      (map? art) (cond-> art
+                   (string? (:path art))
+                   (assoc :path (spec/render-template-string (:path art) ctx)))
+      :else art)))
 
 ;; ---- approval presentation contract ----
 ;; The Web UI should render the decision screen from the durable request
@@ -37,6 +40,17 @@
   (if-let [pres (:presentation node)]
     (-> pres
         (update :question #(some-> % str))
+        (update :decisions
+                (fn [decisions]
+                  (mapv (fn [decision]
+                          ;; `consequences` shipped in early examples. Keep it
+                          ;; readable while materializing the canonical
+                          ;; singular wire field.
+                          (cond-> decision
+                            (and (nil? (:consequence decision))
+                                 (:consequences decision))
+                            (assoc :consequence (:consequences decision))))
+                        decisions)))
         (update :artifacts
                 (fn [arts]
                   (mapv (fn [a]
@@ -64,7 +78,9 @@
     ;; the node's :transitions :when {:decision "..."} can match, then advance.
     (let [result {:status "ok" :ok true
                   :approval_id (:approval_id decision)
-                  :decision (:decision decision)}
+                  :decision (:decision decision)
+                  :message (or (:message decision) (:summary decision))
+                  :annotations (:annotations decision [])}
           ; spec/match-transition? compares :when predicates against result keys.
           tr (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
                  (throw (ex-info "No approval transition matched the recorded decision"
@@ -73,12 +89,25 @@
                                   :state (name state-id)
                                   :attempt attempt
                                   :approval_id (:approval_id decision)
-                                  :decision (:decision decision)})
+                                  :decision (:decision decision)
+                                  :message_present (boolean (seq (:message result)))
+                                  :annotation_count (count (:annotations result))})
           ctx (store/event! ctx {:event "transition.selected"
                                   :from (name state-id)
                                   :to (name (:next tr))
                                   :effects (mapv name (:effects tr []))})
-          advanced (finish-if-terminal wf (advance ctx tr result))]
+          ;; A decision releases the block. A terminal destination will replace
+          ;; running with done; a nonterminal destination stays running/parked
+          ;; and can optionally be resumed by the caller.
+          active (assoc-in ctx [:run :status] "running")
+          advanced (-> (advance active tr result)
+                       (assoc :last-approval
+                              {:approval-id (:approval_id decision)
+                               :decision (:decision decision)
+                               :message (:message result)
+                               :annotations (:annotations result)
+                               :decision-path (str "approvals/" (:approval_id decision) "-decision.json")})
+                       (#(finish-if-terminal wf %)))]
       (store/save-context! advanced))
     ;; Pause: no decision yet. Write the approval-request record (idempotent),
     ;; append approval.requested only on first creation, mark the run blocked,

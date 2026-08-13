@@ -360,23 +360,66 @@
 ;; Returns either {:run <advanced-run-map>} on success or a structured error
 ;; {:status N :error {:code ... :message ...}} on a recoverable failure, so the
 ;; caller can print JSON and map status to HTTP codes without a try/catch.
-;; Idempotent: a second decide on an already-decided approval returns 409
-;; conflict. This is the load-bearing mutation behind POST /approvals/{id}.
+;; Idempotent: repeated or stale decisions return 409 and never overwrite the
+;; accepted record. This is the load-bearing mutation behind POST
+;; /approvals/{id}.
 (defn decide!
   ([run-dir approval-id decision]
    (decide! run-dir approval-id decision nil nil))
-  ([run-dir approval-id decision summary author-overrides]
-   (let [ctx (store/load-context run-dir)
-         wf-file (get-in ctx [:workflow :file])
-         wf (spec/read-workflow wf-file)
-         state-id (get-in ctx [:run :state])
-         attempt (get-in ctx [:run :attempt])
-         node (spec/node wf state-id)
-         expected-id (str (name state-id) "-" attempt)]
-     (cond
+  ([run-dir approval-id decision message author-overrides]
+   (decide! run-dir approval-id decision message nil author-overrides))
+  ([run-dir approval-id decision message annotations author-overrides]
+   (store/with-run-lock
+    run-dir
+    (fn []
+     (let [ctx (store/load-context run-dir)
+           wf-file (get-in ctx [:workflow :file])
+           wf (spec/read-workflow wf-file)
+           state-id (get-in ctx [:run :state])
+           attempt (get-in ctx [:run :attempt])
+           node (spec/node wf state-id)
+           expected-id (str (name state-id) "-" attempt)
+           request-path (approval-request-path ctx state-id attempt)
+           request (when (fs/exists? request-path) (store/read-json request-path))
+           decision (some-> decision str)
+           message (some-> message str)
+           annotations (or annotations [])
+           artifact-paths (->> (concat (:artifacts request)
+                                       (when-let [artifact (:artifact request)] [artifact]))
+                               (keep #(when (map? %) (:path %)))
+                               (map str)
+                               set)
+           allowed (->> (spec/transitions node)
+                        (keep #(get-in % [:when :decision]))
+                        (map str)
+                        vec)
+           option (some #(when (= decision (str (:decision %))) %)
+                        (get-in node [:presentation :decisions]))
+           unsafe-annotation-path?
+           (fn [p]
+             (let [p (str p)]
+               (or (str/blank? p)
+                   (fs/absolute? (fs/path p))
+                   (some #{".."} (str/split p #"[/\\\\]")))))
+           invalid-annotation
+           (some (fn [annotation]
+                   (cond
+                     (not (map? annotation)) "annotations must contain objects"
+                     (str/blank? (str (:body annotation))) "annotation body is required"
+                     (> (count (str (:body annotation))) 20000) "annotation body is too long"
+                     (unsafe-annotation-path? (:artifact_path annotation)) "annotation artifact_path must be a safe relative path"
+                     (not (contains? artifact-paths (str (:artifact_path annotation)))) "annotation artifact_path must name a declared approval artifact"
+                     (not (map? (:anchor annotation))) "annotation anchor is required"
+                     :else nil))
+                 annotations)]
+       (cond
        (or (nil? node) (not= :approval (:type node)))
        {:status 422 :error {:code "not_approval"
                             :message (str "Current state " state-id " is not an approval node")}}
+
+       (not= "blocked" (get-in ctx [:run :status]))
+       {:status 409 :error {:code "approval_not_pending"
+                            :message "The run is not blocked on this approval"}}
 
        (not= expected-id approval-id)
        {:status 409 :error {:code "stale_approval"
@@ -387,6 +430,26 @@
        (fs/exists? (approval-decision-path ctx state-id attempt))
        {:status 409 :error {:code "conflict"
                             :message "A decision has already been recorded for this approval"}}
+
+       (or (str/blank? decision) (not (some #{decision} allowed)))
+       {:status 422 :error {:code "invalid_decision"
+                            :message "Decision is not allowed for this approval"
+                            :details {:provided decision :allowed_decisions allowed}}}
+
+       (and (:requires-message option) (str/blank? message))
+       {:status 422 :error {:code "message_required"
+                            :message "This decision requires a message"}}
+
+       (> (count (or message "")) 100000)
+       {:status 422 :error {:code "message_too_long"
+                            :message "Decision message is too long"}}
+
+       (> (count annotations) 200)
+       {:status 422 :error {:code "too_many_annotations"
+                            :message "A decision may contain at most 200 annotations"}}
+
+       invalid-annotation
+       {:status 422 :error {:code "invalid_annotation" :message invalid-annotation}}
 
        :else
        (let [author (or (when (and (map? author-overrides)
@@ -402,13 +465,18 @@
                            :state (name state-id)
                            :attempt attempt
                            :decision decision
-                           :summary summary
+                           :message message
+                           ;; Preserve the v1 reader field while callers move
+                           ;; to the clearer `message` name.
+                           :summary message
+                           :annotations annotations
                            :author author
                            :decided_at (store/now)}
              dec-path (approval-decision-path ctx state-id attempt)]
          (store/write-runtime-json! ctx dec-path decision-rec)
          ;; step! now sees the decision record and advances the run.
-         {:run (:run (step! wf ctx))})))))
+         {:run (:run (step! wf ctx))
+          :last-approval (:last-approval (store/load-context run-dir))})))))))
 
 (defn assert-lint-ok! [workflow-file]
   (let [result (lint/lint-file workflow-file)]

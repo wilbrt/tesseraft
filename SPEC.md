@@ -151,7 +151,20 @@ Process nodes are the language-neutral plugin mechanism. They receive a JSON req
 
 ## 10. Timer, approval, router, terminal
 
-Timer nodes declare `:duration`. Approval nodes declare `:message` and transitions based on `:decision`. Router nodes only evaluate transitions and apply declared effects. Terminal nodes declare `:status :success` or `:status :failure`.
+Timer nodes declare `:duration`. Approval nodes declare `:message` and
+transitions based on `:decision`. They may also declare a `:presentation` with
+a reviewer-facing `:question`, run-relative `:artifacts`, and one presentation
+entry per decision transition. Each entry declares `:decision` and may add a
+`:label`, `:consequence`, visual `:intent`, and `:requires-message`. The
+materialized approval request is the durable UI/CLI contract.
+
+An approval is pending only while its request matches the blocked run's current
+state and attempt and has no decision record. A decision contains the selected
+transition plus an optional human message and structured artifact annotations.
+Writing a valid decision advances the approval node exactly once; resuming
+subsequent nodes is a separate caller choice. Router nodes only evaluate
+transitions and apply declared effects. Terminal nodes declare `:status
+:success` or `:status :failure`.
 
 ## 11. Transitions and effects
 

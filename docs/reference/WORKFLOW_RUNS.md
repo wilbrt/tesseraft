@@ -105,6 +105,25 @@ Resume with a bounded number of steps:
   --format json
 ```
 
+Review every run currently waiting at an approval gate with the interactive
+approval inbox:
+
+```bash
+./bin/tesseraft approvals
+```
+
+The inbox presents the authored question, previews run-relative context
+artifacts, explains each allowed transition, accepts an optional decision
+message, and asks whether to resume immediately. A workflow can require a
+message for a particular option, which is useful for rejection or
+changes-requested transitions. For automation, use `approvals list --format
+json` and `approvals decide --run <run-id> --approval-id <id> --decision
+<transition> [--message <text>] [--annotations-json <json>] [--resume]`.
+
+Pending status is not inferred from node type alone. Tesseraft requires all of
+the following: the run is blocked, the durable approval request names the
+run's current state and attempt, and no decision record has been written.
+
 Use the same command shape with `examples/catalog/prompt-to-pr/workflow.edn` and
 `.agent-runs/prompt-to-pr/<id>` for the simpler prompt-to-PR flow. Substitute
 `examples/catalog/playwright-code-review-loop/workflow.edn` and

@@ -2,10 +2,11 @@
 
 Status: Implemented local console
 
-The Web UI provides four local surfaces:
+The Web UI provides five local surfaces:
 
 - **Workflows** — project-scoped discovery, normalized details, graph, scope, and shadowing.
-- **Runs** — durable run list/detail, attempts, events, artifacts, approvals, comments, start/step/resume/cancel/delete controls, and SSE refresh.
+- **Runs** — durable run list/detail, attempts, events, artifacts, comments, start/step/resume/cancel/delete controls, and SSE refresh.
+- **Approvals** — a project-wide pending queue and full-page, context-first decision workspace. Review evidence gets the primary area; diffs support line annotations, decisions support an overall message, and the reviewer can resume the run immediately.
 - **Studio** — semantic draft editing, capability-driven node forms, lint, confined asset editing, and Clojure-owned completed save.
 - **Settings** — portable project configuration, code-host/work-tracker connections, user preferences, Git identity, and Connections Doctor.
 
@@ -23,6 +24,11 @@ The server serves production assets and `/api/*` from one process. It is a trust
 ## Project scope
 
 The project selector stores only the selected project ID in browser storage. Every feature request uses `/api/projects/{id}/...`. Portable configuration remains in `.tesseraft/project.json`; user stores and run directories remain authoritative after refresh or browser closure.
+
+An approval is actionable only when its durable request matches the run's
+current blocked state and attempt and no decision record exists. Merely finding
+an approval node in a workflow, or a stale request from an earlier attempt, is
+not enough to place it in the inbox.
 
 ## Capabilities and semantic drafts
 

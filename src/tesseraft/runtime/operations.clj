@@ -27,6 +27,7 @@
         "run.cancel" (let [ctx (runtime/cancel! run-dir)]
                        {:ok true :operation operation :result {:run (:run ctx)}})
         "run.decide" (let [result (runtime/decide! run-dir (:approval_id payload) (:decision payload)
-                                                    (:summary payload) (:author payload))]
+                                                    (or (:message payload) (:summary payload))
+                                                    (:annotations payload) (:author payload))]
                        (if (:error result) result {:ok true :operation operation :result result}))
         (error 400 "unknown_operation" (str "Unknown runtime operation: " operation))))))

@@ -3,4 +3,5 @@
 @import './features/runs/runs.css';
 @import './features/studio/studio.css';
 @import './features/settings/settings.css';
+@import './features/approvals/approvals.css';
 @import './styles/theme.css';

@@ -27,6 +27,16 @@ MAINTAINED_WORKFLOWS = [
 ]
 
 
+def test_approval_inbox_has_a_scriptable_empty_list(workspace_layout):
+    result = run_tesseraft(
+        ["approvals", "list", "--workspace-root", str(workspace_layout.workspace),
+         "--runs-root", ".agent-runs", "--format", "json"],
+        workspace_layout.home,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["approvals"] == []
+
+
 @pytest.mark.parametrize("relative", MAINTAINED_WORKFLOWS)
 def test_maintained_workflows_lint(relative):
     args = [BIN, "lint", relative, "--format", "json"]

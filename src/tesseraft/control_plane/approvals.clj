@@ -76,6 +76,46 @@
        (let [result (load-approval (:run-dir resolved) approval-id)]
          (if (:error result) result (api-value result)))))))
 
+(defn pending-approval?
+  "A request is actionable only while it names the run's exact blocked
+  state+attempt and has no accepted decision. Merely pointing at an approval
+  node is not enough to place a run in the inbox."
+  [ctx request]
+  (and (= "blocked" (get-in ctx [:run :status]))
+       (= (some-> (get-in ctx [:run :state]) name) (str (get request "state")))
+       (= (get-in ctx [:run :attempt]) (get request "attempt"))
+       (nil? (get request "decision"))))
+
+(defn get-pending-approvals
+  ([] (get-pending-approvals {} nil))
+  ([options project-id]
+   (let [state-files (runs/run-state-files options project-id)]
+     (if (map? state-files)
+       state-files
+       (let [project (or project-id "default")
+             entries
+             (mapcat
+              (fn [state-file]
+                (try
+                  (let [run-dir (runs/run-dir-from-state-file state-file)
+                        ctx (store/load-context run-dir)
+                        run-id (get-in ctx [:run :id])
+                        workflow-name (get-in ctx [:workflow :name])]
+                    (for [request (or (load-approval-summary run-dir) [])
+                          :when (pending-approval? ctx request)]
+                      (assoc request
+                             "project_id" project
+                             "workflow_name" workflow-name
+                             "run_status" (get-in ctx [:run :status])
+                             "run_path" (str run-dir)
+                             "run_id" run-id)))
+                  (catch Throwable _ [])))
+              state-files)]
+         {:project_id project
+          :approvals (->> entries
+                          (sort-by #(or (get % "requested_at") ""))
+                          vec)})))))
+
 (defn get-run-comments
   ([] (get-run-comments {} nil nil nil))
   ([options run-id] (get-run-comments options run-id nil))
