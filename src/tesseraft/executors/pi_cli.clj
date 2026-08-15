@@ -49,7 +49,9 @@
                                     "THINKING: " (or thinking "<default>") "\n\n"
                                     "PROMPT_FILE: " prompt-file "\n\n"
                                     "STATUS: running\n\n"))
-    (let [result (executor-process/run! {:cmd args :dir repo-root
+    ;; Pi print mode reads non-TTY stdin before processing its prompt, so send
+    ;; an empty input explicitly to close the subprocess pipe with EOF.
+    (let [result (executor-process/run! {:cmd args :dir repo-root :input ""
                                          :env (executor-context/agent-env ctx state-id)})]
       (store/append-runtime-text! ctx log-file
                                   (str "STATUS: exited " (:exit-code result) "\n\n"
