@@ -12,7 +12,7 @@
     "build:web": "tsc -p tsconfig.server.json && vite build --config web/vite.config.ts",
     "generate:types": "node scripts/generate-wire-types.mjs",
     "check:types": "node scripts/generate-wire-types.mjs --check",
-    "test:node": "node --test --test-concurrency=1 test/adapter-credential-resolution.test.js test/claude-code-executor.test.js test/discovery-scope.test.js test/local-credential-migration.test.js test/project-contract.test.js test/project-root-selection.test.js test/project-scope.test.js test/pi-cli-executor.test.js test/runtime-redaction.test.js test/work-tracker-contract.test.js test/work-tracker-read-adapters.test.js test/work-tracker-read.test.js test/work-tracker-settings-doctor.test.js",
+    "test:node": "node --test --test-concurrency=1 test/adapter-credential-resolution.test.js test/claude-code-executor.test.js test/discovery-scope.test.js test/local-credential-migration.test.js test/opencode-cli-executor.test.js test/project-contract.test.js test/project-root-selection.test.js test/project-scope.test.js test/pi-cli-executor.test.js test/runtime-redaction.test.js test/work-tracker-contract.test.js test/work-tracker-read-adapters.test.js test/work-tracker-read.test.js test/work-tracker-settings-doctor.test.js",
     "test:web": "node --import tsx --test --test-concurrency=1 test/web-*.test.js",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.82.1",
     "express": "5.2.1",
+    "opencode-ai": "1.18.19",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },

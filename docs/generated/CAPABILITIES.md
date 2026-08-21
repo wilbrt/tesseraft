@@ -122,6 +122,7 @@ One catalog owns executor metadata, availability, and dispatchability.
 Evidence:
 
 - [`src/tesseraft/capabilities/executors.clj`](../../src/tesseraft/capabilities/executors.clj)
+- [`src/tesseraft/executors/opencode_cli.clj`](../../src/tesseraft/executors/opencode_cli.clj)
 - [`test/tesseraft/capabilities/catalog_test.clj`](../../test/tesseraft/capabilities/catalog_test.clj)
 
 ## local-control-plane

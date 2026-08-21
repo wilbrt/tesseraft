@@ -137,7 +137,7 @@ test('server exposes static assets, health, catalogs, browsing, and JSON errors'
 
   const capabilities = await fetch(`${base}/api/capabilities`).then((response) => response.json());
   assert.ok(capabilities.handlers.some((handler) => handler.id === 'noop/succeed'));
-  assert.deepEqual(capabilities.executors.map((executor) => executor.id), ['claude-code', 'pi-cli', 'pi-sdk']);
+  assert.deepEqual(capabilities.executors.map((executor) => executor.id), ['claude-code', 'opencode-cli', 'pi-cli', 'pi-sdk']);
   assert.deepEqual(capabilities.work_trackers.map((provider) => provider.provider), ['github-issues', 'jira', 'plane']);
   assert.doesNotMatch(JSON.stringify(capabilities), /credential.?value|access.?token|password/i);
 

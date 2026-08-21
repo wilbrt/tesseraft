@@ -13,6 +13,7 @@
 
 (defn pi-cli-availability [] (executable-availability "PI_BIN" "pi"))
 (defn claude-code-availability [] (executable-availability "CLAUDE_BIN" "claude"))
+(defn opencode-cli-availability [] (executable-availability "OPENCODE_BIN" "opencode"))
 (defn pi-sdk-availability []
   {:status "unavailable" :reason "The Pi SDK executor is not implemented"})
 
@@ -25,6 +26,11 @@
    :claude-code
    {:id :claude-code :label "Claude Code CLI" :run 'tesseraft.executors.claude-code/run-agent-node!
     :availability claude-code-availability :config-schema {}
+    :credential-requirements [] :supports-session-resume? false
+    :experimental? false :dispatchable? true}
+   :opencode-cli
+   {:id :opencode-cli :label "OpenCode CLI" :run 'tesseraft.executors.opencode-cli/run-agent-node!
+    :availability opencode-cli-availability :config-schema {}
     :credential-requirements [] :supports-session-resume? false
     :experimental? false :dispatchable? true}
    :pi-sdk

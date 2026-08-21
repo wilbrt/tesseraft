@@ -24,7 +24,7 @@ npm ci
 See [the installation guide](docs/guides/GETTING_STARTED.md) and [container guide](docs/operations/CONTAINER_INSTALL.md) for supported setups.
 On Windows, use the supported [WSL 2 quickstart](docs/guides/WINDOWS_QUICKSTART.md),
 which installs Python in the default stack and verifies Git, GitHub CLI, and the
-repository-pinned Pi executable.
+repository-pinned Pi and OpenCode executables.
 
 ## Five-minute smoke run
 

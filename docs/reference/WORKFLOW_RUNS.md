@@ -22,8 +22,8 @@ Before running side-effecting nodes, make sure you have:
 
 - `bb`, Python, Git, and `gh` installed and on `PATH`;
 - the repository's npm dependencies installed with `npm ci`; this provides the
-  pinned Pi CLI under `node_modules/.bin`, which `./bin/tesseraft` adds to
-  workflow `PATH`;
+  pinned Pi and OpenCode CLIs under `node_modules/.bin`, which
+  `./bin/tesseraft` adds to workflow `PATH`;
 - for `playwright-code-review-loop`, `deterministic-code-review-loop`, and `supervised-deterministic-code-review-loop`, Node.js dependencies and the pinned Playwright Chromium browser installed in the target repository;
 - a clean Git tree in the target repository;
 - GitHub CLI authentication working (`gh auth status`);
