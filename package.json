@@ -41,6 +41,6 @@
     "agent-browser": "0.26.0",
     "tsx": "4.22.4",
     "typescript": "6.0.3",
-    "vite": "8.1.0"
+    "vite": "8.2.1"
   }
 }
