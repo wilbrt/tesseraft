@@ -97,6 +97,7 @@
                     (str "Agent executor is recognized but unavailable: " (:executor node)))])
             (optional-nonblank-string-check :invalid-agent-provider [:node :provider] ":provider" (:provider node))
             (optional-nonblank-string-check :invalid-agent-model [:node :model] ":model" (:model node))
+            (nodes/opencode-model-check [:node] node)
             (agent-thinking-check [:node :thinking] (:thinking node))
             (when-not (:prompt-template node)
               [(err :agent-missing-prompt-template [:node :prompt-template]

@@ -100,7 +100,7 @@ for tool in "${tools[@]}"; do
 done
 
 if [[ "$profile" == "workflow" ]]; then
-  for cmd in git gh pi; do
+  for cmd in git gh pi opencode; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "missing: $cmd" >&2
       missing=1

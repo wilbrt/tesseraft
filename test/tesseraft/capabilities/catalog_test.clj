@@ -25,6 +25,7 @@
   (is (= (executors/ids) (lint/known-executors {})))
   (is (executors/dispatchable? :pi-cli))
   (is (executors/dispatchable? :claude-code))
+  (is (executors/dispatchable? :opencode-cli))
   (is (not (executors/dispatchable? :pi-sdk)))
   (is (= "unavailable" (get-in (executors/public-descriptors)
                                 [(->> (executors/public-descriptors)

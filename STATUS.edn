@@ -18,8 +18,9 @@
    {:status :implemented
     :summary "One catalog owns executor metadata, availability, and dispatchability."
     :catalog :executors
-    :ids ["claude-code" "pi-cli" "pi-sdk"]
-    :evidence ["src/tesseraft/capabilities/executors.clj" "test/tesseraft/capabilities/catalog_test.clj"]}
+    :ids ["claude-code" "opencode-cli" "pi-cli" "pi-sdk"]
+    :evidence ["src/tesseraft/capabilities/executors.clj" "src/tesseraft/executors/opencode_cli.clj"
+               "test/tesseraft/capabilities/catalog_test.clj"]}
    :work-tracker-catalog
    {:status :implemented
     :summary "One provider catalog drives Plane, Jira, and GitHub Issues validation, metadata, mock, doctor, and live fetch behavior."

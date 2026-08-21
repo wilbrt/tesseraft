@@ -29,6 +29,42 @@
           (str "Agent node :thinking must be one of "
                (str/join ", " (sort pi-thinking-levels))))]))
 
+(defn- qualified-opencode-model? [value]
+  (and (string? value)
+       (boolean (re-matches #"[^/\s]+/[^\s]+" value))))
+
+(defn opencode-model-check [path node]
+  (when (= :opencode-cli (:executor node))
+    (let [provider (:provider node)
+          model (:model node)
+          valid-provider? (and (string? provider)
+                               (boolean (re-matches #"[^/\s]+" provider)))
+          qualified? (qualified-opencode-model? model)
+          valid-unqualified-model? (and (string? model)
+                                        (boolean (re-matches #"[^/\s]+" model)))
+          model-provider (when qualified? (first (str/split model #"/" 2)))]
+      (concat
+        (when (and provider (not valid-provider?))
+          [(err :invalid-opencode-provider (conj path :provider)
+                "OpenCode :provider must not contain whitespace or '/'")])
+        (when (and provider (nil? model))
+          [(err :invalid-opencode-model (conj path :model)
+                "OpenCode :provider requires :model")])
+        (when (and model (not provider) (not qualified?))
+          [(err :invalid-opencode-model (conj path :model)
+                "OpenCode :model must use provider/model format when :provider is omitted")])
+        (when (and provider model (not (str/includes? model "/"))
+                   (not valid-unqualified-model?))
+          [(err :invalid-opencode-model (conj path :model)
+                "OpenCode unqualified :model must not contain whitespace")])
+        (when (and provider model (str/includes? model "/") (not qualified?))
+          [(err :invalid-opencode-model (conj path :model)
+                "OpenCode qualified :model must use provider/model format")])
+        (when (and valid-provider? qualified? (not= provider model-provider))
+          [(err :opencode-provider-model-mismatch (conj path :model)
+                (str "OpenCode :model provider " (pr-str model-provider)
+                     " does not match :provider " (pr-str provider)))])))))
+
 (defn top-level-checks [wf]
   (let [required [:api-version :kind :metadata :initial :states]]
     (concat
@@ -146,6 +182,7 @@
                            (str "Agent executor is recognized but unavailable: " (:executor n)))])
                    (optional-nonblank-string-check :invalid-agent-provider [:states id :provider] ":provider" (:provider n))
                    (optional-nonblank-string-check :invalid-agent-model [:states id :model] ":model" (:model n))
+                   (opencode-model-check [:states id] n)
                    (agent-thinking-check [:states id :thinking] (:thinking n))
                    (when-not (:prompt-template n)
                      [(err :agent-missing-prompt-template [:states id :prompt-template]

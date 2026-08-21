@@ -51,9 +51,9 @@
     "id" : "executor-catalog",
     "status" : "implemented",
     "summary" : "One catalog owns executor metadata, availability, and dispatchability.",
-    "evidence" : [ "src/tesseraft/capabilities/executors.clj", "test/tesseraft/capabilities/catalog_test.clj" ],
+    "evidence" : [ "src/tesseraft/capabilities/executors.clj", "src/tesseraft/executors/opencode_cli.clj", "test/tesseraft/capabilities/catalog_test.clj" ],
     "catalog" : "executors",
-    "ids" : [ "claude-code", "pi-cli", "pi-sdk" ]
+    "ids" : [ "claude-code", "opencode-cli", "pi-cli", "pi-sdk" ]
   }, {
     "id" : "local-control-plane",
     "status" : "implemented",

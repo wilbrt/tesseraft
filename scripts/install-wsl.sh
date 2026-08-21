@@ -11,7 +11,8 @@ usage() {
 Usage: scripts/install-wsl.sh [--skip-web-build]
 
 Installs the default Tesseraft toolchain, Git, GitHub CLI, the pinned npm
-dependencies (including Pi), and the production Web UI inside Ubuntu/WSL 2.
+dependencies (including Pi and OpenCode), and the production Web UI inside
+Ubuntu/WSL 2.
 
 Options:
   --skip-web-build  Install dependencies without building the Web UI.
@@ -71,7 +72,7 @@ fi
 echo "install-wsl.sh: installing the declared Babashka, Node.js, npm, and Python toolchain"
 "${ROOT[@]}" "$ROOT_DIR/scripts/install.sh" --install-deps
 
-echo "install-wsl.sh: installing pinned npm dependencies (including Pi)"
+echo "install-wsl.sh: installing pinned npm dependencies (including Pi and OpenCode)"
 cd "$ROOT_DIR"
 npm ci
 
@@ -91,6 +92,7 @@ Tesseraft is installed. Authentication is intentionally interactive; finish it w
   gh auth status
   ssh -T git@github.com
   npm exec -- pi
+  npm exec -- opencode auth login
 
 For OpenCode Go, copy an access token from https://opencode.ai/auth. Inside Pi,
 run /login, select OpenCode Go, paste the token, then use /model to select a

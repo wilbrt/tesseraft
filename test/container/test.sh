@@ -76,6 +76,7 @@ check lint-work-item run lint /opt/tesseraft/examples/catalog/work-item-to-pr/wo
 check run-smoke      run run /opt/tesseraft/examples/tutorials/smoke/workflow.edn --run-id container-smoke --format json
 check control-plane  runsh 'tesseraft control-plane --workflow-root /opt/tesseraft/examples workflows | grep -q smoke-demo'
 check web-server-built runsh 'test -f /opt/tesseraft/web/dist-server/server.js'
+check agent-clis runsh '/opt/tesseraft/node_modules/.bin/pi --version && /opt/tesseraft/node_modules/.bin/opencode --version'
 check non-root-writes runsh 'test "$(id -u)" != 0 && touch /workspace/.write-probe && touch /data/.tesseraft/.write-probe && touch /data/runs/.write-probe'
 check web-lifecycle web_lifecycle
 check toolchain runsh 'tesseraft doctor --profile test'

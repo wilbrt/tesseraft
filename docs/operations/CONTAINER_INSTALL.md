@@ -10,7 +10,7 @@ requirements.
 |------|----------|-------------------|
 | **Whole stack** (default) | `lint`, `run`, `node`, `control-plane`, `web` | Babashka static binary + Node.js + npm + Python |
 | **Core only** (`--core-only`) | `lint`, `run`, `node`, `control-plane` | Babashka static binary only |
-| **Agent** | running `:executor :pi-cli` workflows | Pinned Pi from `npm ci` + provider credentials supplied at run time |
+| **Agent** | running `:executor :pi-cli` or `:executor :opencode-cli` workflows | Pinned Pi and OpenCode CLIs from `npm ci` + provider credentials supplied at run time |
 
 Babashka publishes [static Linux binaries](https://github.com/babashka/babashka/releases)
 (amd64 + aarch64) with sha256 sidecar files, so there's no JDK build step. The
@@ -82,9 +82,9 @@ the pinned toolchain without downloading dependencies during startup.
 
 ## Running agent workflows
 
-The image's `npm ci` installs the pinned Pi CLI, and the Tesseraft launcher adds
-it to workflow `PATH`. Agent workflows still need provider credentials, which
-are secrets and must be supplied at run time:
+The image's `npm ci` installs the pinned Pi and OpenCode CLIs, and the Tesseraft
+launcher adds them to workflow `PATH`. Agent workflows still need provider
+credentials, which are secrets and must be supplied at run time:
 
 ```bash
 docker run --rm \
@@ -94,3 +94,9 @@ docker run --rm \
 ```
 
 This keeps the build reproducible and secrets out of the image layer cache.
+
+For `:opencode-cli`, authenticate interactively on a persistent host with
+`npm exec -- opencode auth login`, or pass the provider's supported environment
+credential into the container. The executor intentionally ignores user and
+project OpenCode configuration while retaining OpenCode's auth store and
+provider environment variables.

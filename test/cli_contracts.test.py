@@ -220,7 +220,7 @@ def test_version_and_provider_listing_are_stable_and_secret_free():
     assert "SECRET_SENTINEL" not in providers.stdout
 
 
-def test_launcher_exposes_bundled_pi_without_a_global_install(tmp_path):
+def test_launcher_exposes_bundled_agent_clis_without_global_installs(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     for command in ("bash", "dirname", "awk", "bb"):
@@ -236,7 +236,9 @@ def test_launcher_exposes_bundled_pi_without_a_global_install(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout)
     pi = next(executor for executor in payload["executors"] if executor["id"] == "pi-cli")
+    opencode = next(executor for executor in payload["executors"] if executor["id"] == "opencode-cli")
     assert pi["availability"] == {"status": "ready", "executable": "pi"}
+    assert opencode["availability"] == {"status": "ready", "executable": "opencode"}
 
 
 def test_dependency_doctor_rejects_unknown_profiles_with_clean_usage():
@@ -316,6 +318,7 @@ def test_workflow_dependency_doctor_accepts_supported_python_and_checks_commands
     assert "compatible; pinned baseline 3.11" in result.stdout
     assert "ok: gh" in result.stdout
     assert "ok: pi" in result.stdout
+    assert "ok: opencode" in result.stdout
 
 
 def test_installers_expose_python_and_wsl_bootstrap_contracts():
@@ -327,7 +330,7 @@ def test_installers_expose_python_and_wsl_bootstrap_contracts():
     wsl = run_command([str(ROOT / "scripts" / "install-wsl.sh"), "--help"])
     assert wsl.returncode == 0, wsl.stderr
     assert "GitHub CLI" in wsl.stdout
-    assert "including Pi" in wsl.stdout
+    assert "including Pi and OpenCode" in wsl.stdout
 
 
 def test_node_and_fragment_export_import_round_trip(workspace_layout):
