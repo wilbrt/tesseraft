@@ -3,7 +3,7 @@
 !.tesseraft/project.json
 .agent-runs/
 .agent-worktrees/
-node_modules/
+node_modules
 
 # Resolved credential store (design §4.2) lives out-of-repo at
 # ~/.tesseraft/credentials.json (or $TESSERAFT_HOME/credentials.json), which is
