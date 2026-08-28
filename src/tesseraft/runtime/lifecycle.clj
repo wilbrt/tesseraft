@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [tesseraft.runtime.approval-server :as approval-server]
             [tesseraft.runtime.fragment :as fragment]
             [tesseraft.runtime.process :as runtime-process]
             [tesseraft.runtime.sessions :as sessions]
@@ -122,7 +123,8 @@
   (let [before (store/load-context run-dir)]
     (if (terminal-run? before)
       before
-      (let [process (stop-runtime-process! run-dir)
+      (let [_ (approval-server/cleanup! before)
+            process (stop-runtime-process! run-dir)
             ;; Reload after stopping the process so its last durable transition
             ;; cannot overwrite the cancellation state.
             ctx (store/load-context run-dir)

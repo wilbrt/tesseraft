@@ -6,6 +6,7 @@
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
     [tesseraft.runtime.approvals :as approvals]
+    [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.fragment :as fragment]
     [tesseraft.runtime.lifecycle :as lifecycle]
     [tesseraft.runtime.liveness :as liveness]
@@ -443,8 +444,9 @@
                      (unsafe-annotation-path? (:artifact_path annotation)) "annotation artifact_path must be a safe relative path"
                      (not (contains? artifact-paths (str (:artifact_path annotation)))) "annotation artifact_path must name a declared approval artifact"
                      (not (map? (:anchor annotation))) "annotation anchor is required"
-                     :else nil))
-                 annotations)]
+                     :else (approval-server/invalid-annotation ctx request annotation)))
+                 annotations)
+           payload-bytes (count (.getBytes (json/generate-string {:decision decision :message message :annotations annotations}) "UTF-8"))]
        (cond
        (or (nil? node) (not= :approval (:type node)))
        {:status 422 :error {:code "not_approval"
@@ -477,6 +479,10 @@
        {:status 422 :error {:code "message_too_long"
                             :message "Decision message is too long"}}
 
+       (> payload-bytes 65536)
+       {:status 413 :error {:code "payload_too_large"
+                            :message "Approval decision payload exceeds 64 KiB"}}
+
        (> (count annotations) 200)
        {:status 422 :error {:code "too_many_annotations"
                             :message "A decision may contain at most 200 annotations"}}
@@ -492,7 +498,22 @@
                           :email (str (:email author-overrides))})
                        (get-in ctx [:run :git-user])
                        {:name "unknown" :email "unknown@tesseraft.local"})
-             decision-rec {:version 1
+             feedback-path (when (and (:review_server request) (= "reject" decision))
+                             (str "approval-feedback/" approval-id ".json"))
+             _ (when feedback-path
+                 (store/write-runtime-json!
+                   ctx (fs/path run-dir feedback-path)
+                   [{:id (str "approval/" approval-id)
+                     :source "human-approval"
+                     :severity "major"
+                     :title (str "Changes requested at " approval-id)
+                     :details (str message
+                                   (when (seq annotations)
+                                     (str "\n\nLine annotations:\n"
+                                          (str/join "\n" (map #(str "- " (get-in % [:anchor :file]) ":"
+                                                                        (get-in % [:anchor :line]) " — " (:body %)) annotations)))))
+                     :acceptance_criteria "Address the overall review message and every line annotation before requesting approval again."}]))
+             decision-rec (cond-> {:version 1
                            :approval_id approval-id
                            :run_id (get-in ctx [:run :id])
                            :state (name state-id)
@@ -505,6 +526,7 @@
                            :annotations annotations
                            :author author
                            :decided_at (store/now)}
+                            feedback-path (assoc :feedback_path feedback-path))
              dec-path (approval-decision-path ctx state-id attempt)]
          (store/write-runtime-json! ctx dec-path decision-rec)
          ;; step! now sees the decision record and advances the run.

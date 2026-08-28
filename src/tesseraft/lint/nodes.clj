@@ -321,9 +321,14 @@
                          "Timer node must declare :duration")])
 
                  :approval
-                 (let [transition-decisions (->> (spec/transitions n) (keep #(get-in % [:when :decision])) (map str) vec)
+                 (let [transitions (spec/transitions n)
+                       transition-decisions (->> transitions (keep #(get-in % [:when :decision])) (map str) vec)
                        presentation-decisions (->> (get-in n [:presentation :decisions]) (map :decision) (map str) vec)
-                       artifacts (get-in n [:presentation :artifacts])]
+                       artifacts (get-in n [:presentation :artifacts])
+                       review (:review-server n)
+                       reject-option (some #(when (= "reject" (str (:decision %))) %) (get-in n [:presentation :decisions]))
+                       reject-transition (some #(when (= "reject" (str (get-in % [:when :decision]))) %) transitions)
+                       reject-target (when-let [target (:next reject-transition)] (spec/node wf target))]
                  (concat
                    (when-not (:message n)
                      [(err :approval-missing-message [:states id :message]
@@ -340,6 +345,23 @@
                    (when (not= (count presentation-decisions) (count (set presentation-decisions)))
                      [(err :approval-duplicate-decision [:states id :presentation :decisions]
                            "Approval presentation decision keys must be unique")])
+                   (when (and review (not= "git-diff" (some-> (:kind review) name)))
+                     [(err :approval-review-kind [:states id :review-server :kind]
+                           "Approval review-server kind must be :git-diff")])
+                   (when (and review (not= #{"pass" "reject"} (set transition-decisions)))
+                     [(err :approval-review-decisions [:states id :transitions]
+                           "Git-diff review must declare exactly pass and reject decisions")])
+                   (when (and review (not (:requires-message reject-option)))
+                     [(err :approval-review-reject-message [:states id :presentation :decisions]
+                           "Git-diff review reject must require an overall message")])
+                   (when (and review (not (some #{:merge-issues} (:effects reject-transition))))
+                     [(err :approval-review-feedback-effect [:states id :transitions]
+                           "Git-diff review reject must apply :merge-issues")])
+                   (when (and review
+                              (not (and (= :agent (:type reject-target))
+                                        (= :resumable (get-in reject-target [:session :mode])))))
+                     [(err :approval-review-resumable-target [:states id :transitions]
+                           "Git-diff review reject must target a resumable agent node")])
                    (for [[idx artifact] (map-indexed vector artifacts)
                          :when (not (spec/safe-relative-path? (:path artifact)))]
                      (err :invalid-artifact-path [:states id :presentation :artifacts idx :path]

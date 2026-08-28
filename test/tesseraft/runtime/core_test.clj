@@ -1,9 +1,11 @@
 (ns tesseraft.runtime.core-test
   (:require
     [babashka.fs :as fs]
+    [babashka.process :as p]
     [cheshire.core :as json]
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing]]
+    [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.core :as runtime]
     [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.operations :as operations]
@@ -87,6 +89,95 @@
           (is (= "changes-requested" (:decision (store/read-json decision-file))))
           (is (= "done" (get-in (runtime/run-until-done! wf persisted 10) [:run :status])))))
       (finally
+        (fs/delete-tree root)))))
+
+(deftest git-diff-approval-server-rejects-with-durable-feedback-and-closes
+  (let [root (temp-dir "tesseraft-git-review")
+        repo (fs/path root "repo")
+        workflow-file (fs/path root "workflow.edn")
+        run! (fn [& command]
+               (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
+                 (is (zero? (:exit result)) (:err result)) result))]
+    (try
+      (fs/create-dirs repo)
+      (run! "git" "init" "-q")
+      (run! "git" "config" "user.name" "Review Test")
+      (run! "git" "config" "user.email" "review@example.test")
+      (spit (str (fs/path repo "review.txt")) "before\n")
+      (run! "git" "add" "review.txt")
+      (run! "git" "commit" "-qm" "base")
+      (spit (str (fs/path repo "review.txt")) "after\n")
+      (spit (str (fs/path root "prompt.md")) "Implement feedback")
+      (spit (str (fs/path root "continue.md")) "Address the durable approval feedback")
+      (spit (str workflow-file)
+            (str "{:api-version \"tesseraft.workflow/v1\" :kind :workflow :metadata {:name \"git-review\"} "
+                 ":defaults {:max-rounds 2 :state-timeout \"1m\"} :policies {:require-timeouts true :require-max-rounds true} "
+                 ":initial :review :states {"
+                 ":review {:type :approval :message \"Review tracked changes\" :timeout \"1m\" "
+                 ":review-server {:kind :git-diff :max-diff-bytes 1048576} "
+                 ":presentation {:question \"Ready?\" :decisions [{:decision \"pass\" :label \"Pass\"} {:decision \"reject\" :label \"Reject\" :requires-message true}]} "
+                 ":transitions [{:when {:decision \"pass\"} :next :done} {:when {:decision \"reject\"} :effects [:merge-issues] :next :implement}]} "
+                 ":implement {:type :agent :executor :pi-cli :prompt-template \"prompt.md\" :prompt-output \"prompts/generated/implement.md\" :runtime {:timeout \"1m\"} "
+                 ":session {:mode :resumable :continuation-prompt-template \"continue.md\" :continuation-prompt-output \"prompts/generated/continue-{{run.attempt}}.md\"} "
+                 ":outputs {:status {:path \"execution/status-{{run.attempt}}.json\" :required true}} :next :done} "
+                 ":done {:type :terminal :status :success}}}"))
+      (let [started (runtime/start! (str workflow-file) {:workspace-root root :run-id "git-review" :inputs {:repo-root (str repo)}})
+            wf (spec/read-workflow workflow-file)
+            blocked (runtime/run-until-done! wf started 10)
+            run-dir (get-in blocked [:run :dir])
+            request (store/read-json (fs/path run-dir "approvals" "review-1.json"))
+            capability-file (fs/path run-dir "approval-adapters" "review" "1" "capability.json")]
+        (is (= "blocked" (get-in blocked [:run :status])))
+        (loop [remaining 100]
+          (when (and (not (fs/exists? capability-file)) (pos? remaining))
+            (Thread/sleep 50) (recur (dec remaining))))
+        (is (fs/exists? capability-file)
+            (str "adapter stdout: " (when (fs/exists? (fs/path (fs/parent capability-file) "adapter.log"))
+                                        (slurp (str (fs/path (fs/parent capability-file) "adapter.log"))))
+                 " adapter stderr: " (when (fs/exists? (fs/path (fs/parent capability-file) "adapter-error.log"))
+                                         (slurp (str (fs/path (fs/parent capability-file) "adapter-error.log"))))))
+        (when (fs/exists? capability-file)
+         (let [capability (store/read-json capability-file)
+              owner (store/read-json (fs/path run-dir "approval-adapters" "review" "1" "owner.json"))
+              _ (is (str/starts-with? (:endpoint owner) "http://127.0.0.1:"))
+              unauthorized @(p/process ["curl" "-sS" "-o" "/dev/null" "-w" "%{http_code}"
+                                        (str (:endpoint owner) "/api/review")]
+                                       {:out :string :err :string :continue true})
+              _ (is (= "401" (:out unauthorized)))
+              page @(p/process ["curl" "-sS" (:launch_url capability)]
+                               {:out :string :err :string :continue true})
+              _ (is (str/includes? (:out page) "Review current Git changes"))
+              anchor (-> request :review_server :anchors vals first)
+              payload (json/generate-string {:decision "reject" :message "Please revise this line"
+                                             :annotations [{:id "a1" :artifact_path (get-in request [:review_server :evidence_path])
+                                                            :body "Keep the original contract" :anchor anchor}]})
+              response @(p/process ["curl" "-sS" "-X" "POST" "-H" "content-type: application/json"
+                                    "-H" (str "x-tesseraft-approval-token: " (:token capability))
+                                    "--data-binary" payload (str (:endpoint owner) "/api/decision")]
+                                   {:out :string :err :string :continue true})]
+          (is (zero? (:exit response)) (:err response))
+          (is (= true (:ok (json/parse-string (:out response) true))))
+          (is (= "reject" (:decision (store/read-json (fs/path run-dir "approvals" "review-1-decision.json")))))
+          (is (= "human-approval" (:source (first (store/read-json (fs/path run-dir "issues.json"))))))
+          (is (= :implement (get-in (store/load-context run-dir) [:run :state])))
+          (loop [remaining 100]
+            (when (and (fs/exists? capability-file) (pos? remaining))
+              (Thread/sleep 50) (recur (dec remaining))))
+          (is (not (fs/exists? capability-file)))
+          (let [owner-file (fs/path run-dir "approval-adapters" "review" "1" "owner.json")]
+            (loop [remaining 100]
+              (let [candidate (store/read-json owner-file)
+                    handle (java.lang.ProcessHandle/of (long (:pid candidate)))
+                    absent? (or (not (.isPresent handle)) (not (.isAlive (.get handle))))]
+                (when (and (not (and (= "stopped" (:status candidate)) absent?)) (pos? remaining))
+                  (Thread/sleep 50) (recur (dec remaining)))))
+            (let [stopped-owner (store/read-json owner-file)
+                  handle (java.lang.ProcessHandle/of (long (:pid stopped-owner)))]
+              (is (= "stopped" (:status stopped-owner)))
+              (is (or (not (.isPresent handle)) (not (.isAlive (.get handle))))))))))
+      (finally
+        (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
+          (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
         (fs/delete-tree root)))))
 
 (deftest cancel-stops-persisted-runtime-process-tree

@@ -62,39 +62,24 @@
   (write-json! p (durable-data ctx data)))
 
 (defn with-run-lock
-  "Serialize a short run-directory mutation across runtime/control-plane
-  processes. The lock file is durable but contains no state; the authoritative
-  mutation records remain state.edn, events.jsonl, and the run artifacts."
+  "Serialize a short run-directory mutation with an OS-owned file lock.
+  Process death releases the lock; the durable lock file is never treated as
+  ownership and never removed based on age."
   [run-dir f]
-  (let [lock-path (.toPath (fs/file (fs/path run-dir ".runtime-mutation.lock")))
-        attributes (make-array java.nio.file.attribute.FileAttribute 0)
-        acquire!
-        (fn []
-          (loop [remaining 400]
-            (let [acquired? (try
-                              (java.nio.file.Files/createFile lock-path attributes)
-                              true
-                              (catch java.nio.file.FileAlreadyExistsException _ false))]
-              (if acquired?
-                true
-                (let [age-ms (try
-                               (- (System/currentTimeMillis)
-                                  (.toMillis (java.nio.file.Files/getLastModifiedTime lock-path (make-array java.nio.file.LinkOption 0))))
-                               (catch Throwable _ 0))]
-                  ;; A process can die between atomic create and cleanup. A
-                  ;; minute-old lock cannot belong to this millisecond-scale
-                  ;; mutation and is safe to reclaim.
-                  (when (> age-ms 60000)
-                    (try (java.nio.file.Files/deleteIfExists lock-path) (catch Throwable _ nil)))
-                  (when (zero? remaining)
-                    (throw (ex-info "Timed out waiting for the run mutation lock" {:run-dir (str run-dir)})))
-                  (Thread/sleep 25)
-                  (recur (dec remaining)))))))]
-    (acquire!)
-    (try
-      (f)
-      (finally
-        (java.nio.file.Files/deleteIfExists lock-path)))))
+  (let [path (fs/path run-dir ".runtime-mutation.lock")]
+    (fs/create-dirs (fs/parent path))
+    (with-open [file (java.io.RandomAccessFile. (str path) "rw")
+                channel (.getChannel file)]
+      (loop [remaining 400]
+        (if-let [lock (try (.tryLock channel) (catch Exception _ nil))]
+          ;; Closing the channel in the outer with-open releases this OS lock.
+          ;; Babashka intentionally does not expose FileLockImpl.release.
+          (f)
+          (do
+            (when (zero? remaining)
+              (throw (ex-info "Timed out waiting for the run mutation lock" {:run-dir (str run-dir)})))
+            (Thread/sleep 25)
+            (recur (dec remaining))))))))
 
 (defn write-runtime-text! [ctx p text]
   (write-text! p (durable-text ctx text)))

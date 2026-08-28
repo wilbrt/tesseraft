@@ -1,5 +1,6 @@
 (ns tesseraft.runtime.approvals
   (:require [babashka.fs :as fs]
+            [tesseraft.runtime.approval-server :as approval-server]
             [tesseraft.runtime.store :as store]
             [tesseraft.runtime.transitions :as transitions]
             [tesseraft.spec :as spec]))
@@ -76,11 +77,12 @@
   (if-let [decision (load-approval-decision ctx state-id attempt)]
     ;; Resume: a decision record exists. Build a result carrying :decision so
     ;; the node's :transitions :when {:decision "..."} can match, then advance.
-    (let [result {:status "ok" :ok true
-                  :approval_id (:approval_id decision)
-                  :decision (:decision decision)
-                  :message (or (:message decision) (:summary decision))
-                  :annotations (:annotations decision [])}
+    (let [result (cond-> {:status "ok" :ok true
+                          :approval_id (:approval_id decision)
+                          :decision (:decision decision)
+                          :message (or (:message decision) (:summary decision))
+                          :annotations (:annotations decision [])}
+                   (:feedback_path decision) (assoc :issues_file (:feedback_path decision)))
           ; spec/match-transition? compares :when predicates against result keys.
           tr (or (some #(when (spec/match-transition? result %) %) (spec/transitions node))
                  (throw (ex-info "No approval transition matched the recorded decision"
@@ -114,36 +116,46 @@
     ;; and park. Returning a blocked ctx makes run-until-done! stop cleanly.
     (let [req-path (approval-request-path ctx state-id attempt)
           already? (fs/exists? req-path)
-          artifact (render-artifact ctx node)
-          presentation (approval-presentation ctx node)
           approval-id (str (name state-id) "-" attempt)
-          request {:version 1
-                   :approval_id approval-id
-                   :run_id (get-in ctx [:run :id])
-                   :state (name state-id)
-                   :attempt attempt
-                   :message (:message node)
-                   :artifact artifact
-                   ;; Presentation contract (P0.2 review). The UI renders the
-                   ;; decision screen from these fields; legacy `message` /
-                   ;; `artifact` are kept for backward compatibility. When the
-                   ;; node authored a `:presentation`, it is materialized
-                   ;; verbatim; otherwise a minimal one is synthesized from
-                   ;; `:message` + `:artifact` + decision transitions.
-                   :question (:question presentation)
-                   :artifacts (:artifacts presentation)
-                   :decisions (:decisions presentation)
-                   :routing (:routing presentation)
-                   :requested_at (store/now)
-                   :status "pending"}
+          existing (when already? (store/read-json req-path))
+          review-config (:review-server node)
+          evidence (when (and review-config (not already?))
+                     (approval-server/snapshot-diff! ctx approval-id (:max-diff-bytes review-config)))
+          review-record (when evidence
+                          {:kind "git-diff" :evidence_path (:path evidence)
+                           :evidence_sha256 (:sha256 evidence) :evidence_size (:size evidence)
+                           :max_diff_bytes (:max_bytes evidence)
+                           :anchors (approval-server/diff-anchors
+                                     (slurp (str (fs/path (get-in ctx [:run :dir]) (:path evidence)))))} )
+          artifact (if evidence {:path (:path evidence) :kind "diff" :label "Current Git changes"}
+                       (render-artifact ctx node))
+          presentation (cond-> (approval-presentation ctx node)
+                         evidence (assoc :artifacts [artifact]))
+          request (or existing
+                      (cond-> {:version 1
+                               :approval_id approval-id
+                               :run_id (get-in ctx [:run :id])
+                               :state (name state-id)
+                               :attempt attempt
+                               :message (:message node)
+                               :artifact artifact
+                               :question (:question presentation)
+                               :artifacts (:artifacts presentation)
+                               :decisions (:decisions presentation)
+                               :routing (:routing presentation)
+                               :requested_at (store/now)
+                               :status "pending"}
+                        review-record (assoc :review_server review-record)))
           ctx (if already?
                 ctx
-                (do (store/write-runtime-json! ctx req-path request)
-                    (store/event! ctx {:event "approval.requested"
-                                       :state (name state-id)
-                                       :attempt attempt
-                                       :approval_id approval-id
-                                       :artifact (and artifact (:path artifact))})))
+                (do
+                  (store/write-runtime-json! ctx req-path request)
+                  (when review-config (approval-server/launch! ctx state-id attempt request))
+                  (store/event! ctx {:event "approval.requested"
+                                     :state (name state-id)
+                                     :attempt attempt
+                                     :approval_id approval-id
+                                     :artifact (and artifact (:path artifact))})))
           ctx (-> ctx
                   (assoc-in [:run :status] "blocked")
                   (assoc-in [:run :updated-at] (store/now)))]

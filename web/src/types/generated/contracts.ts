@@ -301,6 +301,10 @@ export type WorkflowContract = {
   "render"?: string;
   "required"?: boolean;
 };
+  "review-server"?: {
+  "kind": "git-diff";
+  "max-diff-bytes"?: number;
+};
   "presentation"?: {
   "question": string;
   "artifacts"?: Array<{

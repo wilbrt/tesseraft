@@ -65,6 +65,13 @@
         "requires-message": { "type": "boolean" }
       }
     },
+    "approvalReviewServer": {
+      "type": "object", "additionalProperties": false, "required": ["kind"],
+      "properties": {
+        "kind": { "const": "git-diff" },
+        "max-diff-bytes": { "type": "integer", "minimum": 1, "maximum": 10485760 }
+      }
+    },
     "approvalPresentation": {
       "type": "object", "additionalProperties": false, "required": ["question", "decisions"],
       "properties": {
@@ -127,7 +134,7 @@
       }
     },
     "timer": { "type": "object", "additionalProperties": false, "required": ["type", "duration", "next"], "properties": { "type": { "const": "timer" }, "title": { "type": "string" }, "duration": { "type": "string" }, "next": { "type": "string" } } },
-    "approval": { "type": "object", "additionalProperties": false, "required": ["type", "message", "transitions"], "properties": { "type": { "const": "approval" }, "title": { "type": "string" }, "message": { "type": "string" }, "timeout": { "type": "string" }, "artifact": { "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/approvalArtifact" }] }, "presentation": { "$ref": "#/$defs/approvalPresentation" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
+    "approval": { "type": "object", "additionalProperties": false, "required": ["type", "message", "transitions"], "properties": { "type": { "const": "approval" }, "title": { "type": "string" }, "message": { "type": "string" }, "timeout": { "type": "string" }, "artifact": { "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/approvalArtifact" }] }, "review-server": { "$ref": "#/$defs/approvalReviewServer" }, "presentation": { "$ref": "#/$defs/approvalPresentation" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
     "router": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "router" }, "title": { "type": "string" }, "next": { "type": "string" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
     "terminal": { "type": "object", "additionalProperties": false, "required": ["type", "status"], "properties": { "type": { "const": "terminal" }, "title": { "type": "string" }, "status": { "enum": ["success", "failure"] } } },
     "fragment": { "type": "object", "additionalProperties": false, "required": ["type", "fragment", "transitions"], "properties": { "type": { "const": "fragment" }, "title": { "type": "string" }, "fragment": { "type": ["string", "object"] }, "inputs": { "type": "object" }, "parameters": { "type": "object" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } } } },
