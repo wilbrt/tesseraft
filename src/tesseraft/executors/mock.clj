@@ -51,3 +51,26 @@
      :mock true
      :prompt-file prompt-file
      :log-file log-file}))
+
+(defn run-agent-session-node! [_wf ctx state-id node request]
+  (let [prompt-file (:prompt-file request)
+        operation (name (:operation request))
+        log-file (str (fs/path (get-in ctx [:run :dir]) "logs"
+                               (str (name state-id) "-mock-" (get-in ctx [:run :attempt]) ".log")))]
+    (doseq [output (spec/output-contracts node)]
+      (write-output! ctx state-id node output))
+    (store/write-runtime-text!
+      ctx log-file
+      (str "MOCK EXECUTOR\n\n"
+           "SESSION_OPERATION: " operation "\n"
+           "SESSION_REF_SHA256: " (store/sha256 (get-in request [:session-ref :value])) "\n"
+           "DELIVERY_ID: " (:delivery-id request) "\n"
+           "PROMPT_FILE: " prompt-file "\n"
+           "STATE: " (name state-id) "\n"))
+    {:executor "mock"
+     :ok true
+     :status "pass"
+     :mock true
+     :prompt-file prompt-file
+     :log-file log-file
+     :session-ref (:session-ref request)}))

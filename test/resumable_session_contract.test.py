@@ -1,10 +1,14 @@
 import json
+import os
+import shutil
+import signal
+import time
 from copy import deepcopy
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from python_support import ROOT, read_json_lines, run_command
+from python_support import ROOT, read_json_lines, run_command, start_tesseraft
 
 
 BIN = str(ROOT / "bin" / "tesseraft")
@@ -72,6 +76,43 @@ def lint(path):
     result = run_command([BIN, "lint", str(path), "--format", "json"])
     payload = json.loads(result.stdout)
     return result, payload, {entry["code"] for entry in payload["diagnostics"]}
+
+
+def copy_runtime_fixture(destination: Path) -> Path:
+    source = ROOT / "test" / "fixtures" / "valid"
+    workflow = destination / "workflow.edn"
+    shutil.copy2(source / "resumable-runtime-review-loop.workflow.edn", workflow)
+    (destination / "prompts").mkdir()
+    for name in (
+        "resumable-runtime-initial.md.tmpl",
+        "resumable-runtime-continuation.md.tmpl",
+    ):
+        shutil.copy2(source / "prompts" / name, destination / "prompts" / name)
+    (destination / "scripts").mkdir()
+    shutil.copy2(
+        source / "scripts" / "resumable-review.py",
+        destination / "scripts" / "resumable-review.py",
+    )
+    return workflow
+
+
+def wait_for(predicate, timeout=10.0, interval=0.05):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if predicate():
+                return True
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            pass
+        time.sleep(interval)
+    return False
+
+
+def kill_pid(pid):
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def test_resumable_session_shapes_are_owned_by_portable_schemas():
@@ -186,8 +227,14 @@ def test_continuation_template_variables_and_node_export_are_in_contract(tmp_pat
     assert package.returncode == 0, package.stderr or package.stdout
 
 
-def test_rs1_runtime_guard_fails_before_executor_invocation(workspace_layout):
-    fixture = ROOT / "test" / "fixtures" / "valid" / "resumable-session.workflow.edn"
+def test_resumable_mock_session_survives_process_restart_and_closes(workspace_layout):
+    fixture = (
+        ROOT
+        / "test"
+        / "fixtures"
+        / "valid"
+        / "resumable-runtime-review-loop.workflow.edn"
+    )
     started = run_command(
         [
             BIN,
@@ -197,13 +244,13 @@ def test_rs1_runtime_guard_fails_before_executor_invocation(workspace_layout):
             "--executor",
             "mock",
             "--run-id",
-            "rs1-runtime-guard",
+            "resumable-runtime-loop",
             "--workspace-root",
             str(workspace_layout.workspace),
             "--tesseraft-home",
             str(workspace_layout.home),
             "--input",
-            "prompt=Do not execute",
+            "prompt=Exercise resumable execution",
             "--format",
             "json",
         ]
@@ -211,12 +258,401 @@ def test_rs1_runtime_guard_fails_before_executor_invocation(workspace_layout):
     assert started.returncode == 0, started.stderr or started.stdout
     run_dir = Path(json.loads(started.stdout)["run"]["dir"])
 
-    stepped = run_command([BIN, "run", "step", "--run-dir", str(run_dir), "--format", "json"])
-    assert stepped.returncode != 0
-    assert "Resumable session runtime is not implemented" in stepped.stderr
+    first_process = run_command(
+        [
+            BIN,
+            "run",
+            "resume",
+            "--run-dir",
+            str(run_dir),
+            "--max-steps",
+            "2",
+            "--format",
+            "json",
+        ]
+    )
+    assert first_process.returncode == 0, first_process.stderr or first_process.stdout
+    first_run = json.loads(first_process.stdout)["run"]
+    assert first_run["state"] == "implement"
+    assert first_run["attempt"] == 3
+    assert first_run["status"] == "running"
+
+    binding_path = run_dir / "sessions" / "implement" / "binding.json"
+    binding = json.loads(binding_path.read_text())
+    assert schema_errors("session-binding.schema.json", binding) == []
+    assert binding["status"] == "suspended"
+    assert binding["activation_sequence"] == 1
+    stable_ref = binding["session_ref"]
+
+    second_process = run_command(
+        [BIN, "run", "resume", "--run-dir", str(run_dir), "--format", "json"]
+    )
+    assert second_process.returncode == 0, second_process.stderr or second_process.stdout
+    finished = json.loads(second_process.stdout)["run"]
+    assert finished["status"] == "done"
+
+    binding = json.loads(binding_path.read_text())
+    assert schema_errors("session-binding.schema.json", binding) == []
+    assert binding["status"] == "closed"
+    assert binding["activation_sequence"] == 2
+    assert binding["session_ref"] == stable_ref
+
+    initial_prompt = run_dir / "prompts" / "generated" / "implement-initial-1.md"
+    continuation_prompt = (
+        run_dir / "prompts" / "generated" / "implement-continuation-3.md"
+    )
+    assert "Exercise resumable execution" in initial_prompt.read_text()
+    assert "Continue the existing implementation" in continuation_prompt.read_text()
+    assert "Exercise resumable execution" not in continuation_prompt.read_text()
+    assert str(run_dir / "issues.json") in continuation_prompt.read_text()
+    assert "tesseraft-delivery:" in initial_prompt.read_text()
+    assert "tesseraft-delivery:" in continuation_prompt.read_text()
+
+    assert (run_dir / "execution" / "implement-status-1.json").is_file()
+    assert (run_dir / "execution" / "implement-status-3.json").is_file()
+    assert json.loads((run_dir / "issues.json").read_text())[0]["source"] == "independent-review"
 
     events = read_json_lines(run_dir / "events.jsonl")
-    assert [event["event"] for event in events][-2:] == ["node.started", "node.failed"]
-    failure = events[-1]["result"]
-    assert failure["error_type"] == "resumable_session_not_implemented"
-    assert not list((run_dir / "prompts" / "generated").glob("*"))
+    session_events = [event["event"] for event in events if event["event"].startswith("session.")]
+    assert session_events == [
+        "session.allocated",
+        "session.activation.started",
+        "session.activation.finished",
+        "session.suspended",
+        "session.activation.started",
+        "session.activation.finished",
+        "session.suspended",
+        "session.closed",
+    ]
+    assert stable_ref["value"] not in (run_dir / "events.jsonl").read_text()
+    assert "SESSION_OPERATION: start" in (run_dir / "logs" / "implement-mock-1.log").read_text()
+    assert "SESSION_OPERATION: resume" in (run_dir / "logs" / "implement-mock-3.log").read_text()
+
+
+def test_resumable_session_rejects_configuration_drift_without_resuming(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    started = run_command(
+        [
+            BIN,
+            "run",
+            "start",
+            str(workflow),
+            "--executor",
+            "mock",
+            "--run-id",
+            "resumable-configuration-drift",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Configuration drift",
+            "--format",
+            "json",
+        ]
+    )
+    assert started.returncode == 0, started.stderr
+    run_dir = Path(json.loads(started.stdout)["run"]["dir"])
+    first = run_command(
+        [
+            BIN,
+            "run",
+            "resume",
+            "--run-dir",
+            str(run_dir),
+            "--max-steps",
+            "2",
+            "--format",
+            "json",
+        ]
+    )
+    assert first.returncode == 0, first.stderr
+
+    workflow.write_text(workflow.read_text().replace(":ls]", ":ls :grep]"))
+    resumed = run_command(
+        [BIN, "run", "resume", "--run-dir", str(run_dir), "--format", "json"]
+    )
+    assert resumed.returncode != 0
+    assert "Resumable session configuration changed" in resumed.stderr
+
+    binding = json.loads((run_dir / "sessions" / "implement" / "binding.json").read_text())
+    assert binding["status"] == "suspended"
+    assert binding["activation_sequence"] == 1
+    events = read_json_lines(run_dir / "events.jsonl")
+    assert len([e for e in events if e["event"] == "session.activation.started"]) == 1
+    failed = [e for e in events if e["event"] == "node.failed"][-1]
+    assert failed["result"]["error_type"] == "session_configuration_mismatch"
+
+
+def test_pi_uses_one_exact_explicit_session_reference_for_start_and_resume(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    argv_log = workspace_layout.logs / "pi-session-argv.jsonl"
+    stub = workspace_layout.fixtures / "pi-session-stub.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+with pathlib.Path(os.environ["PI_SESSION_ARGV_LOG"]).open("a") as stream:
+    stream.write(json.dumps(sys.argv[1:]) + "\\n")
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+attempt = os.environ["AGENT_ATTEMPT"]
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"fake Pi session","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("fake Pi summary\\n")
+'''
+    )
+    stub.chmod(0o755)
+
+    result = run_command(
+        [
+            BIN,
+            "run",
+            str(workflow),
+            "--run-id",
+            "resumable-pi-explicit-reference",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Use one exact Pi session",
+            "--format",
+            "json",
+        ],
+        env={"PI_BIN": str(stub), "PI_SESSION_ARGV_LOG": str(argv_log)},
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    run_dir = Path(json.loads(result.stdout)["run"]["dir"])
+    binding = json.loads((run_dir / "sessions" / "implement" / "binding.json").read_text())
+    session_id = binding["session_ref"]["value"]
+    calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert len(calls) == 2
+
+    first, second = calls
+    assert first[first.index("--session-id") + 1] == session_id
+    assert second[second.index("--session") + 1] == session_id
+    assert "--session" not in first
+    assert "--session-id" not in second
+    assert "--continue" not in first + second
+    assert "--resume" not in first + second
+    assert first[first.index("--session-dir") + 1] == str(run_dir / "pi-sessions")
+    assert second[second.index("--session-dir") + 1] == str(run_dir / "pi-sessions")
+    assert binding["status"] == "closed"
+    assert binding["activation_sequence"] == 2
+    assert session_id not in (run_dir / "events.jsonl").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-1.log").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-3.log").read_text()
+
+
+def test_interrupted_session_with_complete_outputs_recovers_without_redelivery(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    calls = workspace_layout.logs / "recovering-pi-calls.txt"
+    child_pid = workspace_layout.logs / "recovering-pi.pid"
+    stub = workspace_layout.fixtures / "recovering-pi.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import os
+import pathlib
+import time
+
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+attempt = os.environ["AGENT_ATTEMPT"]
+with pathlib.Path(os.environ["PI_RECOVERY_CALLS"]).open("a") as stream:
+    stream.write(attempt + "\\n")
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"completed before interruption","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("completed before interruption\\n")
+pathlib.Path(os.environ["PI_RECOVERY_PID"]).write_text(str(os.getpid()))
+time.sleep(300)
+'''
+    )
+    stub.chmod(0o755)
+    env = {
+        "PI_BIN": str(stub),
+        "PI_RECOVERY_CALLS": str(calls),
+        "PI_RECOVERY_PID": str(child_pid),
+    }
+    started = run_command(
+        [
+            BIN,
+            "run",
+            "start",
+            str(workflow),
+            "--run-id",
+            "resumable-output-recovery",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Recover without redelivery",
+            "--format",
+            "json",
+        ],
+        env=env,
+    )
+    assert started.returncode == 0, started.stderr
+    run_dir = Path(json.loads(started.stdout)["run"]["dir"])
+    binding_path = run_dir / "sessions" / "implement" / "binding.json"
+    process = start_tesseraft(
+        [
+            "run",
+            "resume",
+            "--run-dir",
+            str(run_dir),
+            "--max-steps",
+            "1",
+            "--format",
+            "json",
+        ],
+        workspace_layout.home,
+        env,
+    )
+    child = None
+    try:
+        assert wait_for(
+            lambda: child_pid.exists()
+            and json.loads(binding_path.read_text())["status"] == "active"
+        )
+        child = int(child_pid.read_text())
+        process.kill()
+        process.wait(timeout=5)
+        kill_pid(child)
+
+        recovered = run_command(
+            [
+                BIN,
+                "run",
+                "resume",
+                "--run-dir",
+                str(run_dir),
+                "--max-steps",
+                "1",
+                "--format",
+                "json",
+            ],
+            env=env,
+        )
+        assert recovered.returncode == 0, recovered.stderr or recovered.stdout
+        assert json.loads(recovered.stdout)["run"]["state"] == "review"
+        assert calls.read_text().splitlines() == ["1"]
+        binding = json.loads(binding_path.read_text())
+        assert binding["status"] == "suspended"
+        assert binding["last_activation"]["recovered"] is True
+        events = read_json_lines(run_dir / "events.jsonl")
+        assert any(event["event"] == "node.recovered" for event in events)
+        assert any(
+            event["event"] == "session.activation.finished" and event.get("recovered")
+            for event in events
+        )
+        assert not any(event["event"] == "session.orphaned" for event in events)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if child is not None:
+            kill_pid(child)
+
+
+def test_interrupted_session_without_proof_is_orphaned_and_never_redelivered(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    calls = workspace_layout.logs / "orphaned-pi-calls.txt"
+    child_pid = workspace_layout.logs / "orphaned-pi.pid"
+    stub = workspace_layout.fixtures / "orphaned-pi.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import os
+import pathlib
+import time
+
+with pathlib.Path(os.environ["PI_ORPHAN_CALLS"]).open("a") as stream:
+    stream.write(os.environ["AGENT_ATTEMPT"] + "\\n")
+pathlib.Path(os.environ["PI_ORPHAN_PID"]).write_text(str(os.getpid()))
+time.sleep(300)
+'''
+    )
+    stub.chmod(0o755)
+    env = {
+        "PI_BIN": str(stub),
+        "PI_ORPHAN_CALLS": str(calls),
+        "PI_ORPHAN_PID": str(child_pid),
+    }
+    started = run_command(
+        [
+            BIN,
+            "run",
+            "start",
+            str(workflow),
+            "--run-id",
+            "resumable-orphan",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Do not redeliver an ambiguous prompt",
+            "--format",
+            "json",
+        ],
+        env=env,
+    )
+    assert started.returncode == 0, started.stderr
+    run_dir = Path(json.loads(started.stdout)["run"]["dir"])
+    binding_path = run_dir / "sessions" / "implement" / "binding.json"
+    process = start_tesseraft(
+        [
+            "run",
+            "resume",
+            "--run-dir",
+            str(run_dir),
+            "--max-steps",
+            "1",
+            "--format",
+            "json",
+        ],
+        workspace_layout.home,
+        env,
+    )
+    child = None
+    try:
+        assert wait_for(
+            lambda: child_pid.exists()
+            and json.loads(binding_path.read_text())["status"] == "active"
+        )
+        child = int(child_pid.read_text())
+        process.kill()
+        process.wait(timeout=5)
+        kill_pid(child)
+
+        resumed = run_command(
+            [
+                BIN,
+                "run",
+                "resume",
+                "--run-dir",
+                str(run_dir),
+                "--max-steps",
+                "1",
+                "--format",
+                "json",
+            ],
+            env=env,
+        )
+        assert resumed.returncode != 0
+        assert "Orphaned node detected" in resumed.stderr
+        assert calls.read_text().splitlines() == ["1"]
+        binding = json.loads(binding_path.read_text())
+        assert binding["status"] == "orphaned"
+        assert binding["last_activation"]["error_type"] == "session_activation_interrupted"
+        events = read_json_lines(run_dir / "events.jsonl")
+        assert [event["event"] for event in events][-2:] == [
+            "session.orphaned",
+            "node.orphaned",
+        ]
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if child is not None:
+            kill_pid(child)

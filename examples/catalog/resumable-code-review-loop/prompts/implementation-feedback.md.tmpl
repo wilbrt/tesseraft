@@ -1,0 +1,13 @@
+# Continue after checks or review
+
+Continue from the implementation context already in this exact session.
+
+Read the current durable feedback in `{{run.issues-file}}`, address every
+actionable issue, and validate the affected behavior. Do not repeat completed
+discovery unless the feedback invalidates it.
+
+Write fresh activation-stamped artifacts:
+
+- `execution/status-{{run.attempt}}.json`
+- `execution/summary-{{run.attempt}}.md`
+- optionally `execution/issues-{{run.attempt}}.json`

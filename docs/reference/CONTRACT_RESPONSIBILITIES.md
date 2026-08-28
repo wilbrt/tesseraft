@@ -19,10 +19,6 @@ continuation assets and template variables, safe generated-prompt paths, and
 the requirement that continuation and required output paths are stamped with
 `{{run.attempt}}`.
 
-The runtime repeats only safety and durability checks that cannot be trusted to authoring-time validation, including confined paths, required outputs, pinned content, process ownership, record versions, and idempotent mutation state.
-
-Before durable resumable-session lifecycle support is present, the runtime
-also fails closed on the otherwise valid declaration. This is a staged safety
-guard, not a competing workflow interpretation.
+The runtime repeats only safety and durability checks that cannot be trusted to authoring-time validation, including confined paths, required outputs, pinned content, process ownership, record versions, and idempotent mutation state. For resumable sessions it additionally owns the exact run/state binding, configuration hash, legal lifecycle transitions, prompt delivery evidence, and explicit executor reference. Those checks implement the authored policy; they do not infer a second workflow interpretation.
 
 This division keeps schemas portable, lint diagnostics useful, and runtime effects defensive without establishing competing authorities.

@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [tesseraft.runtime.fragment :as fragment]
             [tesseraft.runtime.process :as runtime-process]
+            [tesseraft.runtime.sessions :as sessions]
             [tesseraft.runtime.store :as store]
             [tesseraft.spec :as spec]))
 
@@ -128,6 +129,7 @@
             cancelled (-> ctx
                           (assoc-in [:run :status] "cancelled")
                           (assoc-in [:run :updated-at] (store/now)))]
+        (sessions/orphan-active-bindings! cancelled)
         (store/event! cancelled {:event "run.cancelled"
                                  :pid (:pid process)
                                  :process_found (:process_found process)

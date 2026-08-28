@@ -12,6 +12,7 @@ const contracts = [
   ['UserPreferencesContract', 'schemas/user-preferences.schema.json'],
   ['CredentialReferenceContract', 'schemas/credential-ref.schema.json'],
   ['RunStateContract', 'schemas/run-state.schema.json'],
+  ['SessionBindingContract', 'schemas/session-binding.schema.json'],
   ['LintResultContract', 'schemas/lint-result.schema.json']
 ];
 

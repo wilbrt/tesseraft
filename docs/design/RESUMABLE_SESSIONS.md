@@ -1,6 +1,6 @@
 # Resumable sessions
 
-Status: Proposed
+Status: Accepted
 Decision date: 2026-08-27
 Supersedes: —
 Superseded by: —
@@ -23,6 +23,12 @@ trajectory-continuity insight from
 model switching in version one.
 
 Suggested branch: `feature/resumable-agent-sessions`.
+
+Implementation status: the portable contract, durable binding lifecycle,
+restart recovery, mock executor, explicit Pi CLI start/resume adapter, and
+maintained review-loop example are implemented on the feature branch. OpenCode,
+Claude Code, and UI authoring/inspection remain the explicitly deferred RS5–RS7
+increments; their executors continue to advertise no resume capability.
 
 ## Decision summary
 

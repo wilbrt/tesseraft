@@ -4,6 +4,7 @@ This guide covers the side-effecting implementation workflows:
 
 - `examples/catalog/prompt-to-pr/workflow.edn`
 - `examples/catalog/code-review-loop/workflow.edn`
+- `examples/catalog/resumable-code-review-loop/workflow.edn`
 - `examples/catalog/playwright-code-review-loop/workflow.edn`
 - `examples/catalog/deterministic-code-review-loop/workflow.edn`
 - `examples/catalog/supervised-deterministic-code-review-loop/workflow.edn`
@@ -47,6 +48,7 @@ These checks do not run Pi or GitHub commands:
 bb test
 ./bin/tesseraft lint examples/catalog/prompt-to-pr/workflow.edn
 ./bin/tesseraft lint examples/catalog/code-review-loop/workflow.edn
+./bin/tesseraft lint examples/catalog/resumable-code-review-loop/workflow.edn --strict
 ./bin/tesseraft lint examples/catalog/playwright-code-review-loop/workflow.edn
 ./bin/tesseraft lint examples/catalog/design-in-practice-to-pr/workflow.edn --strict
 ./bin/tesseraft lint examples/catalog/canon-tdd-to-pr/workflow.edn
@@ -179,6 +181,9 @@ Useful run files and directories include:
 - `logs/` — process and Pi stdout/stderr logs.
 - `prompts/generated/` — rendered prompts sent to Pi.
 - `pi-sessions/` — Pi session data.
+- `sessions/<encoded-state-id>/binding.json` — Tesseraft's authoritative exact
+  executor reference and resumable activation lifecycle. Raw references stay
+  here and are hashed in events/logs.
 - `prompt/`, `design/`, `execution/`, `manual-testing/` or `playwright/`, `review/`, and `pr/` —
   workflow artifacts declared by the nodes.
 
@@ -206,6 +211,23 @@ outcome is distinct from an external/runtime failure such as a missing
 dependency, subprocess crash, malformed output, timeout, or missing required
 artifact. External failures leave durable `node.failed` evidence and require
 explicit recovery or a replacement run.
+
+The resumable code-review loop keeps the implementation context while
+preserving independent checks and review:
+
+```text
+implement(session) -> checks -> review -> done
+       ^                 |         |
+       +------ fail -----+---------+
+```
+
+Every return to `implement` is a new bounded node attempt that receives only
+the persisted continuation prompt. `session.activation.*` and
+`session.suspended` events prove each boundary; `session.closed` precedes
+`run.finished`. If a runner dies after required attempt-stamped outputs exist,
+the next runner may record `node.recovered` without redelivery. If completion
+cannot be proved, it records `session.orphaned` and never resends the ambiguous
+prompt automatically.
 
 The Canon TDD workflow adds a behavior-driven loop:
 

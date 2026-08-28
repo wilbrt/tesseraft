@@ -43,6 +43,12 @@
    {:status :implemented
     :summary "Versioned run directories own state, events, artifacts, approvals, retries, cancellation, and process ownership."
     :evidence ["src/tesseraft/runtime/core.clj" "src/tesseraft/runtime/store.clj" "schemas/run-state.schema.json" "test/tesseraft/runtime/core_test.clj"]}
+   :resumable-agent-sessions
+   {:status :implemented
+    :summary "Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi/mock resumption."
+    :evidence ["docs/design/RESUMABLE_SESSIONS.md" "schemas/session-binding.schema.json"
+               "src/tesseraft/runtime/sessions.clj" "test/resumable_session_contract.test.py"
+               "examples/catalog/resumable-code-review-loop/workflow.edn"]}
    :fragment-runtime
    {:status :implemented
     :summary "Fragment execution and recovery reuse the runtime engine while retaining pinned, inspectable nested evidence."

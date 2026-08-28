@@ -418,6 +418,35 @@ export type RunStateContract = {
   "updated_at"?: string;
 };
 
+export type SessionBindingContract = {
+  "version": 1;
+  "run_id": string;
+  "state": string;
+  "executor": string;
+  "status": "allocated" | "active" | "suspended" | "orphaned" | "closed";
+  "session_ref": {
+  "kind": "id";
+  "value": string;
+};
+  "configuration_hash": string;
+  "activation_sequence": number;
+  "last_activation": {
+  "attempt": number;
+  "operation": "start" | "resume";
+  "delivery_id": string;
+  "prompt_file": string;
+  "prompt_sha256": string;
+  "status": "allocated" | "active" | "finished" | "orphaned";
+  "started_at": string;
+  "finished_at"?: string;
+  "recovered"?: boolean;
+  "error_type"?: string;
+};
+  "created_at": string;
+  "updated_at": string;
+  "closed_at"?: string;
+};
+
 export type LintResultContract = {
   "ok": boolean;
   "workflow"?: string;

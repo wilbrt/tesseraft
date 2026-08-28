@@ -148,6 +148,20 @@ Evidence:
 - [`src/tesseraft/work_tracker/catalog.clj`](../../src/tesseraft/work_tracker/catalog.clj)
 - [`test/work-tracker-contract.test.js`](../../test/work-tracker-contract.test.js)
 
+## resumable-agent-sessions
+
+Status: **Implemented**
+
+Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi/mock resumption.
+
+Evidence:
+
+- [`docs/design/RESUMABLE_SESSIONS.md`](../../docs/design/RESUMABLE_SESSIONS.md)
+- [`schemas/session-binding.schema.json`](../../schemas/session-binding.schema.json)
+- [`src/tesseraft/runtime/sessions.clj`](../../src/tesseraft/runtime/sessions.clj)
+- [`test/resumable_session_contract.test.py`](../../test/resumable_session_contract.test.py)
+- [`examples/catalog/resumable-code-review-loop/workflow.edn`](../../examples/catalog/resumable-code-review-loop/workflow.edn)
+
 ## Not yet implemented
 
 - Full Pi SDK executor

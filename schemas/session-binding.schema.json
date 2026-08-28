@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tesseraft.local/schemas/session-binding.schema.json",
+  "title": "Tesseraft Resumable Session Binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "run_id",
+    "state",
+    "executor",
+    "status",
+    "session_ref",
+    "configuration_hash",
+    "activation_sequence",
+    "last_activation",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "state": { "type": "string", "minLength": 1 },
+    "executor": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": ["allocated", "active", "suspended", "orphaned", "closed"]
+    },
+    "session_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "const": "id" },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configuration_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "activation_sequence": { "type": "integer", "minimum": 1 },
+    "last_activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "operation",
+        "delivery_id",
+        "prompt_file",
+        "prompt_sha256",
+        "status",
+        "started_at"
+      ],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1 },
+        "operation": { "enum": ["start", "resume"] },
+        "delivery_id": { "type": "string", "minLength": 1 },
+        "prompt_file": { "type": "string", "minLength": 1 },
+        "prompt_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "status": {
+          "enum": ["allocated", "active", "finished", "orphaned"]
+        },
+        "started_at": { "type": "string", "minLength": 1 },
+        "finished_at": { "type": "string", "minLength": 1 },
+        "recovered": { "type": "boolean" },
+        "error_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "created_at": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "minLength": 1 },
+    "closed_at": { "type": "string", "minLength": 1 }
+  }
+}

@@ -140,11 +140,21 @@ from an earlier activation from satisfying recovery for a later activation.
 The selected executor must advertise resumable-session support in the executor
 catalog.
 
-The resumable declaration is currently contract- and lint-complete while its
-durable lifecycle is implemented incrementally. Until that lifecycle lands,
-the reference runner fails closed with
-`resumable_session_not_implemented` before invoking any executor. It must never
-execute a resumable declaration as a fresh ordinary agent.
+The reference runtime persists the exact session binding at
+`sessions/<encoded-state-id>/binding.json`. Every visit remains a bounded node
+activation with distinct attempt-stamped evidence. The first visit starts an
+explicit executor session; later visits render only the continuation prompt
+and resume the exact stored reference. Session allocation, activation,
+suspension, orphaning, and closure are appended as `session.*` events without
+placing the raw session reference in the event stream.
+
+Mock mode and `:pi-cli` implement this lifecycle. Pi starts with an exact
+preallocated `--session-id` and resumes with `--session`; ambient `--continue`
+and interactive `--resume` lookup are forbidden. A changed configuration,
+missing reference, unsupported executor, or non-suspended binding fails
+closed. After interruption, complete attempt-stamped outputs may prove the
+activation completed and allow recovery; otherwise the binding is marked
+orphaned and the prompt is never automatically redelivered.
 
 Known agent executors are `:pi-cli`, `:opencode-cli`, `:pi-sdk` (reserved), and `:claude-code`. The `:claude-code` executor shells out to the Claude Code CLI and authenticates via that CLI's own Claude Pro/Max subscription login; it does **not** use or require `ANTHROPIC_API_KEY`, and actively strips that variable from the subprocess environment so the subscription is used instead of API-key billing. For `:claude-code` nodes, `:model` maps to `--model` and `:provider` is ignored (warn-only) since account selection is the subscription, not an API provider.
 
@@ -276,13 +286,13 @@ Existing runs must not silently switch workflow versions.
 
 ## 17. Event log
 
-Runtime events are appended as JSONL. Required categories include `run.started`, `node.started`, `node.finished`, `node.failed`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`.
+Runtime events are appended as JSONL. Required categories include `run.started`, `node.started`, `node.finished`, `node.failed`, `transition.selected`, `artifact.written`, `effect.applied`, `approval.requested`, `approval.decided`, and `agent.event`. Resumable agents additionally emit `session.allocated`, `session.activation.started`, `session.activation.finished`, `session.suspended`, `session.orphaned`, and `session.closed` as applicable.
 
 The event log is part of the proof trace. After `node.started`, a runner must append a closing event (`node.finished` for declared outcomes or `node.failed` for runtime/external failures) before marking the run failed or advancing state.
 
 ## 18. Executor protocol
 
-Agent executors receive a normalized node execution request and may stream events. They return a result with `ok`, `status`, `artifacts`, and `events`.
+Agent executors receive a normalized node execution request and may stream events. They return a result with `ok`, `status`, `artifacts`, and `events`. A resumable executor additionally receives an explicit operation (`start` or `resume`), persisted prompt file, delivery id, activation sequence, and exact session reference. It must return the same exact reference; ambient recent-session lookup is not a conforming implementation.
 
 ## 19. Process-node protocol
 

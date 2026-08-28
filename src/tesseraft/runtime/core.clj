@@ -9,6 +9,7 @@
     [tesseraft.runtime.fragment :as fragment]
     [tesseraft.runtime.lifecycle :as lifecycle]
     [tesseraft.runtime.liveness :as liveness]
+    [tesseraft.runtime.sessions :as sessions]
     [tesseraft.runtime.store :as store]
     [tesseraft.runtime.transitions :as transitions]
     [babashka.fs :as fs]
@@ -118,15 +119,24 @@
     (mock-mode? ctx)        (mock/run-agent-node! wf ctx state-id node)
     :else (executor-catalog/invoke! (:executor node) wf ctx state-id node)))
 
-(defn assert-session-runtime-available! [state-id node]
-  ;; RS1 publishes and lints the portable declaration before the durable
-  ;; lifecycle lands. Fail closed here so a resumable declaration can never be
-  ;; mistaken for an ordinary fresh agent invocation during that interval.
-  (when (contains? node :session)
-    (throw (ex-info "Resumable session runtime is not implemented"
-                    {:error-type "resumable_session_not_implemented"
-                     :state state-id
-                     :session (:session node)}))))
+(defn invoke-session-agent! [wf ctx state-id node request]
+  (if (mock-mode? ctx)
+    (mock/run-agent-session-node! wf ctx state-id node request)
+    (executor-catalog/invoke-session! (:executor node) wf ctx state-id node request)))
+
+(defn assert-session-executor-supported! [ctx node]
+  (when (and (not (mock-mode? ctx))
+             (not (executor-catalog/supports-session-resume? (:executor node))))
+    (throw (ex-info "Executor does not support resumable sessions"
+                    {:executor (:executor node)
+                     :error-type "executor_session_resume_unavailable"}))))
+
+(defn complete-agent-result! [ctx node exec-result]
+  (when-not (:ok exec-result)
+    (throw (ex-info "Agent executor failed" (dissoc exec-result :session-ref))))
+  (let [result (merge exec-result (status-result ctx node))]
+    (validate-required-outputs! ctx node)
+    result))
 
 (defn json-compatible [x]
   (cond
@@ -255,11 +265,14 @@
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
   (try
     (let [result (case (:type node)
-                   :agent (let [_ (assert-session-runtime-available! state-id node)
-                                exec-result (run-agent! wf ctx state-id node)]
-                            (when-not (:ok exec-result)
-                              (throw (ex-info "Agent executor failed" exec-result)))
-                            (merge exec-result (status-result ctx node)))
+                   :agent (if (sessions/resumable? node)
+                            (do
+                              (assert-session-executor-supported! ctx node)
+                              (sessions/run-activation!
+                                wf ctx state-id node
+                                #(invoke-session-agent! wf ctx state-id node %)
+                                #(complete-agent-result! ctx node %)))
+                            (complete-agent-result! ctx node (run-agent! wf ctx state-id node)))
                    :deterministic (binding [adapters/*process-extra-env* (run-owner-env ctx)]
                                     (adapters/run-handler! wf ctx state-id node {:mock? (mock-mode? ctx)}))
                    :process (run-process-node! wf ctx state-id node)
@@ -289,6 +302,8 @@
       (when (and status-path
                  (fs/exists? status-path)
                  (every? fs/exists? required-paths))
+        (when (sessions/resumable? node)
+          (sessions/recover-completed-activation! ctx state-id node))
         (let [status (store/read-json status-path)
               executor-name (or (some-> (:executor node) name) "unknown")
               result (merge {:executor executor-name
@@ -356,7 +371,9 @@
             (finish-if-terminal wf (advance ctx tr recovered)))
           (if (and (orphaned-current-attempt? ctx state-id attempt)
                    (not (resumable-fragment? ctx state-id attempt node)))
-            (let [failed (orphan-run! ctx state-id attempt)]
+            (let [_ (when (sessions/resumable? node)
+                      (sessions/orphan-active-activation! ctx state-id))
+                  failed (orphan-run! ctx state-id attempt)]
               (throw (ex-info "Orphaned node detected: started without a terminal event"
                               {:state state-id :attempt attempt :tesseraft/already-failed true})))
             (let [result (execute-with-heartbeat

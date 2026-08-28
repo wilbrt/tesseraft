@@ -114,9 +114,13 @@ output must contain `{{run.attempt}}`. The selected executor must advertise
 resumable-session support; no display name or ambient recent-session lookup can
 substitute for that capability.
 
-The initial portable contract is fail-closed at runtime until the durable
-session lifecycle is implemented. A runner must reject the policy before
-invoking an executor rather than silently starting a fresh session.
+The runtime persists one binding per `(run id, state id)` below the owning run's
+`sessions/` directory. Each graph visit is still a bounded node activation;
+only the exact external session reference persists between visits. Initial and
+continuation prompts are written before delivery and carry stable delivery
+markers. Pi uses explicit `--session-id`/`--session` selection, while mock mode
+provides deterministic local execution. Missing, changed, active, orphaned, or
+unsupported bindings fail closed rather than starting a replacement session.
 
 ## Asset closure
 

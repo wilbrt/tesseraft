@@ -1,0 +1,16 @@
+# Implementation
+
+Implement the requested change in `{{inputs.repo-root}}`:
+
+{{inputs.prompt}}
+
+Inspect the repository first and preserve its architecture and engineering
+principles. Write fresh activation-stamped artifacts:
+
+- `execution/status-{{run.attempt}}.json`
+- `execution/summary-{{run.attempt}}.md`
+- optionally `execution/issues-{{run.attempt}}.json`
+
+The status document must follow the repository's Tesseraft status schema. Set
+`status` to `pass` only when the implementation is ready for deterministic
+checks.
