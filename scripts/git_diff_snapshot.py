@@ -156,16 +156,57 @@ def fail(code: str, message: str, **details: Any) -> "NoReturn":
     raise SystemExit(2)
 
 
-def git(repo: str, *args: str, allow_one: bool = False) -> bytes:
+def git_env() -> dict[str, str]:
     env = os.environ.copy()
     env.update({"GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1", "GIT_NO_REPLACE_OBJECTS": "1", "GIT_PAGER": "cat"})
+    return env
+
+
+def git(repo: str, *args: str, allow_one: bool = False) -> bytes:
     result = subprocess.run(["git", "-c", "core.fsmonitor=false", "--no-pager", *args], cwd=repo,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            env=env, timeout=20, check=False)
+                            env=git_env(), timeout=20, check=False)
     if result.returncode and not (allow_one and result.returncode == 1):
         fail("git_snapshot_failed", "Git snapshot plumbing failed", operation=args[0], exit=result.returncode,
              stderr=result.stderr.decode("utf-8", "replace")[:1000])
     return result.stdout
+
+
+def bounded_blob_size(repo: str, oid: str, path: str) -> int:
+    raw = git(repo, "cat-file", "-s", oid)
+    try:
+        size = int(raw.decode("ascii", "strict").strip())
+    except (UnicodeDecodeError, ValueError):
+        fail("malformed_git_metadata", "Git blob size is malformed", path=path)
+    if size < 0 or size > MAX_FILE_BYTES:
+        fail("review_file_too_large", "HEAD blob exceeds review scan bound", path=path, size=size)
+    return size
+
+
+def bounded_blob_read(repo: str, oid: str, path: str, size: int) -> bytes:
+    process = subprocess.Popen(
+        ["git", "-c", "core.fsmonitor=false", "--no-pager", "cat-file", "blob", oid],
+        cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=git_env())
+    assert process.stdout is not None and process.stderr is not None
+    try:
+        data = process.stdout.read(size + 1)
+        if len(data) > size:
+            process.kill()
+            process.wait()
+            fail("git_snapshot_failed", "Git blob exceeded bounded metadata", path=path,
+                 expected_size=size, actual_size=len(data))
+        stderr = process.stderr.read(1001)
+        result = process.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        fail("git_snapshot_failed", "Git blob read timed out", path=path)
+    if result or len(data) != size:
+        fail("git_snapshot_failed", "Git blob read did not match bounded metadata", path=path,
+             exit=result, expected_size=size, actual_size=len(data),
+             stderr=stderr.decode("utf-8", "replace")[:1000])
+    return data
 
 
 def safe_path(raw: bytes) -> str:
@@ -429,7 +470,11 @@ def main() -> None:
             old_oid = old_entry[1] if old_entry else None
             if old_oid == current_oid:
                 continue
-            old_data = git(repo, "cat-file", "blob", old_oid) if old_oid else None
+            old_size = bounded_blob_size(repo, old_oid, path) if old_oid else 0
+            scanned += old_size
+            if scanned > MAX_SCAN_BYTES:
+                fail("review_scan_too_large", "Aggregate review scan exceeds bound")
+            old_data = bounded_blob_read(repo, old_oid, path, old_size) if old_oid else None
             patch = patch_for(path, old_data, new_data)
             if patch:
                 patches.append(patch)

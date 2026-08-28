@@ -90,11 +90,17 @@ if (sha256(diff) !== review.evidence_sha256 || Buffer.byteLength(diff) !== revie
 
 const installRoot = process.env.TESSERAFT_INSTALL_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tesseraftBin = path.join(installRoot, 'bin', 'tesseraft');
+const adapterEnv = { ...process.env, AGENT_RUN_DIR: runDir, TESSERAFT_ADAPTER_INTERNAL: 'true',
+                     TESSERAFT_ADAPTER_APPROVAL_ID: approvalId };
 const decision = (payload) => new Promise((resolve) => {
-  execFile(tesseraftBin, ['run', 'apply', '--input', '-'], { cwd: installRoot, timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-    try { resolve({ error, result: JSON.parse(stdout || '{}'), stderr }); }
-    catch { resolve({ error: error || new Error('Runtime returned invalid JSON'), result: null, stderr }); }
-  }).stdin.end(JSON.stringify({ operation: 'run.decide', payload: { run_dir: runDir, approval_id: approvalId, ...payload } }));
+  execFile(tesseraftBin, ['run', 'apply', '--input', '-'],
+    { cwd: installRoot, timeout: 30000, maxBuffer: 1024 * 1024, env: adapterEnv }, (error, stdout, stderr) => {
+      try { resolve({ error, result: JSON.parse(stdout || '{}'), stderr }); }
+      catch { resolve({ error: error || new Error('Runtime returned invalid JSON'), result: null, stderr }); }
+    }).stdin.end(JSON.stringify({ operation: 'run.decide', payload: {
+      decision: payload.decision, message: payload.message, annotations: payload.annotations,
+      run_dir: runDir, approval_id: approvalId
+    } }));
 });
 let supervisorsStarted = false;
 const startSupervisors = (submissionId, transportStatus) => {
@@ -103,7 +109,7 @@ const startSupervisors = (submissionId, transportStatus) => {
   return [0, 1].map((candidateIndex) => {
     const child = spawn(tesseraftBin, ['run', 'apply', '--input', '-'], {
       cwd: installRoot, detached: true, stdio: ['pipe', 'ignore', 'ignore'],
-      env: { ...process.env, AGENT_RUN_DIR: runDir }
+      env: adapterEnv
     });
     child.once('error', (error) => {
       void updateOwner({ supervisor_status: 'candidate-launch-failed',
@@ -164,6 +170,11 @@ const server = createServer(async (req, res) => {
       for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > MAX_BODY) { oversized = true; break; } }
       if (oversized) return json(res, 413, { error: { code: 'payload_too_large', message: 'Decision payload exceeds 64 KiB' } });
       let payload; try { payload = JSON.parse(body); } catch { return json(res, 400, { error: { code: 'bad_request', message: 'Malformed JSON' } }); }
+      const allowedKeys = new Set(['decision', 'message', 'annotations']);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+          || Object.keys(payload).some((key) => !allowedKeys.has(key))) {
+        return json(res, 400, { error: { code: 'bad_request', message: 'Decision body contains unsupported fields' } });
+      }
       accepting = false;
       await updateOwner({ submission_id: submissionId, transport_status: 'pending', decision_started_at: new Date().toISOString() });
       const outcome = await decision(payload);

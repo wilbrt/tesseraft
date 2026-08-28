@@ -127,6 +127,7 @@
   (let [root (temp-dir "tesseraft-git-review")
         repo (fs/path root "repo")
         workflow-file (fs/path root "workflow.edn")
+        target-run-dir (atom nil)
         run! (fn [& command]
                (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
                  (is (zero? (:exit result)) (:err result)) result))]
@@ -182,6 +183,41 @@
                                         (slurp (str (fs/path (fs/parent capability-file) "adapter.log"))))
                  " adapter stderr: " (when (fs/exists? (fs/path (fs/parent capability-file) "adapter-error.log"))
                                          (slurp (str (fs/path (fs/parent capability-file) "adapter-error.log"))))))
+        ;; A valid capability is bound to this exact run and approval. Ownership
+        ;; and attribution keys in the submitted body must be rejected before
+        ;; canonical mutation, even when the named target is another valid
+        ;; blocked run.
+        (let [target-started (runtime/start! (str workflow-file)
+                                             {:workspace-root root :run-id "git-review-target"
+                                              :executor :mock :inputs {:repo-root (str repo)}})
+              target-blocked (runtime/run-until-done! wf target-started 10)
+              target-dir (get-in target-blocked [:run :dir])
+              source-capability (store/read-json capability-file)
+              source-owner (store/read-json (fs/path run-dir "approval-adapters" "review" "1" "owner.json"))
+              attack (json/generate-string {:decision "pass" :run_dir target-dir
+                                            :approval_id "review-1" :state "review"
+                                            :attempt 1 :author "forged"})
+              response @(p/process ["curl" "-sS" "-o" "/dev/null" "-w" "%{http_code}" "-X" "POST"
+                                    "-H" "content-type: application/json"
+                                    "-H" (str "x-tesseraft-approval-token: " (:token source-capability))
+                                    "--data-binary" attack (str (:endpoint source-owner) "/api/decision")]
+                                   {:out :string :err :string :continue true})
+              fenced @(p/process ["env" "TESSERAFT_ADAPTER_INTERNAL=true"
+                                  (str "AGENT_RUN_DIR=" run-dir)
+                                  "TESSERAFT_ADAPTER_APPROVAL_ID=review-1"
+                                  (str (fs/path (System/getProperty "user.dir") "bin" "tesseraft"))
+                                  "run" "apply" "--input" "-"]
+                                 {:in (json/generate-string
+                                        {:operation "run.decide"
+                                         :payload {:run_dir target-dir :approval_id "review-1"
+                                                   :decision "pass" :author "forged"}})
+                                  :out :string :err :string :continue true})]
+          (reset! target-run-dir target-dir)
+          (is (= "400" (:out response)))
+          (is (not (zero? (:exit fenced))))
+          (is (str/includes? (:out fenced) "adapter_run_mismatch"))
+          (is (not (fs/exists? (fs/path run-dir "approvals" "review-1-decision.json"))))
+          (is (not (fs/exists? (fs/path target-dir "approvals" "review-1-decision.json")))))
         ;; SIGKILL leaves stale capability/owner metadata. A mutating resume
         ;; must prove the exact PID/start tuple absent and launch one replacement.
         (let [owner-file (fs/path run-dir "approval-adapters" "review" "1" "owner.json")
@@ -366,6 +402,8 @@
         (System/clearProperty "tesseraft.test.adapter-exit-delay-ms")
         (System/clearProperty "tesseraft.test.adapter-hold-after-abort")
         (System/clearProperty "tesseraft.test.drain-hold-through-generation")
+        (when @target-run-dir
+          (approval-server/cleanup! (store/load-context @target-run-dir)))
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
         (fs/delete-tree root)))))
@@ -399,6 +437,38 @@
         (is (not (fs/exists? marker)) "configured clean helper must not execute")
         (is (not (fs/exists? (approval-server/evidence-path ctx "review-1")))))
       (finally (fs/delete-tree root)))))
+
+(deftest git-diff-snapshot-bounds-oversized-head-blobs-before-content-read
+  (doseq [change [:modified :deleted]]
+    (testing (name change)
+      (let [root (temp-dir (str "tesseraft-git-old-bound-" (name change)))
+            repo (fs/path root "repo")
+            run-dir (fs/path root "run")
+            tracked (fs/path repo "large.txt")
+            run! (fn [& command]
+                   (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
+                     (is (zero? (:exit result)) (:err result)) result))]
+        (try
+          (fs/create-dirs repo)
+          (fs/create-dirs run-dir)
+          (run! "git" "init" "-q")
+          (run! "git" "config" "user.name" "Bound Test")
+          (run! "git" "config" "user.email" "bound@example.test")
+          (let [chunk (apply str (repeat 1024 "x"))]
+            (with-open [writer (java.io.BufferedWriter. (java.io.FileWriter. (str tracked)))]
+              (dotimes [_ 8193] (.write writer chunk))
+              (.write writer "\n")))
+          (run! "git" "add" "large.txt")
+          (run! "git" "commit" "-qm" "large base")
+          (case change
+            :modified (spit (str tracked) "small\n")
+            :deleted (fs/delete tracked))
+          (let [ctx {:run {:dir (str run-dir)} :inputs {:repo-root (str repo)}}
+                error (try (approval-server/snapshot-diff! ctx "review-1" 1048576) nil
+                           (catch clojure.lang.ExceptionInfo failure failure))]
+            (is (= :review_file_too_large (:code (ex-data error))))
+            (is (not (fs/exists? (approval-server/evidence-path ctx "review-1")))))
+          (finally (fs/delete-tree root)))))))
 
 (deftest git-diff-snapshot-watches-span-publication-and-reject-restored-mutations
   (doseq [mutation [:file :ancestor :index :config]]

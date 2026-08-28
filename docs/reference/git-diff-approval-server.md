@@ -27,7 +27,10 @@ same durable feedback after a restart; browser state is never authoritative.
 On first entry, Tesseraft snapshots bounded tracked changes using fixed
 non-converting Git plumbing (`rev-parse`, `ls-tree`, `ls-files`, `cat-file`) and
 an owner-trusted helper that reads native worktree files through directory file
-descriptors with `O_NOFOLLOW`. It records and rechecks inode/size/mtime/ctime
+descriptors with `O_NOFOLLOW`. Worktree and HEAD sides each have an 8 MiB
+per-file bound and both count toward the 64 MiB aggregate scan bound. HEAD blob
+size metadata is checked before a bounded exact-length content read, including
+modified and deleted paths. It records and rechecks inode/size/mtime/ctime
 for every opened ancestor and file plus HEAD/index fingerprints. Supported
 Darwin and Linux hosts also retain no-follow `kqueue` or `inotify` watches over
 the tracked namespace and Git conversion metadata. The helper emits a prepared
@@ -47,7 +50,11 @@ are stored separately in owner-only `capability.json` and are not returned by
 ordinary approval APIs.
 
 The adapter accepts no forwarded host, CORS, or remote origin. Mutations require
-the 256-bit capability and are limited to 64 KiB. Canonical Clojure validation
+the 256-bit capability and are limited to 64 KiB. Decision bodies accept only
+`decision`, `message`, and `annotations`; ownership and attribution keys are
+rejected, and trusted run/approval fields are assigned by the adapter. The
+spawned apply process independently canonicalizes and compares its run and
+approval environment binding before dispatch. Canonical Clojure validation
 rechecks pending run/state/attempt, decision choice, evidence hash, annotation
 path, and semantic diff line before writing a decision. Before publishing the
 decision, it writes `approval-finalizations/<approval-id>.json` with an immutable
@@ -80,8 +87,10 @@ in the same run-locked lifecycle completion, creates one deterministic
 `:approval-resume` execution intent. The detached worker leases that exact
 generation and a bootstrap child claims it before loading workflow state; no
 destination step can run before exact lifecycle completion. The focused
-Playwright fault scenario drives a real browser abort, kills generation 1 and
-the adapter, and verifies generation-2 completion plus endpoint replacement.
+Playwright fault scenario drives a server-observed browser transport abort,
+kills both initial candidates and the adapter, repeatedly invokes the idempotent
+external reconciler until exact liveness permits generation-2 takeover, and
+verifies lifecycle completion plus endpoint replacement.
 
 The durable request, evidence, decision, feedback, `issues.json`, state, and
 events are authority. The listener and browser are transient adapters.

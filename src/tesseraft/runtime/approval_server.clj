@@ -271,6 +271,15 @@
                   existing (when (fs/exists? receipt-path) (store/read-json receipt-path))
                   exact-owner? (= [pid process_started_at approval_id]
                                   [(:pid owner) (:process_started_at owner) (:approval_id owner)])
+                  receipt-bound? (= [submission_id approval_id pid process_started_at transport_status]
+                                    [(:submission_id existing) (:approval_id existing)
+                                     (:adapter_pid existing) (:process_started_at existing)
+                                     (:transport_status existing)])
+                  same-approval-replacement? (= [(get-in ctx [:run :id]) state attempt approval_id]
+                                                [(:run_id owner) (:state owner) (:attempt owner)
+                                                 (:approval_id owner)])
+                  safe-replacement? (and receipt-bound? same-approval-replacement?
+                                         (not (:exact-live (owner-process expected-adapter))))
                   existing-worker {:pid (:worker_pid existing)
                                    :process_started_at (:worker_started_at existing)}
                   other-live? (and existing
@@ -281,7 +290,7 @@
                 (= "complete" (:lifecycle_status existing))
                 {:status :complete :record existing}
 
-                (not exact-owner?)
+                (and (not exact-owner?) (not safe-replacement?))
                 {:status :superseded}
 
                 other-live?

@@ -11,6 +11,28 @@
 
 (def execution-operations #{"run.step" "run.resume"})
 
+(defn- real-path [value]
+  (try
+    (str (.toRealPath (java.nio.file.Paths/get value (make-array String 0))
+                      (make-array java.nio.file.LinkOption 0)))
+    (catch Throwable _ nil)))
+
+(defn- adapter-fence-error [operation payload]
+  (when (= "true" (System/getenv "TESSERAFT_ADAPTER_INTERNAL"))
+    (let [bound-run (System/getenv "AGENT_RUN_DIR")
+          bound-approval (System/getenv "TESSERAFT_ADAPTER_APPROVAL_ID")
+          bound-real (real-path bound-run)
+          payload-real (real-path (:run_dir payload))]
+      (cond
+        (not (contains? #{"run.decide" "approval.adapter.supervise"} operation))
+        (error 403 "adapter_operation_forbidden" "Focused adapter operation is not permitted")
+
+        (or (nil? bound-real) (nil? payload-real) (not= bound-real payload-real))
+        (error 403 "adapter_run_mismatch" "Focused adapter run does not match its process binding")
+
+        (or (nil? bound-approval) (not= bound-approval (:approval_id payload)))
+        (error 403 "adapter_approval_mismatch" "Focused adapter approval does not match its process binding")))))
+
 (defn execute-claimed-operation
   "Execute an operation only after bootstrap-intent! published this child's
   exact state-authoritative claim. Never call from a launcher or HTTP process."
@@ -42,9 +64,13 @@
 (defn apply-operation [request]
   (let [operation (:operation request)
         payload (or (:payload request) {})
-        run-dir (:run_dir payload)]
-    (if-not (and (string? run-dir) (not-empty run-dir))
+        run-dir (:run_dir payload)
+        fence-error (adapter-fence-error operation payload)]
+    (cond
+      fence-error fence-error
+      (not (and (string? run-dir) (not-empty run-dir)))
       (error 400 "bad_request" "payload.run_dir is required")
+      :else
       (if (contains? execution-operations operation)
         (runtime-process/launch-intent! run-dir operation
                                         (select-keys payload [:max_steps :executor]))

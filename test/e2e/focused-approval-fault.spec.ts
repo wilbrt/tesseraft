@@ -18,7 +18,19 @@ const waitFor = async (predicate: () => Promise<boolean>, timeout = 15_000): Pro
 };
 
 const readJson = async <T extends object>(target: string): Promise<T> => JSON.parse(await fs.readFile(target, 'utf8')) as T;
+const applyOperation = (request: object, env: NodeJS.ProcessEnv): Promise<void> => new Promise((resolve, reject) => {
+  const child = spawn(path.join(repoRoot, 'bin', 'tesseraft'), ['run', 'apply', '--input', '-'], {
+    cwd: repoRoot, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe']
+  });
+  let stdout = ''; let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+  child.once('error', reject);
+  child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`reconcile failed (${code}): ${stdout}\n${stderr}`)));
+  child.stdin.end(JSON.stringify(request));
+});
 const kill = (pid: number): void => { try { process.kill(pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } };
+const live = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 const waitForLock = (child: ChildProcessWithoutNullStreams): Promise<void> => new Promise((resolve, reject) => {
   let stdout = '';
@@ -51,7 +63,7 @@ const workflow = (name: string): string => `{:api-version "tesseraft.workflow/v1
                       :next :done}
           :done {:type :terminal :status :success}}}`;
 
-test('browser abort plus worker and adapter SIGKILL converges through drain generation 2', async ({ page, isolatedWorkspace }) => {
+test('browser abort plus candidate and adapter SIGKILL converges through external drain reconciliation', async ({ page, isolatedWorkspace }) => {
   const name = isolatedWorkspace.uniqueName('focused-fault');
   const runId = `run-${name}`;
   const gitDir = path.join(isolatedWorkspace.tempRoot, 'repo');
@@ -103,19 +115,24 @@ test('browser abort plus worker and adapter SIGKILL converges through drain gene
     });
     await waitForLock(lockHolder);
 
-    const abortName = await page.evaluate(async ({ endpoint, token }) => {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), 50);
-      try {
-        await fetch(`${endpoint}/api/decision`, {
-          method: 'POST', signal: controller.signal,
-          headers: { 'content-type': 'application/json', 'x-tesseraft-approval-token': token },
-          body: JSON.stringify({ decision: 'invalid' })
-        });
-        return 'completed';
-      } catch (error) { return error instanceof Error ? error.name : String(error); }
+    const abortPage = await page.context().newPage();
+    await abortPage.goto(capability.launch_url);
+    await abortPage.evaluate(({ endpoint, token }) => {
+      void fetch(`${endpoint}/api/decision`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-tesseraft-approval-token': token },
+        body: JSON.stringify({ decision: 'invalid' })
+      }).catch(() => {});
     }, { endpoint: owner.endpoint, token: capability.token });
-    expect(abortName).toBe('AbortError');
+    await waitFor(async () => {
+      try { return Boolean((await readJson<{ decision_started_at?: string }>(ownerPath)).decision_started_at); }
+      catch { return false; }
+    });
+    await abortPage.close();
+    await waitFor(async () => {
+      try { return (await readJson<{ transport_status?: string }>(ownerPath)).transport_status === 'aborted'; }
+      catch { return false; }
+    });
     await new Promise<void>((resolve) => lockHolder?.once('exit', () => resolve()));
     lockHolder = undefined;
 
@@ -129,18 +146,42 @@ test('browser abort plus worker and adapter SIGKILL converges through drain gene
     });
     const generation1 = await readJson<{ worker_pid: number; drain_generation: number }>(receiptPath);
     expect(generation1.drain_generation).toBe(1);
-    kill(generation1.worker_pid);
-    kill(owner.pid);
-
+    let standbyPid = 0;
     await waitFor(async () => {
       try {
-        const receipt = await readJson<{ drain_generation: number; lifecycle_status?: string }>(receiptPath);
-        const replacement = await readJson<{ pid: number; status: string }>(ownerPath);
-        return receipt.drain_generation === 2 && receipt.lifecycle_status === 'complete'
-          && replacement.pid !== owner.pid && replacement.status === 'ready'
-          && Boolean(await fs.stat(capabilityPath));
+        const drainingOwner = await readJson<{ supervisor_candidate_pids?: number[] }>(ownerPath);
+        standbyPid = drainingOwner.supervisor_candidate_pids?.find((pid) => pid !== generation1.worker_pid) ?? 0;
+        return standbyPid > 0 && live(standbyPid);
       } catch { return false; }
-    }, 20_000);
+    });
+    kill(generation1.worker_pid);
+    kill(standbyPid);
+    kill(owner.pid);
+    await waitFor(async () => !live(generation1.worker_pid) && !live(standbyPid) && !live(owner.pid));
+
+    try {
+      await waitFor(async () => {
+        try {
+          await applyOperation({ operation: 'approval.adapter.reconcile', payload: { run_dir: runDir } }, commandEnv);
+          const receipt = await readJson<{ drain_generation: number; lifecycle_status?: string }>(receiptPath);
+          const replacement = await readJson<{ pid: number; status: string }>(ownerPath);
+          return receipt.drain_generation === 2 && receipt.lifecycle_status === 'complete'
+            && replacement.pid !== owner.pid && replacement.status === 'ready'
+            && Boolean(await fs.stat(capabilityPath));
+        } catch { return false; }
+      }, 20_000);
+    } catch (error) {
+      const diagnostic = {
+        receipt: await readJson<object>(receiptPath).catch((failure) => ({ read_error: String(failure) })),
+        owner: await readJson<object>(ownerPath).catch((failure) => ({ read_error: String(failure) })),
+        capability: await fs.stat(capabilityPath).then(() => true, () => false),
+        standby_pid: standbyPid,
+        standby_live: live(standbyPid),
+        adapter_log: await fs.readFile(path.join(path.dirname(ownerPath), 'adapter.log'), 'utf8').catch((failure) => String(failure)),
+        adapter_error: await fs.readFile(path.join(path.dirname(ownerPath), 'adapter-error.log'), 'utf8').catch((failure) => String(failure))
+      };
+      throw new Error(`${error instanceof Error ? error.message : String(error)}: ${JSON.stringify(diagnostic)}`);
+    }
 
     const receipt = await readJson<{ drain_generation: number; transport_status: string; lifecycle_status: string; listener_absent: boolean }>(receiptPath);
     expect(receipt).toMatchObject({ drain_generation: 2, transport_status: 'aborted', lifecycle_status: 'complete', listener_absent: true });
