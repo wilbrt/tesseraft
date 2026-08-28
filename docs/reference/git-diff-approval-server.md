@@ -58,20 +58,28 @@ the 256-bit capability and are limited to 64 KiB. Decision bodies accept only
 rejected, and trusted run/approval fields are assigned by the adapter. The
 spawned apply process independently canonicalizes and compares its run and
 approval environment binding before dispatch. Canonical Clojure validation
-rechecks pending run/state/attempt, decision choice, evidence hash, annotation
-path, and semantic diff line before writing a decision. Before publishing the
-decision, it writes `approval-finalizations/<approval-id>.json` with an immutable
+always reloads the bounded durable request and requires its exact pending
+run/state/attempt/approval tuple, focused-review metadata, canonical evidence
+path, byte size, and SHA-256 before accepting pass or reject, even when no
+annotations were submitted. Per-annotation validation additionally checks the
+reviewed artifact path and semantic diff line against that same validated
+evidence view. Missing, malformed, symlinked, oversized, unstable, or changed
+request/evidence authority rejects the decision before feedback, finalization,
+decision, event, effect, or state mutation. Before publishing the decision, it writes `approval-finalizations/<approval-id>.json` with an immutable
 selection hash and pinned transition/effects. Stable event IDs and a state
 receipt let a later mutating resume complete a crash after decision publication
 without accepting another choice or duplicating logical events/effects.
 
 The adapter never parses or substring-matches `state.edn`. Its confined
-`approval.adapter.status` operation returns a structured exact
-run/state/attempt/status/approval projection and decision-presence bit; any
-mismatch or inspection failure fails closed. The first exact pending check is
-recorded in transient owner metadata. A successful decision, run cancellation,
-or observed state change closes the listener, removes the capability, and
-records terminal owner metadata. Cleanup
+`approval.adapter.status` operation uses the same request/evidence validator and
+returns a structured exact run/state/attempt/status/approval projection,
+decision-presence bit, authority-valid bit, and pending bit. Any tuple,
+authority, or inspection failure reports non-pending and fails closed. The first
+exact pending check is recorded in transient owner metadata. Invalid authority
+closes a live listener and removes its capability; blocked reconciliation marks
+the exact owner invalid and never relaunches it. A successful decision, run
+cancellation, or observed state change likewise closes the listener, removes the
+capability, and records terminal owner metadata. Cleanup
 kills a PID only when its persisted process start instant still matches. A
 mutating resume adopts one exact live blocked adapter or, after proving the old
 PID/start tuple absent, removes stale capability data and launches one

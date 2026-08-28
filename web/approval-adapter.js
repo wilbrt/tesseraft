@@ -214,7 +214,8 @@ server.listen(0, '127.0.0.1', async () => {
 let monitoring = false;
 let monitorReceiptWritten = false;
 const monitor = setInterval(async () => {
-  if (monitoring || draining) return;
+  if (monitoring || draining
+      || (monitorReceiptWritten && process.env.TESSERAFT_TEST_ADAPTER_HOLD_MONITOR_AFTER_RECEIPT === 'true')) return;
   monitoring = true;
   try {
     const inspection = await applyOperation('approval.adapter.status', {}, 10000);
@@ -222,7 +223,8 @@ const monitor = setInterval(async () => {
     const exactPending = !inspection.error && inspection.result?.ok === true
       && current?.run_id === initialOwner.run_id && current?.state === state
       && current?.attempt === attempt && current?.approval_id === approvalId
-      && current?.status === 'blocked' && current?.decision_exists === false;
+      && current?.status === 'blocked' && current?.decision_exists === false
+      && current?.authority_valid === true && current?.pending === true;
     if (exactPending && !monitorReceiptWritten) {
       monitorReceiptWritten = true;
       await updateOwner({ monitor_status: 'exact-pending', monitor_checked_at: new Date().toISOString() });

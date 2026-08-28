@@ -10,6 +10,8 @@
             [tesseraft.runtime.process :as runtime-process]
             [tesseraft.runtime.store :as store]))
 
+(def max-focused-request-bytes (* 64 1024 1024))
+
 (def default-max-diff-bytes (* 2 1024 1024))
 (def max-max-diff-bytes (* 10 1024 1024))
 
@@ -149,22 +151,120 @@
         :else (recur (rest lines) file old new anchors))
       anchors)))
 
-(defn invalid-annotation [ctx request annotation]
-  (when-let [review (:review_server request)]
-    (let [path (fs/path (get-in ctx [:run :dir]) (:evidence_path review))
-          diff (when (fs/exists? path) (slurp (str path)))
-          anchor (:anchor annotation)
-          artifact-line (:artifact_line anchor)
-          expected (when (and diff (integer? artifact-line)) (get (diff-anchors diff) (str artifact-line)))]
+(defn- confined-no-symlink-path? [root path]
+  (let [root (.normalize (.toAbsolutePath (fs/path root)))
+        target (.normalize (.toAbsolutePath (fs/path path)))]
+    (and (.startsWith target root)
+         (every? #(not (java.nio.file.Files/isSymbolicLink %))
+                 (rest (reductions (fn [current component] (.resolve current component))
+                                   root (iterator-seq (.iterator (.relativize root target)))))))))
+
+(defn- bounded-stable-text [root path limit]
+  (when (or (not (confined-no-symlink-path? root path))
+            (not (fs/exists? path)))
+    (throw (ex-info "Focused approval authority is unavailable" {:reason :missing-or-symlink})))
+  (with-open [channel (java.nio.file.Files/newByteChannel
+                        (fs/path path)
+                        #{java.nio.file.StandardOpenOption/READ java.nio.file.LinkOption/NOFOLLOW_LINKS}
+                        (make-array java.nio.file.attribute.FileAttribute 0))
+              input (java.io.BufferedInputStream. (java.nio.channels.Channels/newInputStream channel))
+              output (java.io.ByteArrayOutputStream.)]
+    (let [before (.size channel)]
+      (when (or (neg? before) (> before limit))
+        (throw (ex-info "Focused approval authority exceeds its byte bound"
+                        {:reason :oversized :size before :limit limit})))
+      (let [buffer (byte-array 8192)
+            total (loop [total 0]
+                    (let [n (.read input buffer)]
+                      (if (neg? n)
+                        total
+                        (let [next (+ total n)]
+                          (when (> next limit)
+                            (throw (ex-info "Focused approval authority exceeds its byte bound"
+                                            {:reason :oversized :limit limit})))
+                          (.write output buffer 0 n)
+                          (recur next)))))]
+        (when (or (not (confined-no-symlink-path? root path))
+                  (not= before total (.size channel)))
+          (throw (ex-info "Focused approval authority changed while being read"
+                          {:reason :unstable})))
+        {:text (String. (.toByteArray output) "UTF-8") :size total}))))
+
+(defn validate-focused-request
+  "Validate the exact durable focused request and immutable evidence for the
+  current run state/attempt. The returned diff is the only evidence view used
+  by decision-time annotation checks. Invalid authority never throws outward."
+  [ctx approval-id]
+  (try
+    (let [run-dir (get-in ctx [:run :dir])
+          state-id (get-in ctx [:run :state])
+          attempt (get-in ctx [:run :attempt])
+          state (identity/state-string state-id)
+          request-path (fs/path run-dir "approvals" (str approval-id ".json"))
+          request-text (:text (bounded-stable-text run-dir request-path max-focused-request-bytes))
+          request (json/parse-string request-text true)
+          review (:review_server request)
+          evidence-relative (str (fs/path "approval-evidence" approval-id "changes.diff"))
+          evidence-path (fs/path run-dir evidence-relative)
+          max-bytes (:max_diff_bytes review)
+          expected-size (:evidence_size review)
+          artifact-path (get-in request [:artifact :path])
+          artifact-paths (set (keep :path (:artifacts request)))]
       (cond
-        (nil? diff) "approval evidence is unavailable"
-        (not= (store/sha256 diff) (:evidence_sha256 review)) "approval evidence hash does not match"
-        (nil? expected) "annotation must anchor an annotatable diff line"
-        (not= expected (select-keys anchor [:kind :file :side :line :artifact_line]))
-        "annotation anchor does not match the reviewed diff line"
-        (and (:start_line anchor) (not= (:start_line anchor) (:line expected))) "annotation start_line does not match"
-        (and (:end_line anchor) (not= (:end_line anchor) (:line expected))) "annotation end_line does not match"
-        :else nil))))
+        (not (map? request)) {:valid false :reason :malformed-request}
+        (not= 1 (:version request)) {:valid false :reason :request-version}
+        (not= [approval-id (get-in ctx [:run :id]) state attempt "pending"]
+              [(:approval_id request) (:run_id request) (:state request) (:attempt request) (:status request)])
+        {:valid false :reason :request-tuple}
+        (not (map? review)) {:valid false :reason :missing-review}
+        (not= "git-diff" (:kind review)) {:valid false :reason :review-kind}
+        (not= evidence-relative (:evidence_path review)) {:valid false :reason :evidence-path}
+        (or (not= evidence-relative artifact-path)
+            (not (contains? artifact-paths evidence-relative)))
+        {:valid false :reason :artifact-path}
+        (not (and (integer? max-bytes) (<= 1 max-bytes max-max-diff-bytes)))
+        {:valid false :reason :evidence-limit}
+        (not (and (integer? expected-size) (<= 1 expected-size max-bytes)))
+        {:valid false :reason :evidence-size}
+        (not (and (string? (:evidence_sha256 review))
+                  (re-matches #"[0-9a-f]{64}" (:evidence_sha256 review))))
+        {:valid false :reason :evidence-hash}
+        (not (every? #(and (string? %) (not (str/blank? %)))
+                     [(:head_tree review) (:index_fingerprint review) (:context_fingerprint review)]))
+        {:valid false :reason :snapshot-fingerprint}
+        (not (contains? #{"kqueue" "inotify"} (:watch_provider review)))
+        {:valid false :reason :watch-provider}
+        (not (and (integer? (:watch_count review)) (pos? (:watch_count review))
+                  (= false (:watch_overflow review)) (map? (:anchors review))))
+        {:valid false :reason :watch-receipt}
+        :else
+        (let [{:keys [text size]} (bounded-stable-text run-dir evidence-path max-bytes)]
+          (cond
+            (not= expected-size size) {:valid false :reason :evidence-size-mismatch}
+            (not= (:evidence_sha256 review) (store/sha256 text))
+            {:valid false :reason :evidence-hash-mismatch}
+            :else {:valid true :request request :diff text}))))
+    (catch Throwable _ {:valid false :reason :unreadable-authority})))
+
+(defn invalid-annotation
+  ([ctx request annotation]
+   (invalid-annotation ctx request annotation nil))
+  ([ctx request annotation validated-diff]
+   (when-let [review (:review_server request)]
+     (let [path (fs/path (get-in ctx [:run :dir]) (:evidence_path review))
+           diff (or validated-diff (when (fs/exists? path) (slurp (str path))))
+           anchor (:anchor annotation)
+           artifact-line (:artifact_line anchor)
+           expected (when (and diff (integer? artifact-line)) (get (diff-anchors diff) (str artifact-line)))]
+       (cond
+         (nil? diff) "approval evidence is unavailable"
+         (not= (store/sha256 diff) (:evidence_sha256 review)) "approval evidence hash does not match"
+         (nil? expected) "annotation must anchor an annotatable diff line"
+         (not= expected (select-keys anchor [:kind :file :side :line :artifact_line]))
+         "annotation anchor does not match the reviewed diff line"
+         (and (:start_line anchor) (not= (:start_line anchor) (:line expected))) "annotation start_line does not match"
+         (and (:end_line anchor) (not= (:end_line anchor) (:line expected))) "annotation end_line does not match"
+         :else nil)))))
 
 (defn- token []
   (let [bytes (byte-array 32)]
@@ -205,6 +305,8 @@
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS" delay))
     (when (= "true" (System/getProperty "tesseraft.test.adapter-hold-after-abort"))
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_HOLD_AFTER_ABORT" "true"))
+    (when (= "true" (System/getProperty "tesseraft.test.adapter-hold-monitor-after-receipt"))
+      (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_HOLD_MONITOR_AFTER_RECEIPT" "true"))
     (when-let [generation (System/getProperty "tesseraft.test.drain-hold-through-generation")]
       (.put (.environment pb) "TESSERAFT_TEST_DRAIN_HOLD_THROUGH_GENERATION" generation))
     (let [child (.start pb)
@@ -448,14 +550,29 @@
                           :transport_status (:transport_status receipt)})))))
            vec)))))
 
+(defn- invalidate-adapter-authority! [ctx state-id attempt approval-id reason]
+  (let [path (owner-path ctx state-id attempt)
+        capability (capability-path ctx state-id attempt)
+        owner (when (fs/exists? path) (store/read-json path))
+        exact-tuple? (= [(get-in ctx [:run :id]) (identity/state-string state-id) attempt approval-id]
+                        [(:run_id owner) (:state owner) (:attempt owner) (:approval_id owner)])
+        {:keys [handle exact-live]} (when (and owner exact-tuple?) (owner-process owner))]
+    (fs/delete-if-exists capability)
+    (when exact-live
+      (.destroy ^java.lang.ProcessHandle handle))
+    (when owner
+      (store/write-runtime-json! ctx path
+        (assoc owner :status "invalid-authority" :authority_status "invalid"
+               :authority_error (name reason) :invalidated_at (store/now))))))
+
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])
         attempt (get-in ctx [:run :attempt])
         approval-id (identity/approval-id state-id attempt)
-        request-path (fs/path (get-in ctx [:run :dir]) "approvals" (str approval-id ".json"))
-        request (when (fs/exists? request-path) (store/read-json request-path))]
-    (when (:review_server request)
-      (ensure-adapter! ctx state-id attempt request))
+        authority (validate-focused-request ctx approval-id)]
+    (if (:valid authority)
+      (ensure-adapter! ctx state-id attempt (:request authority))
+      (invalidate-adapter-authority! ctx state-id attempt approval-id (:reason authority)))
     ctx))
 
 (defn cleanup! [ctx]

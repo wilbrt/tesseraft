@@ -96,14 +96,20 @@
           (let [ctx (store/load-context run-dir)
                 state-id (get-in ctx [:run :state])
                 attempt (get-in ctx [:run :attempt])
-                approval-id (identity/approval-id state-id attempt)]
+                approval-id (identity/approval-id state-id attempt)
+                decision-exists? (fs/exists? (runtime/approval-decision-path ctx state-id attempt))
+                authority (approval-server/validate-focused-request ctx approval-id)
+                pending? (and (= "blocked" (get-in ctx [:run :status]))
+                              (not decision-exists?) (:valid authority))]
             {:ok true :operation operation
              :result {:run_id (get-in ctx [:run :id])
                       :state (identity/state-string state-id)
                       :attempt attempt
                       :status (get-in ctx [:run :status])
                       :approval_id approval-id
-                      :decision_exists (fs/exists? (runtime/approval-decision-path ctx state-id attempt))}})
+                      :decision_exists decision-exists?
+                      :authority_valid (boolean (:valid authority))
+                      :pending (boolean pending?)}})
           "run.decide" (let [result (runtime/decide! run-dir (:approval_id payload) (:decision payload)
                                                       (or (:message payload) (:summary payload))
                                                       (:annotations payload) (:author payload))]

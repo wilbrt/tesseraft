@@ -524,6 +524,160 @@
           (approval-server/cleanup! (store/load-context @run-dir*)))
         (fs/delete-tree root)))))
 
+(deftest focused-decisions-and-monitor-require-durable-request-and-evidence
+  (let [root (temp-dir "tesseraft-focused-authority")
+        repo (fs/path root "repo")
+        workflow-file (fs/path root "workflow.edn")
+        run-dir* (atom nil)
+        run! (fn [& command]
+               (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
+                 (is (zero? (:exit result)) (:err result)) result))
+        wait-for (fn [probe]
+                   (loop [remaining 200]
+                     (let [value (try (probe) (catch Throwable _ nil))]
+                       (cond value value
+                             (zero? remaining) nil
+                             :else (do (Thread/sleep 50) (recur (dec remaining)))))))]
+    (try
+      (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "0")
+      (System/setProperty "tesseraft.test.adapter-hold-monitor-after-receipt" "true")
+      (fs/create-dirs repo)
+      (run! "git" "init" "-q")
+      (run! "git" "config" "user.name" "Authority Test")
+      (run! "git" "config" "user.email" "authority@example.test")
+      (spit (str (fs/path repo "review.txt")) "before\n")
+      (run! "git" "add" "review.txt")
+      (run! "git" "commit" "-qm" "base")
+      (spit (str (fs/path repo "review.txt")) "after\n")
+      (spit (str (fs/path root "prompt.md")) "Implement feedback")
+      (spit (str (fs/path root "continue.md")) "Address approval feedback")
+      (spit (str workflow-file)
+            (str "{:api-version \"tesseraft.workflow/v1\" :kind :workflow :metadata {:name \"focused-authority\"} "
+                 ":defaults {:max-rounds 2 :state-timeout \"1m\"} :policies {:require-timeouts true :require-max-rounds true} "
+                 ":initial :review :states {"
+                 ":review {:type :approval :message \"Review tracked changes\" :timeout \"1m\" "
+                 ":review-server {:kind :git-diff :max-diff-bytes 1048576} "
+                 ":presentation {:question \"Ready?\" :decisions [{:decision \"pass\" :label \"Pass\"} {:decision \"reject\" :label \"Reject\" :requires-message true}]} "
+                 ":transitions [{:when {:decision \"pass\"} :next :done} {:when {:decision \"reject\"} :effects [:merge-issues] :next :implement}]} "
+                 ":implement {:type :agent :executor :pi-cli :prompt-template \"prompt.md\" :prompt-output \"prompts/generated/implement.md\" :runtime {:timeout \"1m\"} "
+                 ":session {:mode :resumable :continuation-prompt-template \"continue.md\" :continuation-prompt-output \"prompts/generated/continue-{{run.attempt}}.md\"} "
+                 ":outputs {:status {:path \"execution/status-{{run.attempt}}.json\" :required true}} :next :done} "
+                 ":done {:type :terminal :status :success}}}"))
+      (let [started (runtime/start! (str workflow-file)
+                                    {:workspace-root root :run-id "focused-authority"
+                                     :executor :mock :inputs {:repo-root (str repo)}})
+            wf (spec/read-workflow workflow-file)
+            blocked (runtime/run-until-done! wf started 10)
+            run-dir (get-in blocked [:run :dir])
+            approval-id "review-1"
+            request-path (fs/path run-dir "approvals" (str approval-id ".json"))
+            request (store/read-json request-path)
+            evidence-path (fs/path run-dir (get-in request [:review_server :evidence_path]))
+            owner-file (fs/path run-dir "approval-adapters" "review" "1" "owner.json")
+            capability-file (fs/path run-dir "approval-adapters" "review" "1" "capability.json")
+            pristine-request (slurp (str request-path))
+            pristine-evidence (slurp (str evidence-path))
+            mutations
+            {:request-deleted #(fs/delete-if-exists request-path)
+             :request-malformed #(spit (str request-path) "{not-json")
+             :request-symlink #(let [outside (fs/path root "outside-request.json")]
+                                 (spit (str outside) pristine-request)
+                                 (fs/delete-if-exists request-path)
+                                 (java.nio.file.Files/createSymbolicLink
+                                   (fs/path request-path) (fs/path outside)
+                                   (make-array java.nio.file.attribute.FileAttribute 0)))
+             :tuple-tampered #(store/write-json! request-path (assoc request :attempt 99))
+             :evidence-deleted #(fs/delete-if-exists evidence-path)
+             :evidence-replaced #(spit (str evidence-path) "replacement bytes\n")
+             :evidence-symlink #(let [outside (fs/path root "outside-evidence.diff")]
+                                  (spit (str outside) pristine-evidence)
+                                  (fs/delete-if-exists evidence-path)
+                                  (java.nio.file.Files/createSymbolicLink
+                                    (fs/path evidence-path) (fs/path outside)
+                                    (make-array java.nio.file.attribute.FileAttribute 0)))
+             :size-tampered #(store/write-json! request-path
+                               (update-in request [:review_server :evidence_size] inc))
+             :hash-tampered #(store/write-json! request-path
+                               (assoc-in request [:review_server :evidence_sha256] (apply str (repeat 64 "0"))))}]
+        (reset! run-dir* run-dir)
+        ;; The test-only hold begins only after the adapter has durably proved
+        ;; one exact pending monitor pass. It keeps the endpoint stable while
+        ;; each real HTTP submission exercises canonical validation.
+        (let [held-owner (wait-for #(let [owner (store/read-json owner-file)]
+                                      (when (and (= "ready" (:status owner))
+                                                 (= "exact-pending" (:monitor_status owner))
+                                                 (fs/exists? capability-file))
+                                        owner)))
+              capability (store/read-json capability-file)]
+          (is (some? held-owner) "focused endpoint did not reach HTTP matrix barrier")
+          (doseq [[mutation mutate!] mutations
+                  decision ["pass" "reject"]]
+            (fs/delete-if-exists request-path)
+            (fs/delete-if-exists evidence-path)
+            (spit (str request-path) pristine-request)
+            (spit (str evidence-path) pristine-evidence)
+            (mutate!)
+            (let [payload (json/generate-string
+                            (cond-> {:decision decision}
+                              (= "reject" decision) (assoc :message "Please revise")))
+                  response @(p/process ["curl" "-sS" "-X" "POST"
+                                        "-H" "content-type: application/json"
+                                        "-H" (str "x-tesseraft-approval-token: " (:token capability))
+                                        "--data-binary" payload
+                                        (str (:endpoint held-owner) "/api/decision")]
+                                       {:out :string :err :string :continue true})
+                  result (json/parse-string (:out response) true)
+                  status (operations/apply-operation
+                           {:operation "approval.adapter.status"
+                            :payload {:run_dir run-dir :approval_id approval-id}})]
+              (is (zero? (:exit response)) (:err response))
+              (is (= "approval_authority_invalid" (get-in result [:error :code]))
+                  (str mutation " " decision))
+              (is (= false (get-in status [:result :authority_valid])) (str mutation " status"))
+              (is (= false (get-in status [:result :pending])) (str mutation " pending"))
+              (is (= "blocked" (get-in (store/load-context run-dir) [:run :status])))
+              (is (not (fs/exists? (fs/path run-dir "approvals" (str approval-id "-decision.json")))))
+              (is (not (fs/exists? (fs/path run-dir "approval-finalizations" (str approval-id ".json")))))
+              (is (not (fs/exists? (fs/path run-dir "approval-feedback" (str approval-id ".json"))))))))
+        ;; Relaunch without the test hold, cross the explicit successful monitor
+        ;; barrier, then alter evidence. The production adapter must drain;
+        ;; subsequent blocked reconciliation must invalidate the owner and must
+        ;; not launch a replacement.
+        (fs/delete-if-exists request-path)
+        (fs/delete-if-exists evidence-path)
+        (spit (str request-path) pristine-request)
+        (spit (str evidence-path) pristine-evidence)
+        (approval-server/cleanup! (store/load-context run-dir))
+        (System/clearProperty "tesseraft.test.adapter-hold-monitor-after-receipt")
+        (runtime/run-until-done! wf (store/load-context run-dir) 1)
+        (let [live-owner (wait-for #(let [owner (store/read-json owner-file)]
+                                      (when (and (= "ready" (:status owner))
+                                                 (= "exact-pending" (:monitor_status owner))
+                                                 (fs/exists? capability-file))
+                                        owner)))]
+          (is (some? live-owner) "focused endpoint did not reach exact pending monitor barrier")
+          (spit (str evidence-path) "tampered after monitor\n")
+          (let [drained (wait-for #(let [owner (store/read-json owner-file)
+                                         candidate (java.lang.ProcessHandle/of (long (:pid owner)))
+                                         absent? (or (not (.isPresent candidate))
+                                                     (not (.isAlive (.get candidate))))]
+                                     (when (and (= "listener-closed" (:status owner)) absent?
+                                                (not (fs/exists? capability-file)))
+                                       owner)))]
+            (is (some? drained) "adapter did not drain after focused evidence changed")
+            (runtime/run-until-done! wf (store/load-context run-dir) 1)
+            (let [invalidated (store/read-json owner-file)]
+              (is (= (:pid live-owner) (:pid invalidated)))
+              (is (= "invalid-authority" (:status invalidated)))
+              (is (= "invalid" (:authority_status invalidated)))
+              (is (not (fs/exists? capability-file)))))))
+      (finally
+        (System/clearProperty "tesseraft.test.adapter-exit-delay-ms")
+        (System/clearProperty "tesseraft.test.adapter-hold-monitor-after-receipt")
+        (when (and @run-dir* (fs/exists? (fs/path @run-dir* "state.edn")))
+          (approval-server/cleanup! (store/load-context @run-dir*)))
+        (fs/delete-tree root)))))
+
 (deftest git-diff-snapshot-rejects-conversion-before-helper-or-artifacts
   (let [root (temp-dir "tesseraft-git-conversion")
         repo (fs/path root "repo")

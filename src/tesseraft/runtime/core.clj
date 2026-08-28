@@ -431,7 +431,15 @@
            node (spec/node wf state-id)
            expected-id (identity/approval-id state-id attempt)
            request-path (approval-request-path ctx state-id attempt)
-           request (when (fs/exists? request-path) (store/read-json request-path))
+           focused? (some? (:review-server node))
+           loaded-request (when (and (not focused?) (fs/exists? request-path))
+                            (store/read-json request-path))
+           focused-validation (when (and focused?
+                                         (= "blocked" (get-in ctx [:run :status]))
+                                         (= expected-id approval-id))
+                                (approval-server/validate-focused-request ctx expected-id))
+           request (or (:request focused-validation) loaded-request)
+           validated-diff (:diff focused-validation)
            decision (some-> decision str)
            message (some-> message str)
            annotations (or annotations [])
@@ -461,7 +469,7 @@
                      (unsafe-annotation-path? (:artifact_path annotation)) "annotation artifact_path must be a safe relative path"
                      (not (contains? artifact-paths (str (:artifact_path annotation)))) "annotation artifact_path must name a declared approval artifact"
                      (not (map? (:anchor annotation))) "annotation anchor is required"
-                     :else (approval-server/invalid-annotation ctx request annotation)))
+                     :else (approval-server/invalid-annotation ctx request annotation validated-diff)))
                  annotations)
            payload-bytes (count (.getBytes (json/generate-string {:decision decision :message message :annotations annotations}) "UTF-8"))]
        (cond
@@ -478,6 +486,10 @@
                             :message (str "Approval id " approval-id
                                           " does not match the current pending approval " expected-id)
                             :details {:expected expected-id :provided approval-id}}}
+
+       (and focused? (not (:valid focused-validation)))
+       {:status 409 :error {:code "approval_authority_invalid"
+                            :message "The durable focused approval request or evidence is unavailable or invalid"}}
 
        (fs/exists? (approval-decision-path ctx state-id attempt))
        {:status 409 :error {:code "conflict"
@@ -523,7 +535,7 @@
          (if (and existing-finalization (not= selection-hash (:selection_hash existing-finalization)))
            {:status 409 :error {:code "finalization_conflict"
                                 :message "A different approval decision is already being finalized"}}
-           (let [feedback-path (when (and (:review_server request) (= "reject" decision))
+           (let [feedback-path (when (and focused? (= "reject" decision))
                                  (str "approval-feedback/" approval-id ".json"))
                  plan (or existing-finalization
                           {:version 1 :finalization_id finalization-id :approval_id approval-id
