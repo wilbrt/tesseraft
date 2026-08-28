@@ -364,30 +364,44 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 
 ### Runtime execution ownership
 
-Before current CLI or control-plane step/resume paths execute, the runner takes
-the OS run lock and atomically publishes `:runtime-claim` in `state.edn` with an
-execution ID, PID/start fingerprint, and the current monotonic cancellation
-generation. A verified different live owner rejects the contender; a stale exact
-claim can be replaced. Immediately before each workflow step and again before
-`node.started` or an external effect, the runner compare-exactly validates the
-claim/fence and crosses `claimed → executing`. `runtime-process.json` v3 mirrors
-the claim for compatibility and child PID tracking, but does not grant execution.
+Every CLI, control-plane, Web, retry, and approval-resume execution path first
+takes the OS run lock and writes a versioned `requested` execution intent in
+`state.edn`. The launcher leases that immutable operation/options/expected tuple
+as `launching`, recording its PID/start fingerprint, spawn nonce, deadline, and
+the current cancellation generation before any child exists. A minimal bootstrap
+child must then claim that exact intent generation and atomically publish its own
+PID/start `:runtime-claim` before loading workflow context. A verified different
+live launcher or owner rejects the contender; a proven-dead pre-step generation
+may be reissued monotonically.
 
-Cancellation first advances `:execution-cancel-generation`, records
-`:execution-cancel-in-progress`, and marks the exact claim `cancel-requested`
-under the OS lock. It then fingerprint-stops the owner and commits terminal state.
-Older contexts and replaced owners are rejected by ordinary state saves, and a
-reused PID is never signalled.
+Immediately before the first workflow step, `node.started`, or an external
+effect, the child compare-exactly validates intent, claim, expected run tuple,
+and cancellation fence, then crosses `claimed → executing` and emits the stable
+`execution.intent.consumed` receipt. Exact release records `finished` and clears
+only the matching claim. `runtime-process.json` v3 mirrors child/process metadata
+for compatibility and cancellation, but never grants execution authority.
 
-This closes the prior overwrite-only marker and cancellation/save races. It is
-not yet a durable pre-spawn intent/generation protocol: launchers do not lease a
-requested generation and a child does not bootstrap-claim before loading full
-context. Detached approval cleanup launches two transient candidates for one
-run-locked drain generation. A duplicate waits, replaces a proven-dead exact
-worker with the next generation, and exits after completion. Lifecycle and
-generation receipts are bound into the approval finalization record. This can
-autonomously relaunch a pending endpoint after adapter and worker failure, but
-committed destination cleanup only writes a durable resume request.
+Cancellation first advances `:execution-cancel-generation` and records
+`:execution-cancel-in-progress` under the run lock. Requested or launching
+intents become `abandoned`; claimed or executing intents and the exact runtime
+claim become `cancel-requested`. Tesseraft then fingerprint-stops the matching
+owner and commits terminal state. Older contexts, delayed children, replaced
+owners, and reused PIDs cannot cross the fence or overwrite newer receipts. A
+death after `node.started` follows fail-closed orphan recovery rather than
+replaying an ambiguous effect.
+
+Focused approval cleanup uses a separate durable drain-generation claim. Two
+initial detached candidates compete for one generation, and the bounded
+`approval.adapter.reconcile` operation can claim a later generation after both
+candidates are exactly absent. Lifecycle and generation receipts are bound into
+the approval finalization record. Pending approvals relaunch an endpoint after
+exact cleanup. For a committed nonterminal decision, the same lifecycle-complete
+run-lock transaction creates one deterministic `:approval-resume` execution
+intent; the supervising or reconciling operation then leases it through the
+shared launcher, and its bootstrap child claims it before destination execution.
+No destination step runs before focused lifecycle completion. External
+reconciliation remains explicit and idempotent, and may safely skip a pass while
+another runtime still reports an exact worker live.
 
 ### Guarantees and caveats
 
