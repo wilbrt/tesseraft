@@ -146,21 +146,25 @@
 
         "resume"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [run-dir (:run-dir opts)
-                  ctx (apply-run-options (store/load-context run-dir) opts)
-                  wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+            (let [run-dir (:run-dir opts)]
               (run-registered!
                 run-dir
-                #(print-result opts (runtime/run-until-done! wf ctx (:max-steps opts))))))
+                #(let [ctx (apply-run-options (store/load-context run-dir) opts)
+                       wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+                   (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))))))
 
         "retry"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [run-dir (:run-dir opts)
-                  ctx (apply-run-options (runtime/retry! run-dir opts) opts)
-                  wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+            (let [run-dir (:run-dir opts)]
+              ;; Retry prepares a new attempt before ownership is acquired.
+              ;; Reload after register! replaces any proven-dead old claim so
+              ;; the winning runner never carries that stale owner into save.
+              (runtime/retry! run-dir opts)
               (run-registered!
                 run-dir
-                #(print-result opts (runtime/run-until-done! wf ctx (:max-steps opts))))))
+                #(let [ctx (apply-run-options (store/load-context run-dir) opts)
+                       wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+                   (print-result opts (runtime/run-until-done! wf ctx (:max-steps opts)))))))
 
         "cancel"
         (do (when (str/blank? (:run-dir opts)) (usage!))

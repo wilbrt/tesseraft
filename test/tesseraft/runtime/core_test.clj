@@ -207,24 +207,45 @@
                                      (str (:endpoint owner) "/api/decision")]
                                     {:out :string :err :string :continue true})]
             (is (not (zero? (:exit aborted)))))
-          @holder
           (loop [remaining 100]
             (let [current (store/read-json owner-file)]
-              (when (and (not= "stopped" (:status current)) (pos? remaining))
-                (Thread/sleep 50) (recur (dec remaining)))))
-          (let [aborted-owner (store/read-json owner-file)]
-            (is (= "aborted" (:transport_status aborted-owner)))
-            (is (some? (:transport_aborted_at aborted-owner)))
-            (is (nil? (:response_finished_at aborted-owner))))
-          (runtime/run-until-done! wf (store/load-context run-dir) 1)
-          (loop [remaining 100]
-            (let [current (store/read-json owner-file)]
-              (when (and (or (= (:pid current) (:pid owner))
-                             (not= "ready" (:status current))
-                             (not (fs/exists? capability-file)))
+              (when (and (or (not= "aborted" (:transport_status current))
+                             (nil? (:supervisor_pid current)))
                          (pos? remaining))
-                (Thread/sleep 50) (recur (dec remaining)))))
-          (is (not= (:pid owner) (:pid (store/read-json owner-file)))))
+                (Thread/sleep 25) (recur (dec remaining)))))
+          (let [aborted-owner (store/read-json owner-file)
+                candidate (java.lang.ProcessHandle/of (long (:pid aborted-owner)))
+                handle (when (.isPresent candidate) (.get candidate))]
+            (is (= "aborted" (:transport_status aborted-owner)))
+            (is (integer? (:supervisor_pid aborted-owner)))
+            (is (some? handle) "adapter exited before the deterministic kill barrier")
+            (when handle
+              (.destroyForcibly handle)
+              (.get (.onExit handle) 5 java.util.concurrent.TimeUnit/SECONDS)))
+          @holder
+          ;; No mutating inspection/resume follows the abort. The detached
+          ;; supervisor must wait for exact old-process absence, publish one
+          ;; aborted drain receipt, and autonomously relaunch the still-pending
+          ;; approval endpoint.
+          (let [drain-dir (fs/path (fs/parent owner-file) "drains")]
+            (loop [remaining 200]
+              (let [current (store/read-json owner-file)
+                    drains (when (fs/exists? drain-dir) (vec (fs/glob drain-dir "*.json")))]
+                (when (and (or (= (:pid current) (:pid owner))
+                               (not= "ready" (:status current))
+                               (not (fs/exists? capability-file))
+                               (empty? drains))
+                           (pos? remaining))
+                  (Thread/sleep 50) (recur (dec remaining)))))
+            (let [current (store/read-json owner-file)
+                  drains (vec (fs/glob drain-dir "*.json"))
+                  receipt (when (= 1 (count drains)) (store/read-json (first drains)))]
+              (is (not= (:pid owner) (:pid current)))
+              (is (= "ready" (:status current)))
+              (is (= 1 (count drains)))
+              (is (= "aborted" (:transport_status receipt)))
+              (is (= true (:listener_absent receipt)))
+              (is (= "complete" (:lifecycle_status receipt))))))
         (when (fs/exists? capability-file)
          (let [capability (store/read-json capability-file)
               owner (store/read-json (fs/path run-dir "approval-adapters" "review" "1" "owner.json"))
@@ -261,9 +282,14 @@
                 (when (and (not (and (= "stopped" (:status candidate)) absent?)) (pos? remaining))
                   (Thread/sleep 50) (recur (dec remaining)))))
             (let [stopped-owner (store/read-json owner-file)
-                  handle (java.lang.ProcessHandle/of (long (:pid stopped-owner)))]
+                  handle (java.lang.ProcessHandle/of (long (:pid stopped-owner)))
+                  drains (mapv store/read-json
+                               (fs/glob (fs/path (fs/parent owner-file) "drains") "*.json"))]
               (is (= "stopped" (:status stopped-owner)))
-              (is (or (not (.isPresent handle)) (not (.isAlive (.get handle))))))))))
+              (is (or (not (.isPresent handle)) (not (.isAlive (.get handle)))))
+              (is (= #{"aborted" "finished"} (set (map :transport_status drains))))
+              (is (every? #(and (= "complete" (:lifecycle_status %))
+                                (= true (:listener_absent %))) drains)))))))
       (finally
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
@@ -320,6 +346,7 @@
                           (catch clojure.lang.ExceptionInfo error error))]
         (is (= 3 (:version marker)))
         (is (= (:pid marker) (get-in claimed [:runtime-claim :pid])))
+        (is (= 0 (get-in claimed [:runtime-claim :cancel-generation])))
         (is (= :runtime_claim_conflict (:code (ex-data conflict))))
         (is (not= (.pid (java.lang.ProcessHandle/current)) (get-in claimed [:runtime-claim :pid]))))
       (let [stopped (runtime/stop-runtime-process! dir)]
@@ -327,6 +354,39 @@
       (finally
         (when (.isAlive ^java.lang.Process (:proc child)) (.destroyForcibly ^java.lang.Process (:proc child)))
         (fs/delete-tree dir)))))
+
+(deftest cancellation-fence-rejects-stale-claim-and-save-before-effects
+  (let [dir (temp-dir "tesseraft-runtime-fence")
+        ctx {:workflow {:name "fence-fixture"}
+             :execution-cancel-generation 0
+             :run {:id "fence-test" :dir dir :status "running" :state :slow :attempt 1
+                   :issues-file (str (fs/path dir "issues.json")) :updated-at (store/now)}}]
+    (try
+      (store/save-context! ctx)
+      (let [pid (runtime/register-runtime-process! dir)
+            claimed (store/load-context dir)]
+        (is (= true (runtime/assert-runtime-active! claimed)))
+        (is (= :executing (get-in (store/load-context dir) [:runtime-claim :phase])))
+        (store/with-run-lock dir
+          (fn []
+            (let [current (store/load-context dir)
+                  generation (inc (:execution-cancel-generation current))
+                  fenced (-> current
+                             (assoc :execution-cancel-generation generation
+                                    :execution-cancel-in-progress generation)
+                             (update :runtime-claim assoc :phase :cancel-requested
+                                     :cancel-generation generation
+                                     :cancel-requested-at (store/now)))]
+              (store/save-context! fenced))))
+        (let [barrier (try (runtime/assert-runtime-active! claimed) nil
+                           (catch clojure.lang.ExceptionInfo error error))
+              stale-save (try (store/save-context! claimed) nil
+                              (catch clojure.lang.ExceptionInfo error error))]
+          (is (= :runtime_claim_lost (:code (ex-data barrier))))
+          (is (= :runtime_cancel_fenced (:code (ex-data stale-save))))
+          (is (empty? (filter #(= "node.started" (:event %)) (read-events dir)))))
+        (runtime/unregister-runtime-process! dir pid))
+      (finally (fs/delete-tree dir)))))
 
 (deftest cancel-stops-persisted-runtime-process-tree
   (let [dir (temp-dir "tesseraft-cancel")
@@ -356,6 +416,8 @@
       (let [cancelled (runtime/cancel! dir)
             event (last (filter #(= "run.cancelled" (:event %)) (read-events dir)))]
         (is (= "cancelled" (get-in cancelled [:run :status])))
+        (is (= 1 (:execution-cancel-generation cancelled)))
+        (is (nil? (:execution-cancel-in-progress cancelled)))
         (is (not (.isAlive child)) "runtime root process is still alive")
         (is (some? event))
         (is (= true (:process_found event)))

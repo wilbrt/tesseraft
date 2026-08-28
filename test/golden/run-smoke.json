@@ -7,6 +7,7 @@
     {"event": "project.resolved"},
     {"event": "run.started"},
     {"event": "runtime.claimed"},
+    {"event": "runtime.executing"},
     {"event": "node.started", "state": "start", "attempt": 1},
     {"event": "node.finished", "state": "start", "attempt": 1},
     {"event": "transition.selected", "from": "start", "to": "done"},

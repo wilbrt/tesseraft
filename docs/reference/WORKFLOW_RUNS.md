@@ -349,18 +349,26 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 
 ### Runtime execution ownership
 
-Before current CLI or control-plane step/resume paths execute, the child takes
+Before current CLI or control-plane step/resume paths execute, the runner takes
 the OS run lock and atomically publishes `:runtime-claim` in `state.edn` with an
-execution ID and PID/start fingerprint. A verified different live owner rejects
-the contender; a stale exact claim can be replaced. `runtime-process.json` v3
-mirrors the claim for compatibility and child PID tracking, but does not grant
-execution. Release and cancellation compare the exact PID/start tuple, so a
+execution ID, PID/start fingerprint, and the current monotonic cancellation
+generation. A verified different live owner rejects the contender; a stale exact
+claim can be replaced. Immediately before each workflow step and again before
+`node.started` or an external effect, the runner compare-exactly validates the
+claim/fence and crosses `claimed → executing`. `runtime-process.json` v3 mirrors
+the claim for compatibility and child PID tracking, but does not grant execution.
+
+Cancellation first advances `:execution-cancel-generation`, records
+`:execution-cancel-in-progress`, and marks the exact claim `cancel-requested`
+under the OS lock. It then fingerprint-stops the owner and commits terminal state.
+Older contexts and replaced owners are rejected by ordinary state saves, and a
 reused PID is never signalled.
 
-This claim closes the prior overwrite-only marker race. It is not yet a durable
-pre-spawn intent/generation protocol: launchers do not lease a generation and a
-child does not claim before loading all context. Autonomous approval handoff is
-therefore deliberately not enabled.
+This closes the prior overwrite-only marker and cancellation/save races. It is
+not yet a durable pre-spawn intent/generation protocol: launchers do not lease a
+requested generation and a child does not bootstrap-claim before loading full
+context. Detached approval cleanup can autonomously relaunch a pending endpoint,
+but committed destination cleanup only writes a durable resume request.
 
 ### Guarantees and caveats
 

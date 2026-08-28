@@ -1,5 +1,6 @@
 (ns tesseraft.runtime.operations
   (:require
+    [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.core :as runtime]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]))
@@ -34,6 +35,12 @@
                                {:ok true :operation operation :result {:run (:run (runtime/run-until-done! wf ctx max-steps))}})))))
         "run.cancel" (let [ctx (runtime/cancel! run-dir)]
                        {:ok true :operation operation :result {:run (:run ctx)}})
+        "approval.adapter.supervise"
+        (let [supervised (approval-server/supervise-drain! payload)]
+          ;; A committed destination is a durable resume request only. The
+          ;; detached cleanup worker must not step it until the shared
+          ;; generation/child-claim launcher consumes that handoff.
+          {:ok true :operation operation :result supervised})
         "run.decide" (let [result (runtime/decide! run-dir (:approval_id payload) (:decision payload)
                                                     (or (:message payload) (:summary payload))
                                                     (:annotations payload) (:author payload))]

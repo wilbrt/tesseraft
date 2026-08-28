@@ -42,17 +42,30 @@
       "type": "integer",
       "minimum": 1
     },
+    "execution_cancel_generation": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic fence captured by every runtime execution claim."
+    },
+    "execution_cancel_in_progress": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Generation currently preventing launch while exact cancellation completes."
+    },
     "runtime_claim": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "required": ["version", "execution_id", "pid", "process_started_at", "phase", "claimed_at"],
+      "required": ["version", "execution_id", "pid", "process_started_at", "phase", "cancel_generation", "claimed_at"],
       "properties": {
         "version": { "const": 1 },
         "execution_id": { "type": "string", "minLength": 1 },
         "pid": { "type": "integer", "minimum": 1 },
         "process_started_at": { "type": "string", "minLength": 1 },
         "phase": { "enum": ["claimed", "executing", "cancel-requested"] },
-        "claimed_at": { "type": "string", "minLength": 1 }
+        "cancel_generation": { "type": "integer", "minimum": 0 },
+        "claimed_at": { "type": "string", "minLength": 1 },
+        "executing_at": { "type": "string", "minLength": 1 },
+        "cancel_requested_at": { "type": "string", "minLength": 1 }
       }
     },
     "created_at": {

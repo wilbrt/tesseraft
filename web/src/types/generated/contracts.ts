@@ -418,13 +418,18 @@ export type RunStateContract = {
   "state": string;
   "status": "created" | "running" | "paused" | "blocked" | "done" | "failed" | "aborted";
   "round": number;
+  "execution_cancel_generation"?: number;
+  "execution_cancel_in_progress"?: number | null;
   "runtime_claim"?: {
   "version": 1;
   "execution_id": string;
   "pid": number;
   "process_started_at": string;
   "phase": "claimed" | "executing" | "cancel-requested";
+  "cancel_generation": number;
   "claimed_at": string;
+  "executing_at"?: string;
+  "cancel_requested_at"?: string;
 } | null;
   "created_at"?: string;
   "updated_at"?: string;

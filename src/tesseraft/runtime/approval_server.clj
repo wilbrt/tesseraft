@@ -131,7 +131,7 @@
       (throw (ex-info "Approval adapter script is unavailable" {:code :approval_adapter_unavailable :path (str script)})))
     (str script)))
 
-(defn- owner-process [record]
+(defn owner-process [record]
   (let [pid (:pid record)
         candidate (when (and (integer? pid) (pos? pid)) (java.lang.ProcessHandle/of (long pid)))
         handle (when (and candidate (.isPresent candidate)) (.get candidate))
@@ -190,6 +190,71 @@
                                     :state (name state-id) :attempt attempt
                                     :approval_id (:approval_id request) :pid (:pid launched)})
             launched))))))
+
+(defn supervise-drain!
+  "Detached exact-owner cleanup after one transport outcome. Waits outside the
+  run lock so an in-flight canonical decision can settle, then serializes
+  lifecycle completion and returns a durable handoff kind."
+  [{:keys [run_dir state attempt approval_id pid process_started_at submission_id transport_status]}]
+  (let [ctx0 (store/load-context run_dir)
+        path (owner-path ctx0 (keyword state) attempt)
+        capability (capability-path ctx0 (keyword state) attempt)
+        expected {:pid pid :process_started_at process_started_at}
+        wait-absent (fn [attempts]
+                      (loop [remaining attempts]
+                        (let [{:keys [exact-live]} (owner-process expected)]
+                          (cond (not exact-live) true
+                                (zero? remaining) false
+                                :else (do (Thread/sleep 50) (recur (dec remaining)))))))]
+    (when-not (wait-absent 100)
+      (let [{:keys [handle exact-live]} (owner-process expected)]
+        (when exact-live (.destroyForcibly ^java.lang.ProcessHandle handle)))
+      (when-not (wait-absent 100)
+        (throw (ex-info "Exact approval adapter did not stop after bounded drain"
+                        {:code :approval_adapter_drain_timeout :pid pid}))))
+    (store/with-run-lock run_dir
+      (fn []
+        ;; Acquiring this lock also waits for any canonical run.decide child;
+        ;; decision presence is therefore determinate before handoff selection.
+        (let [ctx (store/load-context run_dir)
+              record (when (fs/exists? path) (store/read-json path))
+              exact-record? (= [pid process_started_at approval_id]
+                               [(:pid record) (:process_started_at record) (:approval_id record)])
+              decision-path (fs/path run_dir "approvals" (str approval_id "-decision.json"))
+              decision? (fs/exists? decision-path)
+              terminal? (contains? #{"done" "failed" "error" "cancelled"} (get-in ctx [:run :status]))
+              drain-path (fs/path (owner-dir ctx (keyword state) attempt) "drains" (str submission_id ".json"))]
+          (if-not exact-record?
+            {:handoff :adopted :run-dir run_dir}
+            (do
+              (fs/delete-if-exists capability)
+              (store/write-runtime-json! ctx drain-path
+                {:version 1 :submission_id submission_id :approval_id approval_id
+                 :adapter_pid pid :process_started_at process_started_at
+                 :transport_status transport_status :listener_absent true
+                 :lifecycle_status "complete" :completed_at (store/now)})
+              (store/write-runtime-json! ctx path
+                (assoc record :status "stopped" :lifecycle_status "complete"
+                       :stop_reason "detached-supervisor" :stopped_at (store/now)))
+              (cond
+                terminal? {:handoff :not-applicable :run-dir run_dir}
+                (and decision? (not= "blocked" (get-in ctx [:run :status])))
+                (do
+                  (store/write-runtime-json! ctx drain-path
+                    {:version 1 :submission_id submission_id :approval_id approval_id
+                     :adapter_pid pid :process_started_at process_started_at
+                     :transport_status transport_status :listener_absent true
+                     :lifecycle_status "complete" :resume_handoff_status "requested"
+                     :completed_at (store/now)})
+                  {:handoff :resume-requested :run-dir run_dir})
+                (and (not decision?) (= "blocked" (get-in ctx [:run :status]))
+                     (= (keyword state) (get-in ctx [:run :state]))
+                     (= attempt (get-in ctx [:run :attempt])))
+                (let [request-path (fs/path run_dir "approvals" (str approval_id ".json"))
+                      request (store/read-json request-path)]
+                  (ensure-adapter! ctx (keyword state) attempt request)
+                  {:handoff :relaunched :run-dir run_dir})
+                :else {:handoff :not-applicable :run-dir run_dir}))))))))
 
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])

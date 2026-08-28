@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -87,20 +87,45 @@ if (!evidencePath.startsWith(`${runDir}${path.sep}`)) throw new Error('Evidence 
 const diff = await readFile(evidencePath, 'utf8');
 if (sha256(diff) !== review.evidence_sha256 || Buffer.byteLength(diff) !== review.evidence_size) throw new Error('Evidence integrity mismatch');
 
+const installRoot = process.env.TESSERAFT_INSTALL_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const tesseraftBin = path.join(installRoot, 'bin', 'tesseraft');
 const decision = (payload) => new Promise((resolve) => {
-  const installRoot = process.env.TESSERAFT_INSTALL_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  execFile(path.join(installRoot, 'bin', 'tesseraft'), ['run', 'apply', '--input', '-'], { cwd: installRoot, timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+  execFile(tesseraftBin, ['run', 'apply', '--input', '-'], { cwd: installRoot, timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
     try { resolve({ error, result: JSON.parse(stdout || '{}'), stderr }); }
     catch { resolve({ error: error || new Error('Runtime returned invalid JSON'), result: null, stderr }); }
   }).stdin.end(JSON.stringify({ operation: 'run.decide', payload: { run_dir: runDir, approval_id: approvalId, ...payload } }));
 });
+let supervisorStarted = false;
+const startSupervisor = (submissionId, transportStatus) => {
+  if (supervisorStarted) return null;
+  supervisorStarted = true;
+  const child = spawn(tesseraftBin, ['run', 'apply', '--input', '-'], {
+    cwd: installRoot, detached: true, stdio: ['pipe', 'ignore', 'ignore'],
+    env: { ...process.env, AGENT_RUN_DIR: runDir }
+  });
+  child.once('error', (error) => {
+    void updateOwner({ supervisor_status: 'launch-failed', supervisor_error: error.message });
+  });
+  child.stdin.on('error', () => {});
+  child.stdin.end(JSON.stringify({ operation: 'approval.adapter.supervise', payload: {
+    run_dir: runDir, state, attempt, approval_id: approvalId,
+    pid: initialOwner.pid, process_started_at: initialOwner.process_started_at,
+    submission_id: submissionId, transport_status: transportStatus
+  } }));
+  child.unref();
+  return child.pid;
+};
 const drain = async (reason) => {
   if (draining) return;
   draining = true; accepting = false;
   server.close(async () => {
     await rm(capabilityPath, { force: true });
-    await updateOwner({ status: 'stopped', stop_reason: reason, stopped_at: new Date().toISOString() });
-    process.exit(0);
+    await updateOwner({ status: 'listener-closed', lifecycle_status: 'listener-closed',
+                        stop_reason: reason, listener_closed_at: new Date().toISOString() });
+    // Listener closure and exact process absence are separate lifecycle gates.
+    // Keep a short bounded grace so the detached supervisor, rather than this
+    // adapter, remains responsible if the adapter is killed at this boundary.
+    setTimeout(() => process.exit(0), 1000).unref();
   });
   setTimeout(() => { for (const socket of sockets) socket.destroy(); }, 1500).unref();
 };
@@ -118,8 +143,10 @@ const server = createServer(async (req, res) => {
       const abortTransport = (phase) => {
         if (transportStatus !== 'pending') return;
         transportStatus = 'aborted'; accepting = false;
+        const supervisorPid = startSupervisor(submissionId, 'aborted');
         void updateOwner({ status: 'draining', submission_id: submissionId, transport_status: 'aborted',
-                           transport_aborted_at: new Date().toISOString(), abort_phase: phase });
+                           transport_aborted_at: new Date().toISOString(), abort_phase: phase,
+                           supervisor_pid: supervisorPid }).finally(() => drain('transport-aborted'));
       };
       req.once('aborted', () => abortTransport('request-aborted'));
       req.socket?.once('error', () => abortTransport('socket-error'));
@@ -141,8 +168,10 @@ const server = createServer(async (req, res) => {
       res.once('finish', () => {
         if (transportStatus !== 'pending') return;
         transportStatus = 'finished';
+        const supervisorPid = startSupervisor(submissionId, 'finished');
         void updateOwner({ status: 'draining', submission_id: submissionId, transport_status: 'finished',
-                           response_finished_at: new Date().toISOString() }).then(() => drain('decision'));
+                           response_finished_at: new Date().toISOString(), supervisor_pid: supervisorPid })
+          .then(() => drain('decision'));
       });
       json(res, 200, outcome.result);
       return;

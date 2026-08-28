@@ -950,9 +950,10 @@ time.sleep(300)
         assert binding["status"] == "orphaned"
         assert binding["last_activation"]["error_type"] == "session_activation_interrupted"
         events = read_json_lines(run_dir / "events.jsonl")
-        assert [event["event"] for event in events][-2:] == [
+        assert [event["event"] for event in events][-3:] == [
             "session.orphaned",
             "node.orphaned",
+            "runtime.released",
         ]
     finally:
         if process.poll() is None:

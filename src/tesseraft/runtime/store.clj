@@ -9,6 +9,8 @@
     [tesseraft.persistence.safe-write :as safe-write]
     [tesseraft.security.redaction :as redaction]))
 
+(def ^:dynamic *allow-runtime-claim-replacement* false)
+
 (defn now [] (str (java.time.Instant/now)))
 
 (defn sha256 [s]
@@ -90,13 +92,39 @@
 (defn save-context! [ctx]
   ;; Resolver functions are live-process dependencies: use them to scrub the
   ;; durable value, but never serialize them into restartable run state.
-  ;; A caller may hold a context loaded immediately before another process-local
-  ;; path claimed execution. Missing claim data must never overwrite that
-  ;; authority; an explicit nil is the compare-exact release operation.
+  ;; Missing claim/fence data preserves current authority. A context carrying
+  ;; an older fence or a replaced owner is stale and must fail rather than
+  ;; overwrite cancellation or another execution.
   (let [path (fs/path (get-in ctx [:run :dir]) "state.edn")
-        durable-claim (when (and (not (contains? ctx :runtime-claim)) (fs/exists? path))
-                        (:runtime-claim (read-edn path)))
-        preserved (cond-> ctx durable-claim (assoc :runtime-claim durable-claim))]
+        current (when (fs/exists? path) (read-edn path))
+        durable-claim (:runtime-claim current)
+        incoming-claim (:runtime-claim ctx)
+        durable-generation (or (:execution-cancel-generation current) 0)
+        incoming-generation (or (:execution-cancel-generation ctx) durable-generation)
+        _ (when (and (contains? ctx :execution-cancel-generation)
+                     (< incoming-generation durable-generation))
+            (throw (ex-info "Runtime context carries an obsolete cancellation fence"
+                            {:code :runtime_cancel_fenced
+                             :context-generation incoming-generation
+                             :durable-generation durable-generation})))
+        _ (when (and incoming-claim (< (or (:cancel-generation incoming-claim) 0) durable-generation))
+            (throw (ex-info "Runtime context was invalidated by cancellation"
+                            {:code :runtime_cancel_fenced
+                             :claim-generation (:cancel-generation incoming-claim)
+                             :durable-generation durable-generation})))
+        _ (when (and incoming-claim durable-claim
+                     (not= (:execution-id incoming-claim) (:execution-id durable-claim))
+                     (not *allow-runtime-claim-replacement*))
+            (throw (ex-info "Runtime context no longer owns the durable claim"
+                            {:code :runtime_claim_lost
+                             :claim (:execution-id incoming-claim)
+                             :owner (:execution-id durable-claim)})))
+        preserved (cond-> (assoc ctx :execution-cancel-generation incoming-generation)
+                    (and (not (contains? ctx :runtime-claim)) durable-claim)
+                    (assoc :runtime-claim durable-claim)
+                    (and (not (contains? ctx :execution-cancel-in-progress))
+                         (:execution-cancel-in-progress current))
+                    (assoc :execution-cancel-in-progress (:execution-cancel-in-progress current)))]
     (write-edn! path
                 (durable-data preserved (assoc (dissoc preserved :credential-resolver) :record-version 2)))
     preserved))

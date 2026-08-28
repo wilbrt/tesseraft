@@ -29,6 +29,7 @@
 (def runtime-process-path lifecycle/runtime-process-path)
 (def register-runtime-process! lifecycle/register-runtime-process!)
 (def unregister-runtime-process! lifecycle/unregister-runtime-process!)
+(def assert-runtime-active! lifecycle/assert-runtime-active!)
 (def run-owner-env lifecycle/run-owner-env)
 (def run-tracked-process! lifecycle/run-tracked-process!)
 (def stop-owned-processes! lifecycle/stop-owned-processes!)
@@ -268,7 +269,15 @@
             (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))))
 
 (defn execute-node! [wf ctx state-id node]
-  (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
+  ;; Revalidate again at the last boundary before node.started and any
+  ;; executor/process/handler effect. A cancellation fence or replacement
+  ;; claim written after step dispatch therefore fails closed.
+  (assert-runtime-active! ctx)
+  (let [claim (:runtime-claim ctx)]
+    (store/event! ctx (cond-> {:event "node.started" :state (name state-id)
+                               :attempt (get-in ctx [:run :attempt])}
+                        claim (assoc :execution_id (:execution-id claim)
+                                     :cancel_generation (:cancel-generation claim)))))
   (try
     (let [result (case (:type node)
                    :agent (if (sessions/resumable? node)
@@ -351,6 +360,9 @@
 (def approval-presentation approvals/approval-presentation)
 (def step-approval! approvals/step-approval!)
 (defn step! [wf ctx]
+  ;; Claimed execution crosses a compare-exact barrier before any state kind,
+  ;; including approval adapter launch and deterministic transition effects.
+  (assert-runtime-active! ctx)
   (if (terminal-run? ctx)
     ctx
     (let [state-id (get-in ctx [:run :state])

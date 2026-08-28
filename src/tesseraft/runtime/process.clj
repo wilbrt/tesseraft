@@ -28,7 +28,12 @@
       (fn []
         (let [ctx (store/load-context run-dir)
               existing (:runtime-claim ctx)
+              cancel-generation (or (:execution-cancel-generation ctx) 0)
               {:keys [exact-live]} (when existing (claim-owner existing))]
+          (when (:execution-cancel-in-progress ctx)
+            (throw (ex-info "Run cancellation is in progress"
+                            {:code :runtime_cancel_in_progress
+                             :generation (:execution-cancel-in-progress ctx)})))
           (when (and exact-live (not (and (= pid (:pid existing))
                                           (= started (:process-started-at existing)))))
             (throw (ex-info "Run is already owned by a live runtime execution"
@@ -36,15 +41,57 @@
           (if (and exact-live (= pid (:pid existing)) (= started (:process-started-at existing)))
             pid
             (let [claim {:version 1 :execution-id execution-id :pid pid
-                         :process-started-at started :phase :claimed :claimed-at (store/now)}
+                         :process-started-at started :phase :claimed
+                         :cancel-generation cancel-generation :claimed-at (store/now)}
                   claimed (assoc ctx :runtime-claim claim)]
-              (store/save-context! claimed)
+              ;; Replacement is permitted only here, after the exact prior
+              ;; PID/start owner was proven absent while holding the run lock.
+              (binding [store/*allow-runtime-claim-replacement* true]
+                (store/save-context! claimed))
               (store/write-json! (runtime-process-path run-dir)
                                  {:version 3 :execution_id execution-id :pid pid
                                   :process_started_at started :child_pids [] :started_at (store/now)})
               (store/event-once! claimed {:event "runtime.claimed" :event_id (str execution-id "/claimed")
-                                          :execution_id execution-id :pid pid})
+                                          :execution_id execution-id :pid pid
+                                          :cancel_generation cancel-generation})
               pid)))))))
+
+(defn assert-active!
+  "Compare the caller's durable execution claim and cancellation fence under
+  the run lock immediately before a workflow step or external effect."
+  [ctx]
+  (when-let [expected (:runtime-claim ctx)]
+    (let [run-dir (get-in ctx [:run :dir])
+          current (java.lang.ProcessHandle/current)
+          pid (.pid current)
+          started (process-start current)]
+      (store/with-run-lock run-dir
+        (fn []
+          (let [durable (store/load-context run-dir)
+                claim (:runtime-claim durable)
+                generation (or (:execution-cancel-generation durable) 0)
+                exact? (and (= (:execution-id expected) (:execution-id claim))
+                            (= pid (:pid claim))
+                            (= started (:process-started-at claim))
+                            (= (:cancel-generation claim) generation)
+                            (not= :cancel-requested (:phase claim))
+                            (nil? (:execution-cancel-in-progress durable)))]
+            (when-not exact?
+              (throw (ex-info "Runtime execution claim or cancellation fence was lost"
+                              {:code :runtime_claim_lost
+                               :execution-id (:execution-id expected)
+                               :expected-generation (:cancel-generation expected)
+                               :durable-generation generation})))
+            (when (= :claimed (:phase claim))
+              (let [executing (assoc claim :phase :executing :executing-at (store/now))
+                    updated (assoc durable :runtime-claim executing)]
+                (store/save-context! updated)
+                (store/event-once! updated
+                  {:event "runtime.executing"
+                   :event_id (str (:execution-id claim) "/executing")
+                   :execution_id (:execution-id claim) :pid pid
+                   :cancel_generation generation})))
+            true))))))
 
 (defn unregister! [run-dir pid]
   (let [path (runtime-process-path run-dir)

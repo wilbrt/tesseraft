@@ -55,7 +55,14 @@ mutating resume adopts one exact live blocked adapter or, after proving the old
 PID/start tuple absent, removes stale capability data and launches one
 replacement. Focused submissions durably distinguish complete response
 `finish` from premature request/socket/response abort; disconnect never cancels
-the canonical decision child.
+the canonical decision child. Either transport outcome starts one detached
+internal supervisor before listener drain. After exact adapter PID/start
+absence, that supervisor serializes behind canonical decision completion,
+removes the capability, and writes a submission-specific lifecycle receipt. If
+the approval is still pending it autonomously launches one replacement even
+when the adapter was SIGKILLed after the abort receipt. A committed nonterminal
+decision records `resume_handoff_status=requested`; it is not stepped until the
+shared generation-based launcher exists.
 
 The durable request, evidence, decision, feedback, `issues.json`, state, and
 events are authority. The listener and browser are transient adapters.
@@ -75,13 +82,16 @@ events are authority. The listener and browser are transient adapters.
   `O_NOFOLLOW`; unsupported platforms fail before evidence publication.
   Namespace stability uses retained inode/time receipts and secure re-traversal,
   not a kernel watch-overflow receipt.
-- A stale blocked adapter is relaunched by a mutating resume. Pure inspection
-  remains side-effect free, and no always-on autonomous reconciler exists.
-- Finished/aborted transport is durable while the adapter remains alive, but no
-  detached supervisor survives adapter SIGKILL after an abort receipt.
-- The runtime publishes an exclusive PID/start/execution claim in `state.edn`
-  before current CLI/control-plane execution paths step. It does not yet use a
-  pre-spawn intent generation or child bootstrap lease, and therefore does not
-  autonomously resume a nonterminal destination after focused cleanup.
+- A stale blocked adapter is relaunched by a mutating resume. Additionally, a
+  detached per-submission supervisor autonomously relaunches a still-pending
+  endpoint after finished/aborted cleanup and survives adapter SIGKILL. Pure
+  inspection remains side-effect free; there is no general always-on reconciler.
+- The runtime publishes an exclusive PID/start/execution claim plus cancellation
+  generation in `state.edn`, crosses a compare-exact `claimed → executing`
+  barrier before workflow steps and external effects, and rejects stale saves
+  after cancellation advances the fence. It does not yet use a pre-spawn intent
+  generation, launcher lease, or child bootstrap claim. Committed nonterminal
+  cleanup therefore writes a durable resume request but does not autonomously
+  consume it.
 - HTTP delivery cannot be guaranteed if the adapter is killed before response
   completion; the durable decision remains the authority.
