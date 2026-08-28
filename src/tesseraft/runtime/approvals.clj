@@ -157,6 +157,12 @@
                           {:kind "git-diff" :evidence_path (:path evidence)
                            :evidence_sha256 (:sha256 evidence) :evidence_size (:size evidence)
                            :max_diff_bytes (:max_bytes evidence)
+                           :head_tree (:head_tree evidence)
+                           :index_fingerprint (:index_fingerprint evidence)
+                           :context_fingerprint (:context_fingerprint evidence)
+                           :watch_provider (:watch_provider evidence)
+                           :watch_count (:watch_count evidence)
+                           :watch_overflow (:watch_overflow evidence)
                            :anchors (approval-server/diff-anchors
                                      (slurp (str (fs/path (get-in ctx [:run :dir]) (:path evidence)))))} )
           artifact (if evidence {:path (:path evidence) :kind "diff" :label "Current Git changes"}

@@ -28,9 +28,16 @@ On first entry, Tesseraft snapshots bounded tracked changes using fixed
 non-converting Git plumbing (`rev-parse`, `ls-tree`, `ls-files`, `cat-file`) and
 an owner-trusted helper that reads native worktree files through directory file
 descriptors with `O_NOFOLLOW`. It records and rechecks inode/size/mtime/ctime
-for every opened ancestor and file plus HEAD/index fingerprints before
-publishing `approval-evidence/<approval-id>/changes.diff`. Configured diff,
-textconv, clean, and process helpers are never invoked. The immutable SHA-256
+for every opened ancestor and file plus HEAD/index fingerprints. Supported
+Darwin and Linux hosts also retain no-follow `kqueue` or `inotify` watches over
+the tracked namespace and Git conversion metadata. The helper emits a prepared
+candidate, remains alive while Clojure atomically publishes
+`approval-evidence/<approval-id>/changes.diff`, and confirms the installed hash
+only after final fingerprint and watch-queue checks. Mutation, queue overflow,
+timeout, malformed acknowledgement, or transformed installed bytes remove the
+candidate evidence before approval request/adapter creation. The request binds
+the watch provider/count/overflow receipt. Configured diff, textconv, clean,
+and process helpers are never invoked. The immutable SHA-256
 and semantic line-anchor index are recorded on the durable request, then a Node
 adapter launches on
 `127.0.0.1:0`. Exact run/state/attempt, PID, process start instant, endpoint,
@@ -84,10 +91,13 @@ events are authority. The listener and browser are transient adapters.
 - The endpoint is local-only and single-reviewer. There is no remote sharing,
   TLS, authored port, or long-lived service.
 - Diff size defaults to 2 MiB and may be authored from 1 byte through 10 MiB.
-- Filesystem providers must support directory-FD relative opens and
-  `O_NOFOLLOW`; unsupported platforms fail before evidence publication.
-  Namespace stability uses retained inode/time receipts and secure re-traversal,
-  not a kernel watch-overflow receipt.
+- Filesystem providers must support directory-FD relative opens, `O_NOFOLLOW`,
+  and retained `kqueue` (Darwin) or `inotify` (Linux) mutation watches;
+  unsupported platforms and watch overflow fail closed. Deterministic tests
+  mutate and restore tracked bytes, an intermediate directory through an
+  outside-sentinel symlink, the index, and Git config while atomic evidence
+  publication is blocked; every case removes evidence without creating an
+  approval request or adapter.
 - A stale blocked adapter is relaunched by a mutating resume. Additionally,
   detached per-submission candidates use one durable monotonic drain claim to
   recover a killed worker and autonomously relaunch a still-pending endpoint

@@ -4,7 +4,6 @@
   Durable request, evidence, decision, feedback, state, and events remain the
   authority. The adapter owns only a capability and exact process metadata."
   (:require [babashka.fs :as fs]
-            [babashka.process :as process]
             [cheshire.core :as json]
             [clojure.string :as str]
             [tesseraft.runtime.store :as store]))
@@ -29,29 +28,73 @@
                       {:code :secure_worktree_traversal_unavailable :path (str script)})))
     (str script)))
 
-(defn- helper-snapshot! [repo max-bytes]
-  (let [input (json/generate-string {:repo (str repo) :max_diff_bytes max-bytes})
-        result @(process/process [(or (System/getenv "TESSERAFT_PYTHON") "python") (snapshot-helper)]
-                                 {:in input :out :string :err :string :continue true})
-        payload (try (json/parse-string (or (:out result) "") true)
-                     (catch Throwable _ nil))]
-    (when-not (:ok payload)
-      (let [error (:error payload)
-            code (some-> (:code error) keyword)]
-        (throw (ex-info (or (:message error) "Secure Git snapshot failed")
-                        {:code (or code :git_snapshot_failed)
-                         :details (:details error)
-                         :exit (:exit result)
-                         :stderr (subs (str (:err result)) 0 (min 1000 (count (str (:err result)))))}))))
-    (try
-      {:diff (String. (.decode (java.util.Base64/getDecoder) ^String (:diff_base64 payload)) "UTF-8")
-       :size (:size payload)
-       :head-tree (:head_tree payload)
-       :index-fingerprint (:index_fingerprint payload)
-       :context-fingerprint (:context_fingerprint payload)}
-      (catch Throwable error
-        (throw (ex-info "Secure Git snapshot returned malformed evidence"
-                        {:code :malformed_git_snapshot} error))))))
+(defn- read-helper-line! [^java.io.BufferedReader reader ^Process child]
+  (let [pending (future (.readLine reader))
+        line (deref pending 35000 ::timeout)]
+    (when (= ::timeout line)
+      (.destroyForcibly child)
+      (throw (ex-info "Secure Git snapshot helper timed out"
+                      {:code :snapshot_publication_timeout})))
+    (when (nil? line)
+      (throw (ex-info "Secure Git snapshot helper exited without a receipt"
+                      {:code :malformed_git_snapshot})))
+    (try (json/parse-string line true)
+         (catch Throwable error
+           (throw (ex-info "Secure Git snapshot returned malformed evidence"
+                           {:code :malformed_git_snapshot} error))))))
+
+(defn- assert-helper-ok! [payload phase]
+  (when-not (and (:ok payload) (= phase (:phase payload)))
+    (let [error (:error payload)]
+      (throw (ex-info (or (:message error) "Secure Git snapshot failed")
+                      {:code (or (some-> (:code error) keyword) :git_snapshot_failed)
+                       :details (:details error) :phase phase}))))
+  payload)
+
+(defn- helper-snapshot! [ctx repo max-bytes path]
+  (let [pb (ProcessBuilder. ^java.util.List
+                            [(or (System/getenv "TESSERAFT_PYTHON") "python") (snapshot-helper)])
+        barrier-dir (or (System/getProperty "tesseraft.test.snapshot-barrier-dir")
+                        (System/getenv "TESSERAFT_TEST_SNAPSHOT_BARRIER_DIR"))]
+    (when barrier-dir
+      (.put (.environment pb) "TESSERAFT_TEST_SNAPSHOT_BARRIER_DIR" barrier-dir))
+    (fs/create-dirs (fs/parent path))
+    (let [child (.start pb)]
+      (try
+        (with-open [writer (java.io.BufferedWriter. (java.io.OutputStreamWriter. (.getOutputStream child) "UTF-8"))
+                    reader (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream child) "UTF-8"))]
+          (.write writer (str (json/generate-string {:repo (str repo) :max_diff_bytes max-bytes}) "\n"))
+          (.flush writer)
+          (let [prepared (assert-helper-ok! (read-helper-line! reader child) "prepared")
+                diff (try
+                       (String. (.decode (java.util.Base64/getDecoder) ^String (:diff_base64 prepared)) "UTF-8")
+                       (catch Throwable error
+                         (throw (ex-info "Secure Git snapshot returned malformed evidence"
+                                         {:code :malformed_git_snapshot} error))))]
+            (when-not (and (= (:size prepared) (alength (.getBytes diff "UTF-8")))
+                           (= (:sha256 prepared) (store/sha256 diff)))
+              (throw (ex-info "Secure Git snapshot candidate receipt does not match its bytes"
+                              {:code :malformed_git_snapshot})))
+            (store/write-runtime-text! ctx path diff)
+            (let [installed (slurp (str path))]
+              (.write writer (str (json/generate-string {:command "published" :sha256 (store/sha256 installed)}) "\n"))
+              (.flush writer))
+            (let [confirmed (assert-helper-ok! (read-helper-line! reader child) "confirmed")]
+              (when-not (and (= (:sha256 prepared) (:sha256 confirmed))
+                             (= (:sha256 confirmed) (store/sha256 (slurp (str path)))))
+                (throw (ex-info "Installed evidence does not match the confirmed snapshot"
+                                {:code :unstable_worktree_snapshot})))
+              {:diff diff :size (:size prepared) :head-tree (:head_tree prepared)
+               :index-fingerprint (:index_fingerprint prepared)
+               :context-fingerprint (:context_fingerprint prepared)
+               :watch-provider (:watch_provider confirmed)
+               :watch-count (:watch_count confirmed)
+               :watch-overflow (:watch_overflow confirmed)})))
+        (catch Throwable error
+          (fs/delete-if-exists path)
+          (throw error))
+        (finally
+          (when (.isAlive child) (.destroyForcibly child)))))))
 
 (defn snapshot-diff!
   "Create bounded immutable review evidence for tracked changes. Configuration
@@ -62,7 +105,8 @@
             (throw (ex-info "review-server max-diff-bytes must be 1..10485760"
                             {:code :invalid_review_diff_bound})))
         supplied (or (get-in ctx [:run :worktree-dir]) (get-in ctx [:inputs :repo-root]) ".")
-        snapshot (helper-snapshot! supplied requested)
+        path (evidence-path ctx approval-id)
+        snapshot (helper-snapshot! ctx supplied requested path)
         diff (:diff snapshot)
         bytes (.getBytes diff "UTF-8")]
     (when (zero? (alength bytes))
@@ -72,14 +116,14 @@
     (when (> (alength bytes) requested)
       (throw (ex-info "Git review diff exceeds the authored byte bound"
                       {:code :review_diff_too_large :size (alength bytes) :limit requested})))
-    (let [path (evidence-path ctx approval-id)]
-      (fs/create-dirs (fs/parent path))
-      (store/write-runtime-text! ctx path diff)
-      {:path (str (fs/relativize (fs/path (get-in ctx [:run :dir])) path))
-       :sha256 (store/sha256 diff) :size (alength bytes) :max_bytes requested
-       :head_tree (:head-tree snapshot)
-       :index_fingerprint (:index-fingerprint snapshot)
-       :context_fingerprint (:context-fingerprint snapshot)})))
+    {:path (str (fs/relativize (fs/path (get-in ctx [:run :dir])) path))
+     :sha256 (store/sha256 diff) :size (alength bytes) :max_bytes requested
+     :head_tree (:head-tree snapshot)
+     :index_fingerprint (:index-fingerprint snapshot)
+     :context_fingerprint (:context-fingerprint snapshot)
+     :watch_provider (:watch-provider snapshot)
+     :watch_count (:watch-count snapshot)
+     :watch_overflow (:watch-overflow snapshot)}))
 
 (defn diff-anchors [diff]
   (loop [lines (map-indexed vector (str/split-lines diff)) file nil old nil new nil anchors {}]

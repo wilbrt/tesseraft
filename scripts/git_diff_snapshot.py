@@ -9,12 +9,15 @@ never executed.
 from __future__ import annotations
 
 import base64
+import ctypes
 import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
+import select
 import stat
+import struct
 import subprocess
 import sys
 from typing import Any
@@ -23,6 +26,129 @@ MAX_FILES = 10_000
 MAX_PATH_BYTES = 4096
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_SCAN_BYTES = 64 * 1024 * 1024
+MAX_WATCHES = 20_000
+
+
+class KernelWatcher:
+    """Retained supported-platform mutation evidence; unsupported kernels fail closed."""
+
+    def __init__(self, paths: list[str]):
+        unique = sorted(set(os.path.abspath(path) for path in paths if os.path.lexists(path)))
+        if not unique or len(unique) > MAX_WATCHES:
+            fail("snapshot_watch_unavailable", "Snapshot watch set is empty or exceeds its bound", count=len(unique))
+        self.provider = ""
+        self.fd = -1
+        self.fds: list[int] = []
+        self.kqueue: Any = None
+        if sys.platform == "darwin" and hasattr(select, "kqueue"):
+            self.provider = "kqueue"
+            self.kqueue = select.kqueue()
+            flags = getattr(os, "O_EVTONLY", os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
+            notes = (select.KQ_NOTE_WRITE | select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME |
+                     select.KQ_NOTE_EXTEND | select.KQ_NOTE_LINK | select.KQ_NOTE_REVOKE)
+            try:
+                current_path = ""
+                for path in unique:
+                    current_path = path
+                    fd = os.open(path, flags)
+                    self.fds.append(fd)
+                    self.kqueue.control([select.kevent(fd, filter=select.KQ_FILTER_VNODE,
+                                                       flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
+                                                       fflags=notes)], 0, 0)
+            except OSError as error:
+                self.close()
+                fail("snapshot_watch_unavailable", "Could not install a no-follow kqueue watch",
+                     path=current_path, errno=error.errno)
+        elif sys.platform.startswith("linux"):
+            self.provider = "inotify"
+            libc = ctypes.CDLL(None, use_errno=True)
+            init = libc.inotify_init1
+            init.argtypes = [ctypes.c_int]
+            init.restype = ctypes.c_int
+            self.fd = init(os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+            if self.fd < 0:
+                fail("snapshot_watch_unavailable", "Could not initialize inotify", errno=ctypes.get_errno())
+            add = libc.inotify_add_watch
+            add.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+            add.restype = ctypes.c_int
+            # IN_MODIFY, IN_CLOSE_WRITE, namespace changes, and self-delete/move.
+            # Do not subscribe to access/open/close-without-write read noise.
+            mask = 0x02000FCA  # plus IN_DONT_FOLLOW
+            for path in unique:
+                if add(self.fd, os.fsencode(path), mask) < 0:
+                    self.close()
+                    fail("snapshot_watch_unavailable", "Could not install an inotify watch", errno=ctypes.get_errno())
+        else:
+            fail("snapshot_watch_unavailable", "Kernel snapshot watches are unsupported on this platform",
+                 platform=sys.platform)
+        self.count = len(unique)
+
+    def changed(self) -> tuple[bool, bool]:
+        if self.provider == "kqueue":
+            events = self.kqueue.control(None, max(1, self.count), 0)
+            return bool(events), False
+        changed = False
+        overflow = False
+        while True:
+            try:
+                data = os.read(self.fd, 1024 * 1024)
+            except BlockingIOError:
+                break
+            if not data:
+                break
+            changed = True
+            offset = 0
+            while offset + 16 <= len(data):
+                _, mask, _, name_len = struct.unpack_from("iIII", data, offset)
+                overflow = overflow or bool(mask & 0x00004000)  # IN_Q_OVERFLOW
+                offset += 16 + name_len
+        return changed, overflow
+
+    def close(self) -> None:
+        if self.kqueue is not None:
+            self.kqueue.close()
+            self.kqueue = None
+        for fd in self.fds:
+            try: os.close(fd)
+            except OSError: pass
+        self.fds = []
+        if self.fd >= 0:
+            try: os.close(self.fd)
+            except OSError: pass
+            self.fd = -1
+
+
+def watch_paths(repo: str, tracked: set[str]) -> list[str]:
+    paths = [repo]
+    for rel in tracked:
+        current = Path(repo)
+        for component in rel.split("/")[:-1]:
+            current /= component
+            paths.append(str(current))
+    git_dir = Path(git(repo, "rev-parse", "--absolute-git-dir").decode("utf-8", "strict").strip())
+    common_raw = git(repo, "rev-parse", "--git-common-dir").decode("utf-8", "strict").strip()
+    common_dir = Path(common_raw if os.path.isabs(common_raw) else os.path.join(repo, common_raw))
+    git_path = lambda name: Path(git(repo, "rev-parse", "--git-path", name).decode("utf-8", "strict").strip())
+    metadata = [git_dir, common_dir, git_dir / "HEAD", git_path("index"),
+                common_dir / "config", git_dir / "config.worktree", common_dir / "packed-refs",
+                git_path("info/attributes"), Path.home() / ".gitconfig",
+                Path.home() / ".gitattributes", Path.home() / ".config/git/config",
+                Path.home() / ".config/git/attributes", Path("/etc/gitconfig"), Path("/etc/gitattributes")]
+    symbolic = git(repo, "symbolic-ref", "-q", "HEAD", allow_one=True).decode("utf-8", "strict").strip()
+    if symbolic:
+        metadata.append(common_dir / symbolic)
+    for candidate in metadata:
+        candidate = candidate if candidate.is_absolute() else Path(repo) / candidate
+        for target in (candidate, candidate.parent):
+            if target.is_symlink():
+                # Git follows configured metadata aliases. Watch the lexical
+                # parent for alias replacement and the resolved target for
+                # content/namespace mutation; never open the link itself.
+                paths.append(str(target.parent))
+                paths.append(os.path.realpath(target))
+            else:
+                paths.append(str(target))
+    return paths
 
 
 def fail(code: str, message: str, **details: Any) -> "NoReturn":
@@ -222,17 +348,49 @@ def patch_for(path: str, old: bytes | None, new: bytes | None) -> str:
     return f"diff --git a/{path} b/{path}\n" + "".join(body)
 
 
+def test_barrier(name: str) -> None:
+    directory = os.environ.get("TESSERAFT_TEST_SNAPSHOT_BARRIER_DIR")
+    if not directory:
+        return
+    root = Path(directory)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"{name}.ready").write_text("ready\n")
+    for _ in range(500):
+        if (root / f"{name}.continue").exists():
+            return
+        import time
+        time.sleep(0.01)
+    fail("snapshot_test_barrier_timeout", "Snapshot test barrier timed out", barrier=name)
+
+
+def assert_stable(repo: str, root_fd: int, expected: dict[str, tuple[int, int, int, int, int]],
+                  head_oid: str, index_fingerprint: str, watcher: KernelWatcher) -> None:
+    for label, value in expected.items():
+        if secure_stat(root_fd, label) != value:
+            fail("unstable_worktree_snapshot", "Tracked namespace changed through evidence publication", path=label)
+    if (git(repo, "rev-parse", "HEAD^{tree}").decode("ascii").strip() != head_oid or
+            hashlib.sha256(git(repo, "ls-files", "--stage", "-z")).hexdigest() != index_fingerprint):
+        fail("unstable_worktree_snapshot", "HEAD or index changed through evidence publication")
+    changed, overflow = watcher.changed()
+    if overflow:
+        fail("snapshot_watch_overflow", "Kernel snapshot watch queue overflowed")
+    if changed:
+        fail("unstable_worktree_snapshot", "Watched Git namespace changed through evidence publication")
+
+
 def main() -> None:
     try:
-        request = json.loads(sys.stdin.buffer.read(64 * 1024))
+        raw = sys.stdin.buffer.readline(64 * 1024 + 1)
+        if len(raw) > 64 * 1024 or not raw.endswith(b"\n"):
+            raise ValueError("unbounded request")
+        request = json.loads(raw)
         supplied = os.path.realpath(str(request["repo"]))
         max_diff = int(request["max_diff_bytes"])
     except Exception:
         fail("invalid_snapshot_request", "Malformed snapshot request")
     if not (1 <= max_diff <= 10 * 1024 * 1024):
         fail("invalid_review_diff_bound", "Invalid review diff byte bound")
-    repo = git(supplied, "rev-parse", "--show-toplevel").decode("utf-8", "strict").strip()
-    repo = os.path.realpath(repo)
+    repo = os.path.realpath(git(supplied, "rev-parse", "--show-toplevel").decode("utf-8", "strict").strip())
     if repo != supplied and not supplied.startswith(repo + os.sep):
         fail("unsafe_worktree_path", "Resolved repository differs from requested worktree")
     head_oid = git(repo, "rev-parse", "HEAD^{tree}").decode("ascii").strip()
@@ -242,19 +400,22 @@ def main() -> None:
         fail("unsupported_object_format", "Unsupported Git object format")
     head = tree_entries(repo, head_oid)
     index = index_entries(repo)
-    if len(set(head) | set(index)) > MAX_FILES:
+    tracked = set(head) | set(index)
+    if len(tracked) > MAX_FILES:
         fail("review_file_count_exceeded", "Tracked file count exceeds review bound")
-    assert_conversion_free(repo, head, index)
-    root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    watcher = KernelWatcher(watch_paths(repo, tracked))
+    root_fd = -1
     try:
-        root_fd = os.open(repo, root_flags)
-    except OSError:
-        fail("secure_worktree_traversal_unavailable", "Could not open worktree root securely")
-    patches: list[str] = []
-    scanned = 0
-    context_receipts: list[tuple[str, list[tuple[str, tuple[int, int, int, int, int]]]]] = []
-    try:
-        for path in sorted(set(head) | set(index)):
+        assert_conversion_free(repo, head, index)
+        root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            root_fd = os.open(repo, root_flags)
+        except OSError:
+            fail("secure_worktree_traversal_unavailable", "Could not open worktree root securely")
+        patches: list[str] = []
+        scanned = 0
+        context_receipts: list[tuple[str, list[tuple[str, tuple[int, int, int, int, int]]]]] = []
+        for path in sorted(tracked):
             old_entry = head.get(path)
             new_entry = index.get(path)
             if old_entry and new_entry and old_entry[0] != new_entry[0]:
@@ -281,19 +442,32 @@ def main() -> None:
                 if prior is not None and prior != value:
                     fail("unstable_worktree_snapshot", "Tracked namespace changed during snapshot", path=label)
                 expected[label] = value
-        for label, value in expected.items():
-            if secure_stat(root_fd, label) != value:
-                fail("unstable_worktree_snapshot", "Tracked namespace changed before publication", path=label)
+        assert_stable(repo, root_fd, expected, head_oid, index_fingerprint, watcher)
+        diff = "".join(patches).encode("utf-8")
+        if not diff:
+            fail("no_reviewable_changes", "There are no tracked Git changes to review")
+        digest = hashlib.sha256(diff).hexdigest()
+        test_barrier("prepared")
+        print(json.dumps({"ok": True, "phase": "prepared",
+                          "diff_base64": base64.b64encode(diff).decode("ascii"), "sha256": digest,
+                          "size": len(diff), "head_tree": head_oid, "index_fingerprint": index_fingerprint,
+                          "context_fingerprint": hashlib.sha256(repr(context_receipts).encode()).hexdigest(),
+                          "watch_provider": watcher.provider, "watch_count": watcher.count}), flush=True)
+        readable, _, _ = select.select([sys.stdin.buffer], [], [], 30)
+        if not readable:
+            fail("snapshot_publication_timeout", "Timed out waiting for evidence publication")
+        acknowledgement = json.loads(sys.stdin.buffer.readline(4097))
+        if acknowledgement != {"command": "published", "sha256": digest}:
+            fail("invalid_snapshot_publication", "Evidence publication acknowledgement did not match prepared bytes")
+        test_barrier("published")
+        assert_stable(repo, root_fd, expected, head_oid, index_fingerprint, watcher)
+        print(json.dumps({"ok": True, "phase": "confirmed", "sha256": digest,
+                          "watch_provider": watcher.provider, "watch_count": watcher.count,
+                          "watch_overflow": False}), flush=True)
     finally:
-        os.close(root_fd)
-    if git(repo, "rev-parse", "HEAD^{tree}").decode("ascii").strip() != head_oid or hashlib.sha256(git(repo, "ls-files", "--stage", "-z")).hexdigest() != index_fingerprint:
-        fail("unstable_worktree_snapshot", "HEAD or index changed during snapshot")
-    diff = "".join(patches).encode("utf-8")
-    if not diff:
-        fail("no_reviewable_changes", "There are no tracked Git changes to review")
-    print(json.dumps({"ok": True, "diff_base64": base64.b64encode(diff).decode("ascii"),
-                      "size": len(diff), "head_tree": head_oid, "index_fingerprint": index_fingerprint,
-                      "context_fingerprint": hashlib.sha256(repr(context_receipts).encode()).hexdigest()}))
+        if root_fd >= 0:
+            os.close(root_fd)
+        watcher.close()
 
 
 if __name__ == "__main__":

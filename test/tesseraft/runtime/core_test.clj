@@ -130,7 +130,7 @@
                (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
                  (is (zero? (:exit result)) (:err result)) result))]
     (try
-      (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "10000")
+      (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "30000")
       (fs/create-dirs repo)
       (run! "git" "init" "-q")
       (run! "git" "config" "user.name" "Review Test")
@@ -165,6 +165,9 @@
             request (store/read-json (fs/path run-dir "approvals" "review-1.json"))
             capability-file (fs/path run-dir "approval-adapters" "review" "1" "capability.json")]
         (is (= "blocked" (get-in blocked [:run :status])))
+        (is (contains? #{"kqueue" "inotify"} (get-in request [:review_server :watch_provider])))
+        (is (pos? (get-in request [:review_server :watch_count])))
+        (is (= false (get-in request [:review_server :watch_overflow])))
         (is (not (fs/exists? (fs/path root "external-diff-ran")))
             "snapshot acquisition must never invoke configured external diff")
         (loop [remaining 100]
@@ -364,6 +367,85 @@
         (is (not (fs/exists? marker)) "configured clean helper must not execute")
         (is (not (fs/exists? (approval-server/evidence-path ctx "review-1")))))
       (finally (fs/delete-tree root)))))
+
+(deftest git-diff-snapshot-watches-span-publication-and-reject-restored-mutations
+  (doseq [mutation [:file :ancestor :index :config]]
+    (testing (name mutation)
+      (let [root (temp-dir (str "tesseraft-git-watch-" (name mutation)))
+            repo (fs/path root "repo")
+            nested (fs/path repo "src")
+            tracked (fs/path nested "review.txt")
+            outside (fs/path root "outside")
+            barrier (fs/path root "barrier")
+            run-dir (fs/path root "run")
+            evidence (fs/path run-dir "approval-evidence" "review-1" "changes.diff")
+            run! (fn [& command]
+                   (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
+                     (is (zero? (:exit result)) (:err result)) result))
+            write-bytes! (fn [target bytes]
+                           (with-open [out (java.io.FileOutputStream. (str target))]
+                             (.write out bytes)))]
+        (try
+          (fs/create-dirs nested)
+          (fs/create-dirs outside)
+          (fs/create-dirs run-dir)
+          (run! "git" "init" "-q")
+          (run! "git" "config" "user.name" "Watch Test")
+          (run! "git" "config" "user.email" "watch@example.test")
+          (spit (str tracked) "before\n")
+          (run! "git" "add" "src/review.txt")
+          (run! "git" "commit" "-qm" "base")
+          (spit (str tracked) "after\n")
+          (spit (str (fs/path outside "review.txt")) "OUTSIDE-SENTINEL\n")
+          (System/setProperty "tesseraft.test.snapshot-barrier-dir" (str barrier))
+          (let [ctx {:run {:dir (str run-dir)} :inputs {:repo-root (str repo)}}
+                result (future
+                         (try
+                           (approval-server/snapshot-diff! ctx "review-1" 1048576)
+                           (catch Throwable error error)))]
+            (loop [remaining 500]
+              (when (and (not (fs/exists? (fs/path barrier "prepared.ready"))) (pos? remaining))
+                (Thread/sleep 10)
+                (recur (dec remaining))))
+            (is (fs/exists? (fs/path barrier "prepared.ready")) "helper did not reach prepared barrier")
+            (spit (str (fs/path barrier "prepared.continue")) "continue\n")
+            (loop [remaining 500]
+              (when (and (not (fs/exists? (fs/path barrier "published.ready"))) (pos? remaining))
+                (Thread/sleep 10)
+                (recur (dec remaining))))
+            (is (fs/exists? (fs/path barrier "published.ready")) "helper did not reach publication barrier")
+            (is (fs/exists? evidence) "candidate evidence was not atomically installed at the barrier")
+            (case mutation
+              :file (do (spit (str tracked) "transient\n")
+                        (spit (str tracked) "after\n"))
+              :ancestor (let [original (fs/path repo "src.original")]
+                          (fs/move nested original)
+                          (let [linked @(p/process ["ln" "-s" (str outside) (str nested)]
+                                                  {:out :string :err :string :continue true})]
+                            (is (zero? (:exit linked)) (:err linked)))
+                          (fs/delete nested)
+                          (fs/move original nested))
+              :index (let [index-path (fs/path repo ".git" "index")
+                           original (java.nio.file.Files/readAllBytes (.toPath (fs/file index-path)))]
+                       (run! "git" "add" "src/review.txt")
+                       (write-bytes! index-path original))
+              :config (let [config-path (fs/path repo ".git" "config")
+                            original (java.nio.file.Files/readAllBytes (.toPath (fs/file config-path)))]
+                        (spit (str config-path) (str (slurp (str config-path)) "\n[alias]\n  unsafe = status\n"))
+                        (write-bytes! config-path original)))
+            (spit (str (fs/path barrier "published.continue")) "continue\n")
+            (let [failure (deref result 10000 ::timeout)]
+              (is (not= ::timeout failure) "snapshot did not leave the publication barrier")
+              (is (instance? Throwable failure))
+              (is (= :unstable_worktree_snapshot (:code (ex-data failure))))
+              (is (not (fs/exists? evidence)) "failed publication left durable evidence")
+              (is (not (fs/exists? (fs/path run-dir "approvals"))) "failed snapshot created an approval request")
+              (is (not (fs/exists? (fs/path run-dir "approval-adapters"))) "failed snapshot launched an adapter")
+              (is (not (fs/exists? (fs/path run-dir "events.jsonl"))) "failed snapshot emitted an event")
+              (is (not (str/includes? (str failure) "OUTSIDE-SENTINEL")))))
+          (finally
+            (System/clearProperty "tesseraft.test.snapshot-barrier-dir")
+            (fs/delete-tree root)))))))
 
 (deftest runtime-state-claim-rejects-a-competing-live-owner
   (let [dir (temp-dir "tesseraft-runtime-claim")

@@ -8,7 +8,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const MAX_BODY = 64 * 1024;
-const adapterExitDelayMs = Math.min(10_000, Math.max(0, Number(process.env.TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS) || 2000));
+const adapterExitDelayMs = Math.min(30_000, Math.max(0, Number(process.env.TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS) || 2000));
 const args = Object.fromEntries(process.argv.slice(2).reduce((all, value, index, values) => {
   if (value.startsWith('--')) all.push([value.slice(2), values[index + 1]]);
   return all;
