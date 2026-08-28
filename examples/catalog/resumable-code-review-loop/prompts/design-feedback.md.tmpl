@@ -1,0 +1,17 @@
+# Continue design after interrogation
+
+Continue from the design context already in this exact session.
+
+Read the current durable feedback in `{{run.issues-file}}`. Resolve every
+material concern in the revised design, or explain with repository evidence
+why it does not apply. Reinspect only the repository surfaces needed to answer
+the feedback. Do not modify source or test files.
+
+Write fresh activation-stamped artifacts:
+
+- `design/status-{{run.attempt}}.json`
+- `design/design-{{run.attempt}}.md`
+- optionally `design/issues-{{run.attempt}}.json`
+
+Set `status` to `pass` when the revised design is ready for another independent
+interrogation.

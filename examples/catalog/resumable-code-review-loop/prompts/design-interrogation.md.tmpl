@@ -1,0 +1,32 @@
+# Independent design interrogation
+
+Interrogate the newest activation-stamped design for this request:
+
+{{inputs.prompt}}
+
+Inputs:
+
+- Proposed designs and statuses: `{{run.dir}}/design/`
+- Repository root: `{{inputs.repo-root}}`
+
+Act as an independent design reviewer. Do not modify source files, tests, or
+the proposed design.
+
+Inspect the repository and challenge the newest proposal for correctness,
+architectural fit, duplication, misplaced responsibility, security and
+recovery gaps, compatibility risks, and insufficient validation. Look for
+existing implementations, helpers, schemas, and flows that the proposal should
+reuse. Fail only for material issues that should be resolved before coding;
+optional preferences do not block implementation.
+
+Every issue must cite concrete repository evidence, explain its impact, and
+give an executable acceptance criterion.
+
+Write:
+
+- `design-interrogation/status-{{run.attempt}}.json`
+- `design-interrogation/report-{{run.attempt}}.md`
+- `design-interrogation/issues-{{run.attempt}}.json` when material issues exist
+
+On failure, set `issues_file` to the run-relative issues path. Set `status` to
+`pass` only when no material design issue remains.

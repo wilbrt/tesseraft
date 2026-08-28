@@ -3,7 +3,7 @@
  :metadata
  {:name "resumable-code-review-loop"
   :title "Resumable Code Review Loop"
-  :description "Continue one exact implementation session across deterministic checks and independent review activations."}
+  :description "Interrogate a resumable design before continuing one exact implementation session across deterministic checks and independent review activations."}
  :inputs {:prompt {:type :string :required true}
           :repo-root {:type :path :required true}}
  :defaults {:max-rounds 10 :state-timeout "45m"}
@@ -14,9 +14,65 @@
             :require-status-output-for-agent-nodes true
             :forbid-inline-secrets true
             :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
- :initial :implement
+ :initial :design
  :states
- {:implement
+ {:design
+  {:type :agent
+   :title "Design or address design feedback"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/design.md.tmpl"
+   :prompt-output "prompts/generated/design-initial-{{run.attempt}}.md"
+   :session-name "resumable-code-review-loop-design"
+   :session
+   {:mode :resumable
+    :continuation-prompt-template "prompts/design-feedback.md.tmpl"
+    :continuation-prompt-output "prompts/generated/design-feedback-{{run.attempt}}.md"}
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs
+   {:status {:path "design/status-{{run.attempt}}.json"
+             :schema "../../../schemas/status.schema.json"
+             :required true}
+    :design {:path "design/design-{{run.attempt}}.md" :required true}
+    :issues {:path "design/issues-{{run.attempt}}.json"
+             :schema "../../../schemas/issues.schema.json"
+             :required false}}
+   :transitions
+   [{:when {:status "pass"} :next :design-interrogation}
+    {:when {:status "fail"}
+     :effects [:merge-issues :inc-round]
+     :next :design}]}
+
+  :design-interrogation
+  {:type :agent
+   :title "Interrogate the proposed design independently"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "high"
+   :prompt-template "prompts/design-interrogation.md.tmpl"
+   :prompt-output "prompts/generated/design-interrogation-{{run.attempt}}.md"
+   :session-name "resumable-code-review-loop-design-interrogation-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs
+   {:status {:path "design-interrogation/status-{{run.attempt}}.json"
+             :schema "../../../schemas/status.schema.json"
+             :required true}
+    :report {:path "design-interrogation/report-{{run.attempt}}.md" :required true}
+    :issues {:path "design-interrogation/issues-{{run.attempt}}.json"
+             :schema "../../../schemas/issues.schema.json"
+             :required false}}
+   :transitions
+   [{:when {:status "pass"} :effects [:clear-issues] :next :implement}
+    {:when {:status "fail"}
+     :effects [:merge-issues :inc-round]
+     :next :design}]}
+
+  :implement
   {:type :agent
    :title "Implement or address feedback"
    :executor :pi-cli

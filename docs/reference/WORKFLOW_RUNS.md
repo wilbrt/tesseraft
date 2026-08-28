@@ -217,22 +217,26 @@ dependency, subprocess crash, malformed output, timeout, or missing required
 artifact. External failures leave durable `node.failed` evidence and require
 explicit recovery or a replacement run.
 
-The resumable code-review loop keeps the implementation context while
-preserving independent checks and review:
+The resumable code-review loop first keeps one design trajectory across an
+independent interrogation gate, then keeps a separate implementation trajectory
+across deterministic checks and independent code review:
 
 ```text
-implement(session) -> checks -> review -> done
-       ^                 |         |
-       +------ fail -----+---------+
+design(session) -> design-interrogation -> implement(session) -> checks -> review -> done
+       ^              |                    ^                 |         |
+       +---- fail ----+                    +------ fail -----+---------+
 ```
 
-Every return to `implement` is a new bounded node attempt that receives only
-the persisted continuation prompt. `session.activation.*` and
-`session.suspended` events prove each boundary; `session.closed` precedes
-`run.finished`. If a runner dies after required attempt-stamped outputs exist,
-the next runner may record `node.recovered` without redelivery. If completion
-cannot be proved, it records `session.orphaned` and never resends the ambiguous
-prompt automatically.
+Every return to `design` or `implement` is a new bounded node attempt that
+receives only its persisted continuation prompt. Material design issues are
+merged before resuming the exact design session; an accepted interrogation
+clears those issues before the separate implementation session starts. Check
+and code-review issues then resume only the implementation session.
+`session.activation.*` and `session.suspended` events prove each boundary;
+`session.closed` precedes `run.finished`. If a runner dies after required
+attempt-stamped outputs exist, the next runner may record `node.recovered`
+without redelivery. If completion cannot be proved, it records
+`session.orphaned` and never resends the ambiguous prompt automatically.
 
 The Canon TDD workflow adds a behavior-driven loop:
 

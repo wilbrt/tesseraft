@@ -5,7 +5,16 @@ Implement the requested change in `{{inputs.repo-root}}`:
 {{inputs.prompt}}
 
 Inspect the repository first and preserve its architecture and engineering
-principles. Write fresh activation-stamped artifacts:
+principles. Read the accepted design and its independent interrogation before
+changing code:
+
+- newest activation-stamped design in `{{run.dir}}/design/`
+- newest passing interrogation in `{{run.dir}}/design-interrogation/`
+
+Treat the accepted design as implementation guidance, while resolving any
+repository evidence that invalidates one of its assumptions explicitly.
+
+Write fresh activation-stamped artifacts:
 
 - `execution/status-{{run.attempt}}.json`
 - `execution/summary-{{run.attempt}}.md`

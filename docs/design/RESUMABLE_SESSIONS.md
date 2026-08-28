@@ -26,7 +26,8 @@ Suggested branch: `feature/resumable-agent-sessions`.
 
 Implementation status: the portable contract, durable binding lifecycle,
 restart recovery, mock executor, explicit Pi CLI, OpenCode CLI, and Claude Code
-start/resume adapters, and maintained review-loop example are implemented.
+start/resume adapters, and a maintained review-loop example with independent
+design interrogation and code review are implemented.
 OpenCode uses an executor-emitted reference on its first activation; Pi and
 Claude Code use preallocated UUIDs. UI authoring/inspection remains the
 explicitly deferred RS7 increment.

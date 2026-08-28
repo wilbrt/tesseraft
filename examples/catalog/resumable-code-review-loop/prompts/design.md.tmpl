@@ -1,0 +1,28 @@
+# Design
+
+Design the requested change in `{{inputs.repo-root}}` before implementation:
+
+{{inputs.prompt}}
+
+Inspect the repository deeply enough to propose its smallest coherent,
+repository-native implementation. Do not modify source or test files.
+
+The design must:
+
+- state intended behavior and explicit non-goals;
+- identify affected architectural boundaries, producers, consumers, schemas,
+  persistence formats, and compatibility constraints;
+- reuse existing abstractions and avoid parallel sources of truth;
+- identify important security, recovery, and migration risks;
+- define deterministic validation using commands already supported by the
+  repository.
+
+Write fresh activation-stamped artifacts:
+
+- `design/status-{{run.attempt}}.json`
+- `design/design-{{run.attempt}}.md`
+- optionally `design/issues-{{run.attempt}}.json`
+
+Set `status` to `pass` when the design is ready for independent interrogation.
+If material uncertainty prevents a coherent proposal, set `status` to `fail`
+and point `issues_file` at the activation-stamped issues artifact.

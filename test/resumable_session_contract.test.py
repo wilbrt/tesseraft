@@ -251,6 +251,120 @@ def test_continuation_template_variables_and_node_export_are_in_contract(tmp_pat
     assert package.returncode == 0, package.stderr or package.stdout
 
 
+def test_maintained_workflow_interrogates_and_resumes_exact_design_session(workspace_layout):
+    workflow = (
+        ROOT
+        / "examples"
+        / "catalog"
+        / "resumable-code-review-loop"
+        / "workflow.edn"
+    )
+    started = run_command(
+        [
+            BIN,
+            "run",
+            "start",
+            str(workflow),
+            "--executor",
+            "mock",
+            "--run-id",
+            "resumable-design-interrogation",
+            "--runs-root",
+            str(workspace_layout.runs),
+            "--input",
+            "prompt=Interrogate the resumable design",
+            "--input",
+            f"repo-root={workspace_layout.workspace}",
+            "--format",
+            "json",
+        ]
+    )
+    assert started.returncode == 0, started.stderr or started.stdout
+    started_run = json.loads(started.stdout)["run"]
+    assert (started_run["state"], started_run["attempt"]) == ("design", 1)
+    run_dir = Path(started_run["dir"])
+
+    def step():
+        result = run_command(
+            [BIN, "run", "step", "--run-dir", str(run_dir), "--format", "json"]
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        return json.loads(result.stdout)["run"]
+
+    first_interrogation = step()
+    assert (first_interrogation["state"], first_interrogation["attempt"]) == (
+        "design-interrogation",
+        2,
+    )
+    design_binding_path = run_dir / "sessions" / "design" / "binding.json"
+    first_binding = json.loads(design_binding_path.read_text())
+    first_design_ref = first_binding["session_ref"]
+    assert first_binding["activation_sequence"] == 1
+    assert first_binding["status"] == "suspended"
+    assert not (run_dir / "sessions" / "design-interrogation" / "binding.json").exists()
+
+    interrogation_dir = run_dir / "design-interrogation"
+    interrogation_dir.mkdir(parents=True, exist_ok=True)
+    (interrogation_dir / "report-2.md").write_text("Material architecture issue.\n")
+    (interrogation_dir / "issues-2.json").write_text(
+        json.dumps(
+            [
+                {
+                    "source": "design-interrogation",
+                    "severity": "major",
+                    "title": "Reuse the existing binding authority",
+                    "details": "The proposed design duplicates session ownership.",
+                    "acceptance_criteria": "One binding authority remains.",
+                }
+            ]
+        )
+    )
+    (interrogation_dir / "status-2.json").write_text(
+        json.dumps(
+            {
+                "status": "fail",
+                "summary": "Material design issue",
+                "issues_file": "design-interrogation/issues-2.json",
+            }
+        )
+    )
+
+    returned_to_design = step()
+    assert (
+        returned_to_design["state"],
+        returned_to_design["attempt"],
+        returned_to_design["round"],
+    ) == ("design", 3, 2)
+    assert json.loads((run_dir / "issues.json").read_text())[0]["source"] == "design-interrogation"
+
+    second_interrogation = step()
+    assert (second_interrogation["state"], second_interrogation["attempt"]) == (
+        "design-interrogation",
+        4,
+    )
+    second_binding = json.loads(design_binding_path.read_text())
+    assert second_binding["session_ref"] == first_design_ref
+    assert second_binding["activation_sequence"] == 2
+    assert second_binding["status"] == "suspended"
+    continuation = (run_dir / "prompts" / "generated" / "design-feedback-3.md").read_text()
+    assert str(run_dir / "issues.json") in continuation
+    assert "Interrogate the resumable design" not in continuation
+
+    implementation = step()
+    assert (implementation["state"], implementation["attempt"]) == ("implement", 5)
+    checks = step()
+    assert (checks["state"], checks["attempt"]) == ("checks", 6)
+    implementation_binding = json.loads(
+        (run_dir / "sessions" / "implement" / "binding.json").read_text()
+    )
+    assert implementation_binding["session_ref"] != first_design_ref
+    implementation_prompt = (
+        run_dir / "prompts" / "generated" / "implement-initial-5.md"
+    ).read_text()
+    assert str(run_dir / "design") in implementation_prompt
+    assert str(run_dir / "design-interrogation") in implementation_prompt
+
+
 def test_resumable_mock_session_survives_process_restart_and_closes(workspace_layout):
     fixture = (
         ROOT
