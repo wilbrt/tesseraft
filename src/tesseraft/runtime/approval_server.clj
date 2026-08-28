@@ -151,7 +151,8 @@
     (.redirectOutput pb (.toFile (fs/path dir "adapter.log")))
     (.redirectError pb (.toFile (fs/path dir "adapter-error.log")))
     (.put (.environment pb) "AGENT_RUN_DIR" (str (get-in ctx [:run :dir])))
-    (when-let [delay (System/getProperty "tesseraft.test.adapter-exit-delay-ms")]
+    (when-let [delay (or (System/getProperty "tesseraft.test.adapter-exit-delay-ms")
+                         (System/getenv "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS"))]
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS" delay))
     (let [child (.start pb)
           started (some-> child .toHandle .info .startInstant (.orElse nil) str)

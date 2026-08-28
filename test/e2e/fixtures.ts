@@ -53,7 +53,7 @@ type IsolatedWorkspaceFixture = {
   tempRoot: string;
   uniqueName: (prefix: string) => string;
   workflowPackagePath: (name: string) => string;
-  runCli: (args: string[], options?: { timeout?: number }) => Promise<CliResult>;
+  runCli: (args: string[], options?: { timeout?: number; env?: NodeJS.ProcessEnv }) => Promise<CliResult>;
   apiJson: <T = unknown>(path: string) => Promise<T>;
 };
 
@@ -207,8 +207,8 @@ export const test = base.extend<{}, WorkerFixtures>({
     let child: ChildProcessWithoutNullStreams | null = null;
 
     const env = { ...process.env, TESSERAFT_WORKSPACE_ROOT: workspaceRoot, TESSERAFT_HOME: tesseraftHome };
-    const runCli = (args: string[], options: { timeout?: number } = {}): Promise<CliResult> => new Promise((resolve, reject) => {
-      execFile(tesseraftBin, args, { cwd: workspaceRoot, env, timeout: options.timeout ?? 20_000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const runCli = (args: string[], options: { timeout?: number; env?: NodeJS.ProcessEnv } = {}): Promise<CliResult> => new Promise((resolve, reject) => {
+      execFile(tesseraftBin, args, { cwd: workspaceRoot, env: { ...env, ...options.env }, timeout: options.timeout ?? 20_000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
           reject(new Error(`tesseraft ${args.join(' ')} failed: ${error.message}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
           return;

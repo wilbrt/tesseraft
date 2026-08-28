@@ -66,7 +66,9 @@ and binds transport/lifecycle/submission/generation fields into the approval
 finalization record. If the approval is still pending it autonomously launches
 one replacement even when both generation 1 and the adapter were SIGKILLed. A
 committed nonterminal decision records `resume_handoff_status=requested`; it is
-not stepped until the shared generation-based launcher exists.
+not stepped until the shared generation-based launcher exists. The focused
+Playwright fault scenario drives a real browser abort, kills generation 1 and
+the adapter, and verifies generation-2 completion plus endpoint replacement.
 
 The durable request, evidence, decision, feedback, `issues.json`, state, and
 events are authority. The listener and browser are transient adapters.
