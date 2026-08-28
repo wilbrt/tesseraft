@@ -39,6 +39,16 @@
         "executor": { "type": "string" }
       },
       "additionalProperties": true
+    },
+    "resumableSession": {
+      "type": "object",
+      "required": ["mode", "continuation-prompt-template"],
+      "properties": {
+        "mode": { "const": "resumable" },
+        "continuation-prompt-template": { "type": "string", "minLength": 1 },
+        "continuation-prompt-output": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
     }
   },
   "properties": {
@@ -172,6 +182,7 @@
             "terminal"
           ]
         },
+        "session": { "$ref": "#/$defs/resumableSession" },
         "resources": { "$ref": "#/$defs/resourceDeclaration" }
       },
       "additionalProperties": true

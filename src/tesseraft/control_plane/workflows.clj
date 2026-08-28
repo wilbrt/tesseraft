@@ -19,41 +19,8 @@
 
 (def workflow-name-re #"^[a-z][a-z0-9-]{0,62}$")
 
-(defn- semantic-keyword [value]
-  (cond
-    (keyword? value) value
-    (string? value) (keyword value)
-    :else value))
-
-(defn- normalize-transition [transition]
-  (cond-> transition
-    (contains? transition :next) (update :next semantic-keyword)
-    (contains? transition :effects) (update :effects #(mapv semantic-keyword %))
-    (contains? transition :when) (update :when
-                                         (fn [predicate]
-                                           (if (contains? predicate :fragment/outcome)
-                                             (update predicate :fragment/outcome semantic-keyword)
-                                             predicate)))))
-
-(defn- normalize-node [node]
-  (cond-> node
-    (contains? node :type) (update :type semantic-keyword)
-    (contains? node :handler) (update :handler semantic-keyword)
-    (contains? node :executor) (update :executor semantic-keyword)
-    (contains? node :status) (update :status semantic-keyword)
-    (contains? node :tools) (update :tools #(mapv semantic-keyword %))
-    (contains? node :next) (update :next semantic-keyword)
-    (contains? node :transitions) (update :transitions #(mapv normalize-transition %))))
-
 (defn normalize-wire-workflow [wire]
-  (cond-> wire
-    (contains? wire :kind) (update :kind semantic-keyword)
-    (contains? wire :initial) (update :initial semantic-keyword)
-    (contains? wire :states) (update :states
-                                     (fn [states]
-                                       (into {} (map (fn [[id node]] [(semantic-keyword id) (normalize-node node)]) states))))
-    (get-in wire [:policies :allowed-agent-tools])
-    (update-in [:policies :allowed-agent-tools] #(mapv semantic-keyword %))))
+  (spec/normalize-workflow wire))
 
 (defn- portable-value [value]
   (cond

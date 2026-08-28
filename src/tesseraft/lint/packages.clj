@@ -47,7 +47,8 @@
 (defn node-referenced-assets [node]
   (set (remove nil?
                (concat
-                 [(:prompt-template node)]
+                 [(:prompt-template node)
+                  (get-in node [:session :continuation-prompt-template])]
                  (when-let [cmd (first (:command node))]
                    (when (path-like-command? cmd) [cmd]))
                  (keep (fn [[_ contract]] (spec/output-schema contract))
@@ -80,6 +81,9 @@
         (when-not t [(err :missing-node-type [:node :type] "Node is missing :type")])
         (when (and t (not (contains? spec/valid-node-types t)))
           [(err :unknown-node-type [:node :type] (str "Unknown node type " t))])
+        (when (and (contains? node :session) (not= :agent t))
+          [(err :session-policy-requires-agent [:node :session]
+                ":session is valid only on :agent nodes")])
         (path-contract-checks pkg :node node)
         (case t
           :agent
@@ -99,6 +103,7 @@
             (optional-nonblank-string-check :invalid-agent-model [:node :model] ":model" (:model node))
             (nodes/opencode-model-check [:node] node)
             (agent-thinking-check [:node :thinking] (:thinking node))
+            (nodes/session-policy-checks [:node] node #(spec/resolve-node-package-path pkg %))
             (when-not (:prompt-template node)
               [(err :agent-missing-prompt-template [:node :prompt-template]
                     "Agent node must declare :prompt-template")])
@@ -153,8 +158,9 @@
 (defn node-package-template-var-checks [pkg]
   (let [node (:node pkg)
         pkg-vars (spec/workflow-template-vars pkg)
-        prompt-vars (when (:prompt-template node)
-                      (spec/prompt-template-vars pkg (:prompt-template node)))
+        prompt-vars (mapcat #(spec/prompt-template-vars pkg %)
+                            (remove nil? [(:prompt-template node)
+                                          (get-in node [:session :continuation-prompt-template])]))
         all-vars (set (concat pkg-vars prompt-vars))]
     (for [v all-vars
           :let [[root field] (str/split v #"\." 2)]

@@ -1,6 +1,7 @@
 (ns tesseraft.runtime.transitions
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
+            [tesseraft.runtime.sessions :as sessions]
             [tesseraft.runtime.store :as store]
             [tesseraft.spec :as spec]))
 
@@ -57,6 +58,7 @@
         node (spec/node wf state-id)]
     (if (= :terminal (:type node))
       (do
+        (sessions/close-bindings! ctx)
         (store/event! ctx {:event "run.finished" :state (name state-id)})
         (-> ctx
             (assoc-in [:run :status] "done")

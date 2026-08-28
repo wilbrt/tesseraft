@@ -16,6 +16,7 @@ MAINTAINED_WORKFLOWS = [
     "examples/catalog/prompt-to-pr/workflow.edn",
     "examples/catalog/worktree-to-pr/workflow.edn",
     "examples/catalog/code-review-loop/workflow.edn",
+    "examples/catalog/resumable-code-review-loop/workflow.edn",
     "examples/catalog/playwright-code-review-loop/workflow.edn",
     "examples/catalog/deterministic-code-review-loop/workflow.edn",
     "examples/catalog/supervised-deterministic-code-review-loop/workflow.edn",

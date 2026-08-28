@@ -1,0 +1,23 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata {:name "resumable-session-fixture"}
+ :inputs {:prompt {:type :string :required true}}
+ :defaults {:max-rounds 3 :state-timeout "1m"}
+ :policies {:require-timeouts true :require-max-rounds true}
+ :initial :implement
+ :states
+ {:implement
+  {:type :agent
+   :executor :pi-cli
+   :prompt-template "prompts/resumable-initial.md.tmpl"
+   :prompt-output "prompts/generated/implement-{{run.attempt}}.md"
+   :session
+   {:mode :resumable
+    :continuation-prompt-template "prompts/resumable-continuation.md.tmpl"
+    :continuation-prompt-output "prompts/generated/implement-continuation-{{run.attempt}}.md"}
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:timeout "1m"}
+   :outputs {:status {:path "execution/status-{{run.attempt}}.json" :required true}}
+   :transitions [{:when {:status "pass"} :next :done}
+                 {:when {:status "fail"} :effects [:inc-round] :next :implement}]}
+  :done {:type :terminal :status :success}}}

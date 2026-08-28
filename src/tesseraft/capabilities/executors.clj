@@ -20,6 +20,7 @@
 (def descriptors
   {:pi-cli
    {:id :pi-cli :label "Pi CLI" :run 'tesseraft.executors.pi-cli/run-agent-node!
+    :run-session 'tesseraft.executors.pi-cli/run-agent-session-node!
     :availability pi-cli-availability :config-schema {}
     :credential-requirements [] :supports-session-resume? true
     :experimental? false :dispatchable? true}
@@ -42,6 +43,11 @@
 (defn ids [] (set (keys descriptors)))
 (defn descriptor [id] (get descriptors id))
 (defn dispatchable? [id] (true? (:dispatchable? (descriptor id))))
+(defn supports-session-resume? [id]
+  (let [executor (descriptor id)]
+    (and (true? (:dispatchable? executor))
+         (true? (:supports-session-resume? executor))
+         (some? (:run-session executor)))))
 
 (defn invoke! [id & args]
   (if-let [symbol (:run (descriptor id))]
@@ -49,9 +55,15 @@
     (throw (ex-info "Unknown or unavailable agent executor"
                     {:executor id :error-type "executor_unavailable"}))))
 
+(defn invoke-session! [id & args]
+  (if-let [symbol (:run-session (descriptor id))]
+    (apply (requiring-resolve symbol) args)
+    (throw (ex-info "Executor does not implement resumable sessions"
+                    {:executor id :error-type "executor_session_resume_unavailable"}))))
+
 (defn public-descriptors []
   (mapv (fn [{:keys [availability] :as descriptor}]
           (-> descriptor
-              (dissoc :run :availability)
+              (dissoc :run :run-session :availability)
               (assoc :availability (availability))))
         (sort-by (comp name :id) (vals descriptors))))

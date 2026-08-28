@@ -1,35 +1,16 @@
 (ns tesseraft.contract.normalize
-  (:require [clojure.string :as str]
-            [tesseraft.contract.parse :as parse]))
+  (:require [tesseraft.contract.parse :as parse]))
 
-(defn- semantic-keyword [x]
-  (cond (keyword? x) x (and (string? x) (str/starts-with? x ":")) (keyword (subs x 1)) (string? x) (keyword x) :else x))
+(def semantic-keyword parse/semantic-keyword)
 (defn- semantic-keywords [xs]
   (cond (set? xs) (set (map semantic-keyword xs)) (vector? xs) (mapv semantic-keyword xs) (sequential? xs) (map semantic-keyword xs) :else xs))
 (defn- normalize-interface [x]
   (if-not (map? x) x (cond-> x (contains? x :outcomes) (update :outcomes #(if (sequential? %) (set (map semantic-keyword %)) %)))))
-(defn- normalize-transition [x]
-  (if-not (map? x) x
-    (cond-> x
-      (contains? x :next) (update :next parse/keywordize-node-id)
-      (contains? x :effects) (update :effects semantic-keywords)
-      (contains? x :when) (update :when #(if (and (map? %) (contains? % :fragment/outcome)) (update % :fragment/outcome semantic-keyword) %)))))
-(defn- normalize-node [x]
-  (if-not (map? x) x
-    (cond-> x
-      (contains? x :type) (update :type semantic-keyword)
-      (contains? x :handler) (update :handler semantic-keyword)
-      (contains? x :executor) (update :executor semantic-keyword)
-      (contains? x :tools) (update :tools semantic-keywords)
-      (contains? x :status) (update :status semantic-keyword)
-      (contains? x :outcome) (update :outcome #(if (sequential? %) (set (map semantic-keyword %)) (semantic-keyword %)))
-      (contains? x :next) (update :next parse/keywordize-node-id)
-      (contains? x :transitions) (update :transitions #(if (sequential? %) (mapv normalize-transition %) %)))))
 (defn- normalize-states [states]
   (if-not (map? states) states
-    (let [entries (map (fn [[id node]] [(parse/keywordize-node-id id) (normalize-node node)]) states) ids (map first entries)]
+    (let [entries (map (fn [[id node]] [(parse/keywordize-node-id id) (parse/normalize-node node)]) states) ids (map first entries)]
       (if (= (count ids) (count (set ids))) (into {} entries)
-        (assoc (into {} (map (fn [[id node]] [id (normalize-node node)])) states) ::state-id-collision nil)))))
+        (assoc (into {} (map (fn [[id node]] [id (parse/normalize-node node)])) states) ::state-id-collision nil)))))
 (defn- normalize-body [x]
   (if-not (map? x) x
     (cond-> x
@@ -38,9 +19,9 @@
       (contains? x :exit) (update :exit #(if (sequential? %) (mapv (fn [e] (if (and (map? e) (contains? e :on)) (update e :on semantic-keyword) e)) %) %))
       (contains? x :states) (update :states normalize-states))))
 (defn- normalize-requirements [x]
-  (if-not (map? x) x (cond-> x (contains? x :executors) (update :executors semantic-keywords) (contains? x :handlers) (update :handlers semantic-keywords) (contains? x :tools) (update :tools semantic-keywords))))
+  (parse/normalize-requirements x))
 (defn- normalize-policies [x]
-  (if-not (map? x) x (cond-> x (contains? x :allowed-agent-tools) (update :allowed-agent-tools semantic-keywords))))
+  (parse/normalize-policies x))
 (defn normalize-fragment-package [pkg]
   (if-not (map? pkg) pkg
     (cond-> pkg

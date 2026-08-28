@@ -1,0 +1,94 @@
+{:api-version "tesseraft.workflow/v1"
+ :kind :workflow
+ :metadata
+ {:name "resumable-code-review-loop"
+  :title "Resumable Code Review Loop"
+  :description "Continue one exact implementation session across deterministic checks and independent review activations."}
+ :inputs {:prompt {:type :string :required true}
+          :repo-root {:type :path :required true}}
+ :defaults {:max-rounds 10 :state-timeout "45m"}
+ :policies {:runtime-cannot-edit-workflow true
+            :authoring-cannot-edit-runs true
+            :require-timeouts true
+            :require-max-rounds true
+            :require-status-output-for-agent-nodes true
+            :forbid-inline-secrets true
+            :allowed-agent-tools [:read :bash :edit :write :grep :find :ls]}
+ :initial :implement
+ :states
+ {:implement
+  {:type :agent
+   :title "Implement or address feedback"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/implement.md.tmpl"
+   :prompt-output "prompts/generated/implement-initial-{{run.attempt}}.md"
+   :session-name "resumable-code-review-loop-implement"
+   :session
+   {:mode :resumable
+    :continuation-prompt-template "prompts/implementation-feedback.md.tmpl"
+    :continuation-prompt-output "prompts/generated/implement-feedback-{{run.attempt}}.md"}
+   :tools [:read :bash :edit :write :grep :find :ls]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "90m"}
+   :outputs
+   {:status {:path "execution/status-{{run.attempt}}.json"
+             :schema "../../../schemas/status.schema.json"
+             :required true}
+    :summary {:path "execution/summary-{{run.attempt}}.md" :required true}
+    :issues {:path "execution/issues-{{run.attempt}}.json"
+             :schema "../../../schemas/issues.schema.json"
+             :required false}}
+   :transitions
+   [{:when {:status "pass"} :next :checks}
+    {:when {:status "fail"}
+     :effects [:merge-issues :inc-round]
+     :next :implement}]}
+
+  :checks
+  {:type :process
+   :title "Run deterministic checks"
+   :command ["./scripts/run_checks.py"]
+   :input-mode :json-stdin
+   :output-mode :json-stdout
+   :runtime {:timeout "20m"}
+   :outputs
+   {:report {:path "checks/report-{{run.attempt}}.md" :required true}
+    :issues {:path "checks/issues-{{run.attempt}}.json"
+             :schema "../../../schemas/issues.schema.json"
+             :required false}}
+   :transitions
+   [{:when {:status "pass"} :next :review}
+    {:when {:status "fail"}
+     :effects [:merge-issues :inc-round]
+     :next :implement}]}
+
+  :review
+  {:type :agent
+   :title "Independent code review"
+   :executor :pi-cli
+   :provider "openai-codex"
+   :model "gpt-5.6-sol"
+   :thinking "medium"
+   :prompt-template "prompts/review.md.tmpl"
+   :prompt-output "prompts/generated/review-{{run.attempt}}.md"
+   :session-name "resumable-code-review-loop-review-{{run.attempt}}"
+   :tools [:read :bash :grep :find :ls :write]
+   :runtime {:cwd "{{inputs.repo-root}}" :timeout "45m"}
+   :outputs
+   {:status {:path "review/status-{{run.attempt}}.json"
+             :schema "../../../schemas/status.schema.json"
+             :required true}
+    :report {:path "review/report-{{run.attempt}}.md" :required true}
+    :issues {:path "review/issues-{{run.attempt}}.json"
+             :schema "../../../schemas/issues.schema.json"
+             :required false}}
+   :transitions
+   [{:when {:status "pass"} :effects [:clear-issues] :next :done}
+    {:when {:status "fail"}
+     :effects [:merge-issues :inc-round]
+     :next :implement}]}
+
+  :done
+  {:type :terminal :title "Done" :status :success}}}

@@ -1,0 +1,18 @@
+# Independent code review
+
+Review the current implementation of this request in `{{inputs.repo-root}}`:
+
+{{inputs.prompt}}
+
+Act as an independent reviewer. Inspect the diff, architecture, correctness,
+tests, security, and failure behavior. Do not modify implementation files.
+
+Write:
+
+- `review/status-{{run.attempt}}.json`
+- `review/report-{{run.attempt}}.md`
+- `review/issues-{{run.attempt}}.json` when actionable issues exist
+
+Use `status: pass` only when there are no actionable issues. On failure, set
+`issues_file` to the run-relative issues path so the workflow can merge it
+before resuming the implementation session.

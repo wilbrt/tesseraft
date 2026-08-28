@@ -31,7 +31,8 @@
                           "tesseraft.security.redaction-test")}
   test:runtime {:doc "Run focused Clojure runtime and durability tests"
                 :task (shell "bb" "--classpath" "src:test" "-m" "tesseraft.test-runner"
-                             "tesseraft.runtime.core-test")}
+                             "tesseraft.runtime.core-test"
+                             "tesseraft.runtime.sessions-test")}
   test:python {:doc "Run all Python contract and black-box tests through discovery"
                :task (shell "python" "-m" "pytest")}
   test:integration {:doc "Run local integration tests against an already prepared Web build"

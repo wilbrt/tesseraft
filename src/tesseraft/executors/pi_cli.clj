@@ -65,3 +65,67 @@
         provider (assoc :provider provider)
         model (assoc :model model)
         thinking (assoc :thinking thinking)))))
+
+(defn- redacted-session-command [args]
+  (loop [remaining args result []]
+    (if-let [arg (first remaining)]
+      (if (contains? #{"--session" "--session-id"} arg)
+        (recur (nnext remaining) (conj result arg "<session-ref>"))
+        (recur (next remaining) (conj result arg)))
+      result)))
+
+(defn run-agent-session-node! [wf ctx state-id node request]
+  (let [pi-bin (env "PI_BIN" "pi")
+        run-dir (get-in ctx [:run :dir])
+        repo-root (runtime-cwd ctx state-id node)
+        prompt-file (:prompt-file request)
+        session-dir (str (fs/path run-dir "pi-sessions"))
+        session-name (session-name wf ctx state-id node)
+        session-ref (get-in request [:session-ref :value])
+        operation (:operation request)
+        tools (comma-tools (:tools node))
+        provider (:provider node)
+        model (:model node)
+        thinking (:thinking node)
+        log-file (str (fs/path run-dir "logs"
+                               (str (name state-id) "-" (get-in ctx [:run :attempt]) ".log")))
+        base [pi-bin "--approve" "--session-dir" session-dir]
+        args (cond-> (case operation
+                       :start (into base ["--session-id" session-ref "--name" session-name])
+                       :resume (into base ["--session" session-ref])
+                       (throw (ex-info "Unsupported Pi session operation"
+                                       {:operation operation
+                                        :error-type "executor_session_operation_invalid"})))
+               tools (into ["--tools" tools])
+               provider (into ["--provider" provider])
+               model (into ["--model" model])
+               thinking (into ["--thinking" thinking])
+               true (into ["-p" (str "@" prompt-file)]))]
+    (fs/create-dirs (fs/parent log-file))
+    (store/write-runtime-text!
+      ctx log-file
+      (str "COMMAND: " (str/join " " (redacted-session-command args)) "\n\n"
+           "CWD: " repo-root "\n\n"
+           "PROVIDER: " (or provider "<default>") "\n"
+           "MODEL: " (or model "<default>") "\n"
+           "THINKING: " (or thinking "<default>") "\n"
+           "SESSION_OPERATION: " (name operation) "\n"
+           "SESSION_REF_SHA256: " (store/sha256 session-ref) "\n"
+           "DELIVERY_ID: " (:delivery-id request) "\n\n"
+           "PROMPT_FILE: " prompt-file "\n\n"
+           "STATUS: running\n\n"))
+    (let [result (executor-process/run! {:cmd args :dir repo-root :input ""
+                                         :env (executor-context/agent-env ctx state-id)})]
+      (store/append-runtime-text! ctx log-file
+                                  (str "STATUS: exited " (:exit-code result) "\n\n"
+                                       "STDOUT:\n" (:stdout result) "\n\nSTDERR:\n" (:stderr result) "\n"))
+      (cond-> (merge (select-keys result [:ok :status :category :code :message])
+                     {:executor "pi-cli"
+                      :exit-code (:exit-code result)
+                      :prompt-file prompt-file
+                      :log-file log-file
+                      :session-name session-name
+                      :session-ref (:session-ref request)})
+        provider (assoc :provider provider)
+        model (assoc :model model)
+        thinking (assoc :thinking thinking)))))

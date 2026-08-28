@@ -150,7 +150,7 @@
   ctx)
 
 (defn ensure-run-dirs! [ctx]
-  (doseq [d ["logs" "prompts/generated" "pi-sessions" "attempts"]]
+  (doseq [d ["logs" "prompts/generated" "pi-sessions" "sessions" "attempts"]]
     (fs/create-dirs (fs/path (get-in ctx [:run :dir]) d)))
   (when-not (fs/exists? (get-in ctx [:run :issues-file]))
     (write-json! (get-in ctx [:run :issues-file]) []))

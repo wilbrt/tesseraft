@@ -4,7 +4,11 @@
             [tesseraft.spec :as spec]))
 (defn checks [wf]
   (let [wf-vars (spec/workflow-template-vars wf)
-        prompt-vars (set (mapcat (fn [[_ n]] (when (:prompt-template n) (spec/prompt-template-vars wf (:prompt-template n)))) (:states wf)))
+        prompt-vars (set (mapcat (fn [[_ n]]
+                                   (mapcat #(spec/prompt-template-vars wf %)
+                                           (remove nil? [(:prompt-template n)
+                                                         (get-in n [:session :continuation-prompt-template])])))
+                                 (:states wf)))
         input-keys (set (map name (keys (:inputs wf)))) default-keys (set (map name (keys (:defaults wf))))]
     (apply concat (for [v (set (concat wf-vars prompt-vars)) :let [[root field] (str/split v #"\." 2)]]
       (cond

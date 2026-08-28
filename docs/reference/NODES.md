@@ -72,6 +72,7 @@ The package owns intrinsic node behavior:
 - node type,
 - executor, handler, or process command,
 - optional per-agent-node Pi `:provider` and `:model` strings,
+- optional explicit resumable `:session` policy and its continuation prompt,
 - prompt/script/schema assets,
 - output contracts,
 - tool and secret requirements,
@@ -96,13 +97,38 @@ The importing workflow owns integration:
 
 For that reason, package nodes may omit `:next` and `:transitions`. Import tooling should attach workflow-specific transitions. Agent package nodes may include optional non-blank `:provider` and `:model` strings; when imported into a workflow, those settings apply only to that node and omission preserves executor defaults.
 
+## Resumable agent policy
+
+An agent package may declare one run- and state-owned resumable session:
+
+```edn
+:session {:mode :resumable
+          :continuation-prompt-template "prompts/design-feedback.md.tmpl"
+          :continuation-prompt-output "prompts/generated/design-feedback-{{run.attempt}}.md"}
+```
+
+The continuation template is part of the package's prompt asset closure. Node
+export copies both the initial and continuation templates, and node import
+preserves the explicit policy. The continuation output and every required node
+output must contain `{{run.attempt}}`. The selected executor must advertise
+resumable-session support; no display name or ambient recent-session lookup can
+substitute for that capability.
+
+The runtime persists one binding per `(run id, state id)` below the owning run's
+`sessions/` directory. Each graph visit is still a bounded node activation;
+only the exact external session reference persists between visits. Initial and
+continuation prompts are written before delivery and carry stable delivery
+markers. Pi uses explicit `--session-id`/`--session` selection, while mock mode
+provides deterministic local execution. Missing, changed, active, orphaned, or
+unsupported bindings fail closed rather than starting a replacement session.
+
 ## Asset closure
 
 All relative files needed by the node should be listed in `:assets` and should exist next to the node package file. Asset paths must be safe relative paths: no absolute paths and no `..` segments.
 
 Common asset classes are:
 
-- `:prompts` — prompt templates used by agent nodes,
+- `:prompts` — initial and continuation prompt templates used by agent nodes,
 - `:scripts` — process command files or helper scripts,
 - `:schemas` — JSON schemas referenced by outputs or artifacts.
 

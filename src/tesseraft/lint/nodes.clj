@@ -29,6 +29,80 @@
           (str "Agent node :thinking must be one of "
                (str/join ", " (sort pi-thinking-levels))))]))
 
+(def ^:private session-fields
+  #{:mode :continuation-prompt-template :continuation-prompt-output})
+
+(defn resumable-session? [node]
+  (= :resumable (get-in node [:session :mode])))
+
+(defn attempt-stamped? [path]
+  (contains? (or (spec/template-vars path) #{}) "run.attempt"))
+
+(defn session-policy-checks [path node resolve-path]
+  (when (contains? node :session)
+    (let [session (:session node)]
+      (if-not (map? session)
+        [(err :invalid-session-policy (conj path :session)
+              "Agent node :session must be a map")]
+        (let [mode (:mode session)
+              template (:continuation-prompt-template session)
+              output (:continuation-prompt-output session)
+              resumable? (= :resumable mode)
+              executor (:executor node)]
+          (concat
+            (for [field (keys session)
+                  :when (not (contains? session-fields field))]
+              (err :unknown-session-field (conj path :session field)
+                   (str "Unknown resumable session field: " field)))
+            (when-not resumable?
+              [(err :invalid-session-mode (conj path :session :mode)
+                    "Agent node :session :mode must be :resumable")])
+            (when (or (not (string? template)) (str/blank? template))
+              [(err :session-missing-continuation-prompt-template
+                    (conj path :session :continuation-prompt-template)
+                    "Resumable session must declare a non-blank :continuation-prompt-template")])
+            (when (and (string? template) (not (str/blank? template)))
+              (if-not (spec/safe-relative-path? template)
+                [(err :invalid-session-continuation-prompt-path
+                      (conj path :session :continuation-prompt-template)
+                      (str "Continuation prompt template must be a safe relative path: " template))]
+                (when-not (fs/exists? (resolve-path template))
+                  [(err :session-continuation-prompt-template-missing
+                        (conj path :session :continuation-prompt-template)
+                        (str "Continuation prompt template does not exist: " template))])))
+            (when (some? output)
+              (cond
+                (or (not (string? output)) (str/blank? output))
+                [(err :invalid-session-continuation-prompt-output
+                      (conj path :session :continuation-prompt-output)
+                      "Continuation prompt output must be a non-blank string when present")]
+
+                (not (spec/safe-relative-path? output))
+                [(err :invalid-session-continuation-prompt-output
+                      (conj path :session :continuation-prompt-output)
+                      (str "Continuation prompt output must be a safe relative path: " output))]
+
+                (not (attempt-stamped? output))
+                [(err :session-continuation-prompt-output-not-attempt-stamped
+                      (conj path :session :continuation-prompt-output)
+                      "Continuation prompt output must include {{run.attempt}}")]
+
+                :else []))
+            (when (and resumable? executor
+                       (not (executor-catalog/supports-session-resume? executor)))
+              [(err :resumable-session-unsupported-executor (conj path :executor)
+                    (str "Executor does not support resumable sessions: " executor))])
+            (when resumable?
+              (for [[output-key contract] (spec/output-contracts node)
+                    :let [output-path (spec/output-path contract)]
+                    :when (and (spec/output-required? contract)
+                               output-path
+                               (not (attempt-stamped? output-path)))]
+                (err :resumable-session-output-not-attempt-stamped
+                     (cond-> (conj path :outputs output-key)
+                       (map? contract) (conj :path))
+                     (str "Required resumable-session output must include {{run.attempt}}: " output-path))))))))))
+
 (defn- qualified-opencode-model? [value]
   (and (string? value)
        (boolean (re-matches #"[^/\s]+/[^\s]+" value))))
@@ -166,6 +240,9 @@
            (let [t (:type n)]
              (concat
                (path-contract-checks wf id n)
+               (when (and (contains? n :session) (not= :agent t))
+                 [(err :session-policy-requires-agent [:states id :session]
+                       ":session is valid only on :agent nodes")])
                (case t
                  :agent
                  (concat
@@ -184,6 +261,7 @@
                    (optional-nonblank-string-check :invalid-agent-model [:states id :model] ":model" (:model n))
                    (opencode-model-check [:states id] n)
                    (agent-thinking-check [:states id :thinking] (:thinking n))
+                   (session-policy-checks [:states id] n #(spec/resolve-workflow-path wf %))
                    (when-not (:prompt-template n)
                      [(err :agent-missing-prompt-template [:states id :prompt-template]
                            "Agent node must declare :prompt-template")])
