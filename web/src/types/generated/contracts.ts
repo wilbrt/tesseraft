@@ -150,6 +150,11 @@ export type WorkflowContract = {
   "prompt-template": string;
   "prompt-output"?: string;
   "session-name"?: string;
+  "session"?: {
+  "mode": "resumable";
+  "continuation-prompt-template": string;
+  "continuation-prompt-output"?: string;
+};
   "tools"?: Array<string>;
 } | {
   "type": "deterministic";

@@ -117,7 +117,12 @@
     (when (:path res) (:path res))))
 
 (defn fragment-transition-outcome [tr]
-  (some-> (get-in tr [:when :fragment/outcome]) str))
+  (let [outcome (get-in tr [:when :fragment/outcome])]
+    (cond
+      (keyword? outcome) (name outcome)
+      (string? outcome) outcome
+      (nil? outcome) nil
+      :else (str outcome))))
 
 (defn fragment-node-output-required? [contract]
   (cond
@@ -531,7 +536,8 @@
                  (fn [[_ n]]
                    (when (map? n)
                      (concat
-                       [(:prompt-template n)]
+                       [(:prompt-template n)
+                        (get-in n [:session :continuation-prompt-template])]
                        (when-let [cmd (first (:command n))]
                          (when (path-like-command? cmd) [cmd]))
                        (keep (fn [[_ contract]] (spec/output-schema contract))

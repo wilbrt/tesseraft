@@ -22,6 +22,8 @@
 (def resource-modes parse/resource-modes)
 (def keywordize-node-id parse/keywordize-node-id)
 (def read-data-file parse/read-data-file)
+(def normalize-workflow parse/normalize-workflow)
+(def normalize-node-package parse/normalize-node-package)
 (def read-workflow parse/read-workflow)
 (def read-node-package parse/read-node-package)
 (def normalize-fragment-package normalize/normalize-fragment-package)

@@ -25,8 +25,10 @@
 
 (defn export-assets [node]
   (cond-> {}
-    (:prompt-template node)
-    (assoc :prompts [(:prompt-template node)])
+    (or (:prompt-template node)
+        (get-in node [:session :continuation-prompt-template]))
+    (assoc :prompts (vec (remove nil? [(:prompt-template node)
+                                       (get-in node [:session :continuation-prompt-template])])))
 
     (and (= :process (:type node)) (path-like-command? (first (:command node))))
     (assoc :scripts [(first (:command node))])

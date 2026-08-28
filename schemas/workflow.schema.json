@@ -83,6 +83,16 @@
         "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } }
       }
     },
+    "resumableSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "continuation-prompt-template"],
+      "properties": {
+        "mode": { "const": "resumable" },
+        "continuation-prompt-template": { "type": "string", "minLength": 1 },
+        "continuation-prompt-output": { "type": "string", "minLength": 1 }
+      }
+    },
     "agent": {
       "allOf": [
         { "$ref": "#/$defs/commonNode" },
@@ -93,7 +103,8 @@
             "next": { "type": "string" }, "transitions": { "type": "array", "items": { "$ref": "#/$defs/transition" } },
             "executor": { "type": "string" }, "provider": { "type": "string" }, "model": { "type": "string" },
             "thinking": { "type": "string" }, "prompt-template": { "type": "string" }, "prompt-output": { "type": "string" },
-            "session-name": { "type": "string" }, "tools": { "type": "array", "items": { "type": "string" } }
+            "session-name": { "type": "string" }, "session": { "$ref": "#/$defs/resumableSession" },
+            "tools": { "type": "array", "items": { "type": "string" } }
           } }
       ]
     },

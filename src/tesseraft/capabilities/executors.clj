@@ -42,6 +42,8 @@
 (defn ids [] (set (keys descriptors)))
 (defn descriptor [id] (get descriptors id))
 (defn dispatchable? [id] (true? (:dispatchable? (descriptor id))))
+(defn supports-session-resume? [id]
+  (true? (:supports-session-resume? (descriptor id))))
 
 (defn invoke! [id & args]
   (if-let [symbol (:run (descriptor id))]

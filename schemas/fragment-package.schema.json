@@ -56,6 +56,16 @@
       },
       "additionalProperties": true
     },
+    "resumableSession": {
+      "type": "object",
+      "required": ["mode", "continuation-prompt-template"],
+      "properties": {
+        "mode": { "const": "resumable" },
+        "continuation-prompt-template": { "type": "string", "minLength": 1 },
+        "continuation-prompt-output": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "fragmentState": {
       "type": "object",
       "required": ["type"],
@@ -83,6 +93,7 @@
         },
         "handler": { "type": "string", "minLength": 1 },
         "executor": { "type": "string", "minLength": 1 },
+        "session": { "$ref": "#/$defs/resumableSession" },
         "tools": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },

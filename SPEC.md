@@ -55,7 +55,8 @@ Required top-level fields are `:api-version`, `:kind`, `:metadata`, `:initial`, 
 
 Supported node types are:
 
-- `:agent` — bounded agent session, for example Pi SDK/CLI.
+- `:agent` — bounded agent activation, optionally attached to a declared
+  resumable session, for example Pi CLI.
 - `:deterministic` — trusted built-in handler.
 - `:process` — external executable using JSON stdin/stdout.
 - `:timer` — resumable timer/wait state.
@@ -115,6 +116,35 @@ A `:manual-testing-spec` artifact records the design-produced browser testing co
 ```
 
 Agent nodes must declare a status artifact. Agent nodes may optionally declare `:provider` and/or `:model` as non-blank strings; the Pi CLI executor passes them as `--provider` and `--model` for that node only, and omission preserves executor defaults. Runtime agent sessions must not modify workflow source files unless the node belongs to a workflow-authoring surface.
+
+An agent node may opt into resumable-session semantics with an explicit policy:
+
+```edn
+:session {:mode :resumable
+          :continuation-prompt-template "prompts/implementation-feedback.md.tmpl"
+          :continuation-prompt-output "prompts/generated/implementation-feedback-{{run.attempt}}.md"}
+```
+
+The first activation uses `:prompt-template`; later activations of the same
+state use only `:continuation-prompt-template`. The logical identity is the
+owning `(run id, state id)`. `:session-name` remains a display label and must
+not select or imply resumption. Version one does not permit different states
+to share a session.
+
+`:mode` must be `:resumable`, `:continuation-prompt-template` is required, and
+`:continuation-prompt-output` is optional. When the output is explicit it must
+be a safe run-relative path containing `{{run.attempt}}`; otherwise the default
+is `prompts/generated/<state>-continuation-<attempt>.md`. Every required output
+of a resumable agent must also contain `{{run.attempt}}`, preventing evidence
+from an earlier activation from satisfying recovery for a later activation.
+The selected executor must advertise resumable-session support in the executor
+catalog.
+
+The resumable declaration is currently contract- and lint-complete while its
+durable lifecycle is implemented incrementally. Until that lifecycle lands,
+the reference runner fails closed with
+`resumable_session_not_implemented` before invoking any executor. It must never
+execute a resumable declaration as a fresh ordinary agent.
 
 Known agent executors are `:pi-cli`, `:opencode-cli`, `:pi-sdk` (reserved), and `:claude-code`. The `:claude-code` executor shells out to the Claude Code CLI and authenticates via that CLI's own Claude Pro/Max subscription login; it does **not** use or require `ANTHROPIC_API_KEY`, and actively strips that variable from the subprocess environment so the subscription is used instead of API-key billing. For `:claude-code` nodes, `:model` maps to `--model` and `:provider` is ignored (warn-only) since account selection is the subscription, not an API provider.
 
@@ -274,7 +304,7 @@ A zero exit with valid JSON and `ok` not false is a protocol-level response whos
 
 ## 20. Linter requirements
 
-A compliant linter detects malformed files, unsupported versions, missing initial state, missing terminal state, unknown transitions, unreachable states, dead ends, unknown node types, unknown handlers, unknown executors, missing prompt templates, missing process scripts, missing status outputs for agent nodes, invalid artifact paths, duplicate artifact outputs, cycles without retry/exit policy, unresolved template variables, policy violations, and resource declaration shape errors.
+A compliant linter detects malformed files, unsupported versions, missing initial state, missing terminal state, unknown transitions, unreachable states, dead ends, unknown node types, unknown handlers, unknown executors, missing prompt templates, missing process scripts, missing status outputs for agent nodes, invalid artifact paths, duplicate artifact outputs, cycles without retry/exit policy, unresolved template variables, policy violations, and resource declaration shape errors. For resumable agents it also validates the closed session-policy shape, executor capability, continuation-template asset and variables, safe attempt-stamped continuation output, and attempt-stamped required outputs.
 
 For `:resources`, the linter validates that declarations are maps, known groups are vectors, entries are maps with `:kind` and `:name`, fields are from the documented set, paths are safe relative paths, and duplicate `[group kind name path]` declarations are reported. Unknown groups and unknown modes are warnings. It also performs conservative control-flow proof checks: a produced resource required or one-shot-consumed by a node must be available on every incoming path, branch joins intersect availability, consumed one-shot identities are unioned across incoming paths, and cyclic flows are bounded with a conservative warning if they cannot converge. Missing availability is reported as `resource-missing-producer`; repeated one-shot consumption is reported as `resource-double-consume`. This is a practical proof check, not a requirement for a full theorem prover.
 

@@ -118,6 +118,16 @@
     (mock-mode? ctx)        (mock/run-agent-node! wf ctx state-id node)
     :else (executor-catalog/invoke! (:executor node) wf ctx state-id node)))
 
+(defn assert-session-runtime-available! [state-id node]
+  ;; RS1 publishes and lints the portable declaration before the durable
+  ;; lifecycle lands. Fail closed here so a resumable declaration can never be
+  ;; mistaken for an ordinary fresh agent invocation during that interval.
+  (when (contains? node :session)
+    (throw (ex-info "Resumable session runtime is not implemented"
+                    {:error-type "resumable_session_not_implemented"
+                     :state state-id
+                     :session (:session node)}))))
+
 (defn json-compatible [x]
   (cond
     (nil? x) nil
@@ -245,7 +255,8 @@
   (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
   (try
     (let [result (case (:type node)
-                   :agent (let [exec-result (run-agent! wf ctx state-id node)]
+                   :agent (let [_ (assert-session-runtime-available! state-id node)
+                                exec-result (run-agent! wf ctx state-id node)]
                             (when-not (:ok exec-result)
                               (throw (ex-info "Agent executor failed" exec-result)))
                             (merge exec-result (status-result ctx node)))
