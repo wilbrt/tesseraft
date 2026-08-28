@@ -21,18 +21,23 @@
   {:pi-cli
    {:id :pi-cli :label "Pi CLI" :run 'tesseraft.executors.pi-cli/run-agent-node!
     :run-session 'tesseraft.executors.pi-cli/run-agent-session-node!
+    :session-reference-allocation :preallocated
     :availability pi-cli-availability :config-schema {}
     :credential-requirements [] :supports-session-resume? true
     :experimental? false :dispatchable? true}
    :claude-code
    {:id :claude-code :label "Claude Code CLI" :run 'tesseraft.executors.claude-code/run-agent-node!
+    :run-session 'tesseraft.executors.claude-code/run-agent-session-node!
+    :session-reference-allocation :preallocated
     :availability claude-code-availability :config-schema {}
-    :credential-requirements [] :supports-session-resume? false
+    :credential-requirements [] :supports-session-resume? true
     :experimental? false :dispatchable? true}
    :opencode-cli
    {:id :opencode-cli :label "OpenCode CLI" :run 'tesseraft.executors.opencode-cli/run-agent-node!
+    :run-session 'tesseraft.executors.opencode-cli/run-agent-session-node!
+    :session-reference-allocation :executor-emitted
     :availability opencode-cli-availability :config-schema {}
-    :credential-requirements [] :supports-session-resume? false
+    :credential-requirements [] :supports-session-resume? true
     :experimental? false :dispatchable? true}
    :pi-sdk
    {:id :pi-sdk :label "Pi SDK" :run nil
@@ -43,11 +48,15 @@
 (defn ids [] (set (keys descriptors)))
 (defn descriptor [id] (get descriptors id))
 (defn dispatchable? [id] (true? (:dispatchable? (descriptor id))))
+(defn session-reference-allocation [id]
+  (:session-reference-allocation (descriptor id)))
 (defn supports-session-resume? [id]
   (let [executor (descriptor id)]
     (and (true? (:dispatchable? executor))
          (true? (:supports-session-resume? executor))
-         (some? (:run-session executor)))))
+         (some? (:run-session executor))
+         (contains? #{:preallocated :executor-emitted}
+                    (:session-reference-allocation executor)))))
 
 (defn invoke! [id & args]
   (if-let [symbol (:run (descriptor id))]

@@ -148,13 +148,16 @@ and resume the exact stored reference. Session allocation, activation,
 suspension, orphaning, and closure are appended as `session.*` events without
 placing the raw session reference in the event stream.
 
-Mock mode and `:pi-cli` implement this lifecycle. Pi starts with an exact
-preallocated `--session-id` and resumes with `--session`; ambient `--continue`
-and interactive `--resume` lookup are forbidden. A changed configuration,
-missing reference, unsupported executor, or non-suspended binding fails
-closed. After interruption, complete attempt-stamped outputs may prove the
-activation completed and allow recovery; otherwise the binding is marked
-orphaned and the prompt is never automatically redelivered.
+Mock mode and every dispatchable CLI executor implement this lifecycle. Pi
+starts with an exact preallocated `--session-id` and resumes with `--session`.
+Claude Code starts with a preallocated `--session-id` and resumes with
+`--resume`. OpenCode binds the session id emitted by its first structured event
+stream and resumes it with `--session`. Ambient `--continue` lookup is
+forbidden. A changed configuration, missing reference, unsupported executor,
+or non-suspended binding fails closed. After interruption, complete
+attempt-stamped outputs may prove the activation completed and allow recovery;
+otherwise the binding is marked orphaned and the prompt is never automatically
+redelivered.
 
 Known agent executors are `:pi-cli`, `:opencode-cli`, `:pi-sdk` (reserved), and `:claude-code`. The `:claude-code` executor shells out to the Claude Code CLI and authenticates via that CLI's own Claude Pro/Max subscription login; it does **not** use or require `ANTHROPIC_API_KEY`, and actively strips that variable from the subprocess environment so the subscription is used instead of API-key billing. For `:claude-code` nodes, `:model` maps to `--model` and `:provider` is ignored (warn-only) since account selection is the subscription, not an API provider.
 
@@ -292,7 +295,7 @@ The event log is part of the proof trace. After `node.started`, a runner must ap
 
 ## 18. Executor protocol
 
-Agent executors receive a normalized node execution request and may stream events. They return a result with `ok`, `status`, `artifacts`, and `events`. A resumable executor additionally receives an explicit operation (`start` or `resume`), persisted prompt file, delivery id, activation sequence, and exact session reference. It must return the same exact reference; ambient recent-session lookup is not a conforming implementation.
+Agent executors receive a normalized node execution request and may stream events. They return a result with `ok`, `status`, `artifacts`, and `events`. A resumable executor additionally receives an explicit operation (`start` or `resume`), persisted prompt file, delivery id, and activation sequence. An executor that supports preallocation also receives the exact session reference on `start`; an executor-owned allocator must return its reliable emitted reference before the first activation can suspend. Every `resume` receives the exact durable reference and must return that same reference. Ambient recent-session lookup is not a conforming implementation.
 
 ## 19. Process-node protocol
 

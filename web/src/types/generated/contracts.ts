@@ -424,7 +424,7 @@ export type SessionBindingContract = {
   "state": string;
   "executor": string;
   "status": "allocated" | "active" | "suspended" | "orphaned" | "closed";
-  "session_ref": {
+  "session_ref"?: {
   "kind": "id";
   "value": string;
 };

@@ -178,12 +178,17 @@ Useful run files and directories include:
   closed by `node.finished` for declared workflow outcomes or `node.failed` for
   external/runtime failures.
 - `issues.json` — merged execution/review issues used by retry loops.
-- `logs/` — process and Pi stdout/stderr logs.
-- `prompts/generated/` — rendered prompts sent to Pi.
+- `logs/` — process and agent-executor stdout/stderr logs.
+- `prompts/generated/` — rendered prompts sent to agent executors.
 - `pi-sessions/` — Pi session data.
+- `opencode-sessions/` — per-activation OpenCode configuration and raw event
+  evidence. An emitted id may occur in that raw executor stream, but the stream
+  is never a session-binding authority.
+- `claude-sessions/` — Claude Code session markers; Claude Code owns its session
+  storage outside the run directory.
 - `sessions/<encoded-state-id>/binding.json` — Tesseraft's authoritative exact
-  executor reference and resumable activation lifecycle. Raw references stay
-  here and are hashed in events/logs.
+  executor reference and resumable activation lifecycle. Top-level session
+  events and resumable executor logs contain only reference hashes.
 - `prompt/`, `design/`, `execution/`, `manual-testing/` or `playwright/`, `review/`, and `pr/` —
   workflow artifacts declared by the nodes.
 
