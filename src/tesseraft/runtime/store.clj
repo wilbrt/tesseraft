@@ -10,6 +10,7 @@
     [tesseraft.security.redaction :as redaction]))
 
 (def ^:dynamic *allow-runtime-claim-replacement* false)
+(def ^:dynamic *allow-execution-intent-update* false)
 
 (defn now [] (str (java.time.Instant/now)))
 
@@ -99,6 +100,11 @@
         current (when (fs/exists? path) (read-edn path))
         durable-claim (:runtime-claim current)
         incoming-claim (:runtime-claim ctx)
+        durable-intents (:execution-intents current)
+        incoming-intents (:execution-intents ctx)
+        preserve-durable-intents? (and durable-intents
+                                        (not *allow-execution-intent-update*)
+                                        (not= durable-intents incoming-intents))
         durable-generation (or (:execution-cancel-generation current) 0)
         incoming-generation (or (:execution-cancel-generation ctx) durable-generation)
         _ (when (and (contains? ctx :execution-cancel-generation)
@@ -122,6 +128,13 @@
         preserved (cond-> (assoc ctx :execution-cancel-generation incoming-generation)
                     (and (not (contains? ctx :runtime-claim)) durable-claim)
                     (assoc :runtime-claim durable-claim)
+                    (or preserve-durable-intents?
+                        (and (not (contains? ctx :execution-intents)) durable-intents))
+                    (assoc :execution-intents durable-intents)
+                    (or preserve-durable-intents?
+                        (and (not (contains? ctx :active-execution-intent-id))
+                             (:active-execution-intent-id current)))
+                    (assoc :active-execution-intent-id (:active-execution-intent-id current))
                     (and (not (contains? ctx :execution-cancel-in-progress))
                          (:execution-cancel-in-progress current))
                     (assoc :execution-cancel-in-progress (:execution-cancel-in-progress current)))]

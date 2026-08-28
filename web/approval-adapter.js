@@ -129,7 +129,11 @@ const drain = async (reason) => {
     // Listener closure and exact process absence are separate lifecycle gates.
     // Keep a short bounded grace so the detached supervisor, rather than this
     // adapter, remains responsible if the adapter is killed at this boundary.
-    setTimeout(() => process.exit(0), adapterExitDelayMs).unref();
+    if (process.env.TESSERAFT_TEST_ADAPTER_HOLD_AFTER_ABORT === 'true' && reason.startsWith('transport-aborted')) {
+      setInterval(() => {}, 60_000);
+    } else {
+      setTimeout(() => process.exit(0), adapterExitDelayMs).unref();
+    }
   });
   setTimeout(() => { for (const socket of sockets) socket.destroy(); }, 1500).unref();
 };

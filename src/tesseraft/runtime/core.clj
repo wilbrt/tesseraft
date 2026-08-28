@@ -277,6 +277,8 @@
     (store/event! ctx (cond-> {:event "node.started" :state (name state-id)
                                :attempt (get-in ctx [:run :attempt])}
                         claim (assoc :execution_id (:execution-id claim)
+                                     :intent_id (:intent-id claim)
+                                     :intent_generation (:intent-generation claim)
                                      :cancel_generation (:cancel-generation claim)))))
   (try
     (let [result (case (:type node)

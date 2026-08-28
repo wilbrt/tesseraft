@@ -6,6 +6,7 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [tesseraft.runtime.process :as runtime-process]
             [tesseraft.runtime.store :as store]))
 
 (def default-max-diff-bytes (* 2 1024 1024))
@@ -198,6 +199,8 @@
     (when-let [delay (or (System/getProperty "tesseraft.test.adapter-exit-delay-ms")
                          (System/getenv "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS"))]
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS" delay))
+    (when (= "true" (System/getProperty "tesseraft.test.adapter-hold-after-abort"))
+      (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_HOLD_AFTER_ABORT" "true"))
     (let [child (.start pb)
           started (some-> child .toHandle .info .startInstant (.orElse nil) str)
           record {:version 1 :run_id (get-in ctx [:run :id]) :state (name state-id) :attempt attempt
@@ -351,7 +354,12 @@
                                                 :completed_at (store/now))
                                   (= handoff :resume-requested) (assoc :resume_handoff_status "requested")
                                   (= handoff :relaunch-requested) (assoc :relaunch_handoff_status "requested"))
-                      finalization-path (fs/path run_dir "approval-finalizations" (str approval_id ".json"))]
+                      finalization-path (fs/path run_dir "approval-finalizations" (str approval_id ".json"))
+                      handoff-ctx (if (= handoff :resume-requested)
+                                    (runtime-process/request-handoff-intent ctx approval_id)
+                                    ctx)
+                      intent-id (when (= handoff :resume-requested)
+                                  (:active-execution-intent-id handoff-ctx))]
                   ;; A replacement adapter owns a different tuple/capability;
                   ;; never delete or overwrite it while completing this drain.
                   (when exact-owner?
@@ -368,16 +376,21 @@
                                 :drain_generation (:generation claim)
                                 :lifecycle_completed_at (store/now))
                         (= handoff :resume-requested) (assoc :resume_handoff_status "requested"))))
-                  (store/event-once! ctx {:event "approval.adapter.lifecycle-complete"
-                                          :event_id (str approval_id "/drain/" submission_id)
-                                          :approval_id approval_id :submission_id submission_id
-                                          :drain_generation (:generation claim)
-                                          :transport_status transport_status})
+                  (when intent-id
+                    (binding [store/*allow-execution-intent-update* true]
+                      (store/save-context! handoff-ctx)))
+                  (store/event-once! handoff-ctx {:event "approval.adapter.lifecycle-complete"
+                                                  :event_id (str approval_id "/drain/" submission_id)
+                                                  :approval_id approval_id :submission_id submission_id
+                                                  :drain_generation (:generation claim)
+                                                  :transport_status transport_status
+                                                  :execution_intent_id intent-id})
                   (if (= handoff :relaunch-requested)
                     (let [request (store/read-json (fs/path run_dir "approvals" (str approval_id ".json")))]
                       (ensure-adapter! ctx state-id attempt request)
                       {:handoff :relaunched :run-dir run_dir :drain-generation (:generation claim)})
-                    {:handoff handoff :run-dir run_dir :drain-generation (:generation claim)}))))))))))
+                    {:handoff handoff :run-dir run_dir :drain-generation (:generation claim)
+                     :execution-intent-id intent-id}))))))))))
 
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])

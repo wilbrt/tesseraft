@@ -107,6 +107,20 @@ Resume with a bounded number of steps:
   --format json
 ```
 
+Every execution command is a launcher, not the workflow-state writer. Under
+the run lock it writes a versioned `execution-intents` entry in `state.edn`,
+leases the exact generation with its PID/start fingerprint and spawn nonce,
+then starts a minimal bootstrap child. The child must atomically publish its
+own exact claim before loading the workflow. Immediately before the first node
+or external effect it crosses the intent from `claimed` to `executing` and
+emits `execution.intent.consumed`; clean release records `finished`. Competing
+live launchers/owners are rejected, expired or dead pre-step generations are
+reissued, and cancellation advances the generation fence while abandoning or
+cancel-requesting active intents. A death after `node.started` follows the
+existing fail-closed orphan policy rather than replaying an ambiguous effect.
+The same gateway serves CLI, Web, structured apply, retry, approval CLI, and
+autonomous focused-approval handoff execution.
+
 Review every run currently waiting at an approval gate with the interactive
 approval inbox:
 
@@ -172,8 +186,9 @@ Inspect current state with:
 Useful run files and directories include:
 
 - `state.edn` — current run context, state, status, round, attempt, workflow
-  file, and inputs. External/runtime failures mark the run `failed` without
-  advancing to a declared transition.
+  file, inputs, versioned execution intents, and the exact active runtime
+  claim. External/runtime failures mark the run `failed` without advancing to
+  a declared transition.
 - `events.jsonl` — run, node, transition, and effect events. A started node is
   closed by `node.finished` for declared workflow outcomes or `node.failed` for
   external/runtime failures.

@@ -133,15 +133,31 @@
                                  :generation (:execution-cancel-in-progress ctx)}))
                 :else
                 (let [generation (inc (or (:execution-cancel-generation ctx) 0))
+                      cancelled-at (store/now)
                       claim (some-> (:runtime-claim ctx)
                                     (assoc :phase :cancel-requested
                                            :cancel-generation generation
-                                           :cancel-requested-at (store/now)))
+                                           :cancel-requested-at cancelled-at))
+                      intents (into {}
+                                    (map (fn [[id intent]]
+                                           [id (case (:phase intent)
+                                                 (:requested :launching)
+                                                 (assoc intent :phase :abandoned
+                                                        :abandon-reason :cancelled
+                                                        :abandoned-at cancelled-at)
+                                                 (:claimed :executing)
+                                                 (assoc intent :phase :cancel-requested
+                                                        :cancel-generation generation
+                                                        :cancel-requested-at cancelled-at)
+                                                 intent)]))
+                                    (:execution-intents ctx))
                       fenced (cond-> (assoc ctx
                                       :execution-cancel-generation generation
-                                      :execution-cancel-in-progress generation)
+                                      :execution-cancel-in-progress generation
+                                      :execution-intents intents)
                                claim (assoc :runtime-claim claim))]
-                  (store/save-context! fenced)
+                  (binding [store/*allow-execution-intent-update* true]
+                    (store/save-context! fenced))
                   {:fenced fenced :generation generation})))))]
     (if terminal
       terminal

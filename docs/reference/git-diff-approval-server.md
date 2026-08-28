@@ -72,8 +72,11 @@ completion, removes only the matching capability, writes a lifecycle receipt,
 and binds transport/lifecycle/submission/generation fields into the approval
 finalization record. If the approval is still pending it autonomously launches
 one replacement even when both generation 1 and the adapter were SIGKILLed. A
-committed nonterminal decision records `resume_handoff_status=requested`; it is
-not stepped until the shared generation-based launcher exists. The focused
+committed nonterminal decision records `resume_handoff_status=requested` and,
+in the same run-locked lifecycle completion, creates one deterministic
+`:approval-resume` execution intent. The detached worker leases that exact
+generation and a bootstrap child claims it before loading workflow state; no
+destination step can run before exact lifecycle completion. The focused
 Playwright fault scenario drives a real browser abort, kills generation 1 and
 the adapter, and verifies generation-2 completion plus endpoint replacement.
 
@@ -104,12 +107,13 @@ events are authority. The listener and browser are transient adapters.
   after finished/aborted cleanup. Pure inspection remains side-effect free;
   recovery is bounded to the two launched candidates, not a general always-on
   reconciler.
-- The runtime publishes an exclusive PID/start/execution claim plus cancellation
-  generation in `state.edn`, crosses a compare-exact `claimed → executing`
-  barrier before workflow steps and external effects, and rejects stale saves
-  after cancellation advances the fence. It does not yet use a pre-spawn intent
-  generation, launcher lease, or child bootstrap claim. Committed nonterminal
-  cleanup therefore writes a durable resume request but does not autonomously
-  consume it.
+- Every CLI, Web, structured apply, retry, approval-resume, and detached
+  handoff execution passes through the state-authoritative execution-intent
+  gateway. A parent durably leases `requested → launching` before spawn; the
+  child claims the exact intent/generation/PID/start tuple before loading the
+  workflow, crosses `claimed → executing` immediately before the first step,
+  and records finished/abandoned/cancel-requested receipts. Expired or dead
+  pre-step generations are reissued; post-`node.started` death uses the
+  existing fail-closed orphan policy and never replays an ambiguous effect.
 - HTTP delivery cannot be guaranteed if the adapter is killed before response
   completion; the durable decision remains the authority.

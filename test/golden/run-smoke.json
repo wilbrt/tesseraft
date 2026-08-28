@@ -6,8 +6,10 @@
   "events": [
     {"event": "project.resolved"},
     {"event": "run.started"},
+    {"event": "execution.intent.requested"},
     {"event": "runtime.claimed"},
     {"event": "runtime.executing"},
+    {"event": "execution.intent.consumed"},
     {"event": "node.started", "state": "start", "attempt": 1},
     {"event": "node.finished", "state": "start", "attempt": 1},
     {"event": "transition.selected", "from": "start", "to": "done"},

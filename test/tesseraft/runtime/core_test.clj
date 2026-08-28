@@ -9,6 +9,7 @@
     [tesseraft.runtime.core :as runtime]
     [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.operations :as operations]
+    [tesseraft.runtime.process]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]))
 
@@ -131,6 +132,7 @@
                  (is (zero? (:exit result)) (:err result)) result))]
     (try
       (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "30000")
+      (System/setProperty "tesseraft.test.adapter-hold-after-abort" "true")
       (fs/create-dirs repo)
       (run! "git" "init" "-q")
       (run! "git" "config" "user.name" "Review Test")
@@ -158,7 +160,8 @@
                  ":session {:mode :resumable :continuation-prompt-template \"continue.md\" :continuation-prompt-output \"prompts/generated/continue-{{run.attempt}}.md\"} "
                  ":outputs {:status {:path \"execution/status-{{run.attempt}}.json\" :required true}} :next :done} "
                  ":done {:type :terminal :status :success}}}"))
-      (let [started (runtime/start! (str workflow-file) {:workspace-root root :run-id "git-review" :inputs {:repo-root (str repo)}})
+      (let [started (runtime/start! (str workflow-file) {:workspace-root root :run-id "git-review" :executor :mock
+                                                     :inputs {:repo-root (str repo)}})
             wf (spec/read-workflow workflow-file)
             blocked (runtime/run-until-done! wf started 10)
             run-dir (get-in blocked [:run :dir])
@@ -316,7 +319,14 @@
                     absent? (or (not (.isPresent handle)) (not (.isAlive (.get handle))))]
                 (when (and (not (and (= "stopped" (:status candidate)) absent?)) (pos? remaining))
                   (Thread/sleep 50) (recur (dec remaining)))))
+            (loop [remaining 200]
+              (let [current (store/load-context run-dir)]
+                (when (and (not= :finished (get-in current [:execution-intents "review-1/resume" :phase]))
+                           (pos? remaining))
+                  (Thread/sleep 25)
+                  (recur (dec remaining)))))
             (let [stopped-owner (store/read-json owner-file)
+                  current (store/load-context run-dir)
                   handle (java.lang.ProcessHandle/of (long (:pid stopped-owner)))
                   drains (mapv store/read-json
                                (fs/glob (fs/path (fs/parent owner-file) "drains") "*.json"))
@@ -331,9 +341,15 @@
               (is (= "finished" (:transport_status finalization)))
               (is (= (:submission_id finished) (:drain_submission_id finalization)))
               (is (= (:drain_generation finished) (:drain_generation finalization)))
-              (is (= "requested" (:resume_handoff_status finalization))))))))
+              (is (= "requested" (:resume_handoff_status finalization)))
+              (is (= :finished (get-in current [:execution-intents "review-1/resume" :phase])))
+              (is (= "done" (get-in current [:run :status])))
+              (is (= 1 (count (filter #(and (= "execution.intent.consumed" (:event %))
+                                            (= "review-1/resume" (:intent_id %)))
+                                      (read-events run-dir))))))))))
       (finally
         (System/clearProperty "tesseraft.test.adapter-exit-delay-ms")
+        (System/clearProperty "tesseraft.test.adapter-hold-after-abort")
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
         (fs/delete-tree root)))))
@@ -446,6 +462,116 @@
           (finally
             (System/clearProperty "tesseraft.test.snapshot-barrier-dir")
             (fs/delete-tree root)))))))
+
+(deftest execution-intent-leases-claims-executes-and-finishes-exactly
+  (let [dir (temp-dir "tesseraft-execution-intent")
+        ctx {:workflow {:name "intent-fixture"}
+             :execution-cancel-generation 0
+             :run {:id "intent-test" :dir dir :status "running" :state :slow :attempt 1
+                   :issues-file (str (fs/path dir "issues.json")) :updated-at (store/now)}}]
+    (try
+      (store/save-context! ctx)
+      (let [envelope (tesseraft.runtime.process/lease-intent! dir "run.step" {:max-steps 1})
+            marker-path (runtime/runtime-process-path dir)
+            _ (store/write-json! marker-path {:version 2 :pid (.pid (java.lang.ProcessHandle/current))})
+            marker-conflict (try (tesseraft.runtime.process/bootstrap-intent! envelope) nil
+                                 (catch clojure.lang.ExceptionInfo error error))
+            _ (fs/delete marker-path)
+            pid (tesseraft.runtime.process/bootstrap-intent! envelope)
+            claimed (store/load-context dir)
+            intent-id (:intent-id envelope)]
+        (is (= :runtime_marker_conflict (:code (ex-data marker-conflict))))
+        (is (= :claimed (get-in claimed [:execution-intents intent-id :phase])))
+        (is (= intent-id (get-in claimed [:runtime-claim :intent-id])))
+        (is (= (:generation envelope) (get-in claimed [:runtime-claim :intent-generation])))
+        (is (= true (runtime/assert-runtime-active! claimed)))
+        (let [executing (store/load-context dir)]
+          (is (= :executing (get-in executing [:execution-intents intent-id :phase])))
+          (is (= true (get-in executing [:execution-intents intent-id :consumed]))))
+        (runtime/unregister-runtime-process! dir pid)
+        (let [finished (store/load-context dir)]
+          (is (nil? (:runtime-claim finished)))
+          (is (= :finished (get-in finished [:execution-intents intent-id :phase])))))
+      (finally (fs/delete-tree dir)))))
+
+(deftest execution-intent-requires-focused-approval-lifecycle-completion
+  (let [dir (temp-dir "tesseraft-execution-lifecycle-gate")
+        approval-id "review-1"
+        ctx {:workflow {:name "intent-lifecycle"}
+             :execution-cancel-generation 0
+             :run {:id "intent-lifecycle" :dir dir :status "running" :state :implement :attempt 2
+                   :issues-file (str (fs/path dir "issues.json")) :updated-at (store/now)}}
+        finalization-path (fs/path dir "approval-finalizations" (str approval-id ".json"))]
+    (try
+      (store/save-context! ctx)
+      (store/write-json! (fs/path dir "approvals" (str approval-id ".json"))
+                         {:approval_id approval-id :review_server {:kind "git-diff"}})
+      (store/write-json! finalization-path
+                         {:approval_id approval-id :decision_status "committed"
+                          :lifecycle_status "listener-closed"})
+      (let [pending (try (tesseraft.runtime.process/lease-intent! dir "run.resume" {:max-steps 1}) nil
+                         (catch clojure.lang.ExceptionInfo error error))]
+        (is (= :approval_cleanup_pending (:code (ex-data pending))))
+        (is (nil? (:active-execution-intent-id (store/load-context dir)))))
+      (store/write-json! finalization-path
+                         {:approval_id approval-id :decision_status "committed"
+                          :lifecycle_status "complete"})
+      (let [envelope (tesseraft.runtime.process/lease-intent! dir "run.resume" {:max-steps 1})
+            pid (tesseraft.runtime.process/bootstrap-intent! envelope)]
+        (runtime/unregister-runtime-process! dir pid)
+        (is (= :finished (get-in (store/load-context dir)
+                                 [:execution-intents (:intent-id envelope) :phase]))))
+      (finally (fs/delete-tree dir)))))
+
+(deftest execution-intent-reissues-dead-pre-step-generation-and-rejects-late-child
+  (let [dir (temp-dir "tesseraft-execution-reissue")
+        ctx {:workflow {:name "intent-reissue"}
+             :execution-cancel-generation 0
+             :run {:id "intent-reissue" :dir dir :status "running" :state :slow :attempt 1
+                   :issues-file (str (fs/path dir "issues.json")) :updated-at (store/now)}}]
+    (try
+      (store/save-context! ctx)
+      (let [first-envelope (tesseraft.runtime.process/lease-intent! dir "run.resume" {:max-steps 2})
+            intent-id (:intent-id first-envelope)
+            conflict (try (tesseraft.runtime.process/lease-intent! dir "run.resume" {:max-steps 2}) nil
+                          (catch clojure.lang.ExceptionInfo error error))]
+        (is (= :execution_intent_conflict (:code (ex-data conflict))))
+        (store/with-run-lock dir
+          (fn []
+            (let [current (store/load-context dir)
+                  expired (assoc-in current [:execution-intents intent-id :launcher :lease-deadline]
+                                    (str (.minusSeconds (java.time.Instant/now) 1)))]
+              (binding [store/*allow-execution-intent-update* true]
+                (store/save-context! expired)))))
+        (let [second-envelope (tesseraft.runtime.process/lease-intent! dir "run.resume" {:max-steps 2})
+              stale (try (tesseraft.runtime.process/bootstrap-intent! first-envelope) nil
+                         (catch clojure.lang.ExceptionInfo error error))]
+          (is (= intent-id (:intent-id second-envelope)))
+          (is (= 2 (:generation second-envelope)))
+          (is (= :execution_intent_stale (:code (ex-data stale))))
+          (let [pid (tesseraft.runtime.process/bootstrap-intent! second-envelope)]
+            (runtime/unregister-runtime-process! dir pid))
+          (is (= :finished (get-in (store/load-context dir) [:execution-intents intent-id :phase])))))
+      (finally (fs/delete-tree dir)))))
+
+(deftest cancellation-abandons-launching-intent-and-rejects-delayed-child
+  (let [dir (temp-dir "tesseraft-intent-cancel")
+        ctx {:workflow {:name "intent-cancel"}
+             :execution-cancel-generation 0
+             :run {:id "intent-cancel" :dir dir :status "running" :state :slow :attempt 1
+                   :issues-file (str (fs/path dir "issues.json")) :updated-at (store/now)}}]
+    (try
+      (store/save-context! ctx)
+      (let [envelope (tesseraft.runtime.process/lease-intent! dir "run.step" {})
+            cancelled (runtime/cancel! dir)
+            stale (try (tesseraft.runtime.process/bootstrap-intent! envelope) nil
+                       (catch clojure.lang.ExceptionInfo error error))]
+        (is (= "cancelled" (get-in cancelled [:run :status])))
+        (is (= :abandoned (get-in cancelled [:execution-intents (:intent-id envelope) :phase])))
+        (is (= :cancelled (get-in cancelled [:execution-intents (:intent-id envelope) :abandon-reason])))
+        (is (= :execution_intent_stale (:code (ex-data stale))))
+        (is (nil? (:runtime-claim (store/load-context dir)))))
+      (finally (fs/delete-tree dir)))))
 
 (deftest runtime-state-claim-rejects-a-competing-live-owner
   (let [dir (temp-dir "tesseraft-runtime-claim")

@@ -57,7 +57,7 @@ test('browser abort plus worker and adapter SIGKILL converges through drain gene
   const gitDir = path.join(isolatedWorkspace.tempRoot, 'repo');
   const workflowDir = isolatedWorkspace.workflowPackagePath(name);
   const workflowPath = path.join(workflowDir, 'workflow.edn');
-  const commandEnv = { TESSERAFT_INSTALL_ROOT: repoRoot, TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS: '10000' };
+  const commandEnv = { TESSERAFT_INSTALL_ROOT: repoRoot, TESSERAFT_TEST_ADAPTER_HOLD_AFTER_ABORT: 'true' };
   let runDir: string | undefined;
   let lockHolder: ChildProcessWithoutNullStreams | undefined;
 

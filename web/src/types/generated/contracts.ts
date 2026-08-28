@@ -430,7 +430,42 @@ export type RunStateContract = {
   "claimed_at": string;
   "executing_at"?: string;
   "cancel_requested_at"?: string;
+  "intent_id"?: string;
+  "intent_generation"?: number;
 } | null;
+  "active_execution_intent_id"?: string | null;
+  "execution_intents"?: Record<string, {
+  "version": 1;
+  "kind": "manual" | "orphan-recovery" | "approval-resume";
+  "intent_id": string;
+  "generation": number;
+  "phase": "requested" | "launching" | "claimed" | "executing" | "finished" | "abandoned" | "cancel-requested";
+  "operation": "run.step" | "run.resume";
+  "options": {
+
+};
+  "expected": {
+  "state": string;
+  "attempt": number;
+  "status": string;
+};
+  "cancel_generation": number;
+  "consumed_event_id": string;
+  "requested_at": string;
+  "launching_at"?: string;
+  "claimed_at"?: string;
+  "executing_at"?: string;
+  "finished_at"?: string;
+  "abandoned_at"?: string;
+  "cancel_requested_at"?: string;
+  "consumed"?: boolean;
+  "launcher"?: {
+
+} | null;
+  "owner"?: {
+
+} | null;
+}>;
   "created_at"?: string;
   "updated_at"?: string;
 };
