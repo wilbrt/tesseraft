@@ -367,8 +367,12 @@ reused PID is never signalled.
 This closes the prior overwrite-only marker and cancellation/save races. It is
 not yet a durable pre-spawn intent/generation protocol: launchers do not lease a
 requested generation and a child does not bootstrap-claim before loading full
-context. Detached approval cleanup can autonomously relaunch a pending endpoint,
-but committed destination cleanup only writes a durable resume request.
+context. Detached approval cleanup launches two transient candidates for one
+run-locked drain generation. A duplicate waits, replaces a proven-dead exact
+worker with the next generation, and exits after completion. Lifecycle and
+generation receipts are bound into the approval finalization record. This can
+autonomously relaunch a pending endpoint after adapter and worker failure, but
+committed destination cleanup only writes a durable resume request.
 
 ### Guarantees and caveats
 

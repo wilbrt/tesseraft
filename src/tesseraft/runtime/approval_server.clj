@@ -151,6 +151,8 @@
     (.redirectOutput pb (.toFile (fs/path dir "adapter.log")))
     (.redirectError pb (.toFile (fs/path dir "adapter-error.log")))
     (.put (.environment pb) "AGENT_RUN_DIR" (str (get-in ctx [:run :dir])))
+    (when-let [delay (System/getProperty "tesseraft.test.adapter-exit-delay-ms")]
+      (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS" delay))
     (let [child (.start pb)
           started (some-> child .toHandle .info .startInstant (.orElse nil) str)
           record {:version 1 :run_id (get-in ctx [:run :id]) :state (name state-id) :attempt attempt
@@ -191,70 +193,146 @@
                                     :approval_id (:approval_id request) :pid (:pid launched)})
             launched))))))
 
+(defn- drain-path [ctx state-id attempt submission-id]
+  (fs/path (owner-dir ctx state-id attempt) "drains" (str submission-id ".json")))
+
+(defn- current-process-record []
+  (let [handle (java.lang.ProcessHandle/current)]
+    {:pid (.pid handle)
+     :process_started_at (some-> handle .info .startInstant (.orElse nil) str)}))
+
 (defn supervise-drain!
-  "Detached exact-owner cleanup after one transport outcome. Waits outside the
-  run lock so an in-flight canonical decision can settle, then serializes
-  lifecycle completion and returns a durable handoff kind."
-  [{:keys [run_dir state attempt approval_id pid process_started_at submission_id transport_status]}]
-  (let [ctx0 (store/load-context run_dir)
-        path (owner-path ctx0 (keyword state) attempt)
-        capability (capability-path ctx0 (keyword state) attempt)
-        expected {:pid pid :process_started_at process_started_at}
-        wait-absent (fn [attempts]
-                      (loop [remaining attempts]
-                        (let [{:keys [exact-live]} (owner-process expected)]
-                          (cond (not exact-live) true
-                                (zero? remaining) false
-                                :else (do (Thread/sleep 50) (recur (dec remaining)))))))]
-    (when-not (wait-absent 100)
-      (let [{:keys [handle exact-live]} (owner-process expected)]
-        (when exact-live (.destroyForcibly ^java.lang.ProcessHandle handle)))
-      (when-not (wait-absent 100)
-        (throw (ex-info "Exact approval adapter did not stop after bounded drain"
-                        {:code :approval_adapter_drain_timeout :pid pid}))))
-    (store/with-run-lock run_dir
-      (fn []
-        ;; Acquiring this lock also waits for any canonical run.decide child;
-        ;; decision presence is therefore determinate before handoff selection.
-        (let [ctx (store/load-context run_dir)
-              record (when (fs/exists? path) (store/read-json path))
-              exact-record? (= [pid process_started_at approval_id]
-                               [(:pid record) (:process_started_at record) (:approval_id record)])
-              decision-path (fs/path run_dir "approvals" (str approval_id "-decision.json"))
-              decision? (fs/exists? decision-path)
-              terminal? (contains? #{"done" "failed" "error" "cancelled"} (get-in ctx [:run :status]))
-              drain-path (fs/path (owner-dir ctx (keyword state) attempt) "drains" (str submission_id ".json"))]
-          (if-not exact-record?
-            {:handoff :adopted :run-dir run_dir}
-            (do
-              (fs/delete-if-exists capability)
-              (store/write-runtime-json! ctx drain-path
-                {:version 1 :submission_id submission_id :approval_id approval_id
-                 :adapter_pid pid :process_started_at process_started_at
-                 :transport_status transport_status :listener_absent true
-                 :lifecycle_status "complete" :completed_at (store/now)})
-              (store/write-runtime-json! ctx path
-                (assoc record :status "stopped" :lifecycle_status "complete"
-                       :stop_reason "detached-supervisor" :stopped_at (store/now)))
+  "CAS-claim one durable drain generation, complete exact adapter teardown, and
+  publish one lifecycle/handoff receipt. A duplicate live worker adopts; a
+  proven-dead worker is replaced by the next generation."
+  [{:keys [run_dir state attempt approval_id pid process_started_at submission_id transport_status] :as request}]
+  (let [state-id (keyword state)
+        ctx0 (store/load-context run_dir)
+        path (owner-path ctx0 state-id attempt)
+        capability (capability-path ctx0 state-id attempt)
+        receipt-path (drain-path ctx0 state-id attempt submission_id)
+        expected-adapter {:pid pid :process_started_at process_started_at}
+        worker (current-process-record)
+        claim
+        (store/with-run-lock run_dir
+          (fn []
+            (let [ctx (store/load-context run_dir)
+                  owner (when (fs/exists? path) (store/read-json path))
+                  existing (when (fs/exists? receipt-path) (store/read-json receipt-path))
+                  exact-owner? (= [pid process_started_at approval_id]
+                                  [(:pid owner) (:process_started_at owner) (:approval_id owner)])
+                  existing-worker {:pid (:worker_pid existing)
+                                   :process_started_at (:worker_started_at existing)}
+                  other-live? (and existing
+                                   (not= [(:pid worker) (:process_started_at worker)]
+                                         [(:worker_pid existing) (:worker_started_at existing)])
+                                   (:exact-live (owner-process existing-worker)))]
               (cond
-                terminal? {:handoff :not-applicable :run-dir run_dir}
-                (and decision? (not= "blocked" (get-in ctx [:run :status])))
-                (do
-                  (store/write-runtime-json! ctx drain-path
-                    {:version 1 :submission_id submission_id :approval_id approval_id
-                     :adapter_pid pid :process_started_at process_started_at
-                     :transport_status transport_status :listener_absent true
-                     :lifecycle_status "complete" :resume_handoff_status "requested"
-                     :completed_at (store/now)})
-                  {:handoff :resume-requested :run-dir run_dir})
-                (and (not decision?) (= "blocked" (get-in ctx [:run :status]))
-                     (= (keyword state) (get-in ctx [:run :state]))
-                     (= attempt (get-in ctx [:run :attempt])))
-                (let [request-path (fs/path run_dir "approvals" (str approval_id ".json"))
-                      request (store/read-json request-path)]
-                  (ensure-adapter! ctx (keyword state) attempt request)
-                  {:handoff :relaunched :run-dir run_dir})
-                :else {:handoff :not-applicable :run-dir run_dir}))))))))
+                (= "complete" (:lifecycle_status existing))
+                {:status :complete :record existing}
+
+                (not exact-owner?)
+                {:status :superseded}
+
+                other-live?
+                {:status :adopted :record existing}
+
+                :else
+                (let [generation (inc (or (:drain_generation existing) 0))
+                      claimed {:version 2 :submission_id submission_id :approval_id approval_id
+                               :adapter_pid pid :process_started_at process_started_at
+                               :transport_status transport_status :drain_generation generation
+                               :phase "claimed" :worker_pid (:pid worker)
+                               :worker_started_at (:process_started_at worker)
+                               :claimed_at (store/now)}]
+                  (store/write-runtime-json! ctx receipt-path claimed)
+                  {:status :claimed :generation generation :record claimed})))))]
+    (cond
+      (= :adopted (:status claim))
+      (let [record (:record claim)
+            prior-worker {:pid (:worker_pid record) :process_started_at (:worker_started_at record)}
+            released? (loop [remaining 400]
+                        (let [current (when (fs/exists? receipt-path) (store/read-json receipt-path))]
+                          (cond (= "complete" (:lifecycle_status current)) true
+                                (not (:exact-live (owner-process prior-worker))) true
+                                (zero? remaining) false
+                                :else (do (Thread/sleep 25) (recur (dec remaining))))))]
+        (if released?
+          (supervise-drain! request)
+          {:handoff :adopted :run-dir run_dir}))
+
+      (not= :claimed (:status claim))
+      {:handoff (:status claim) :run-dir run_dir}
+
+      :else
+      (let [wait-absent (fn [attempts]
+                          (loop [remaining attempts]
+                            (let [{:keys [exact-live]} (owner-process expected-adapter)]
+                              (cond (not exact-live) true
+                                    (zero? remaining) false
+                                    :else (do (Thread/sleep 50) (recur (dec remaining)))))))]
+        (when-not (wait-absent 100)
+          (let [{:keys [handle exact-live]} (owner-process expected-adapter)]
+            (when exact-live (.destroyForcibly ^java.lang.ProcessHandle handle)))
+          (when-not (wait-absent 100)
+            (throw (ex-info "Exact approval adapter did not stop after bounded drain"
+                            {:code :approval_adapter_drain_timeout :pid pid}))))
+        (store/with-run-lock run_dir
+          (fn []
+            ;; This lock follows canonical run.decide, so decision presence is
+            ;; determinate before lifecycle and handoff completion.
+            (let [ctx (store/load-context run_dir)
+                  owner (when (fs/exists? path) (store/read-json path))
+                  current (store/read-json receipt-path)
+                  exact-generation? (= [(:generation claim) (:pid worker) (:process_started_at worker)]
+                                       [(:drain_generation current) (:worker_pid current) (:worker_started_at current)])
+                  exact-owner? (= [pid process_started_at approval_id]
+                                  [(:pid owner) (:process_started_at owner) (:approval_id owner)])
+                  decision-path (fs/path run_dir "approvals" (str approval_id "-decision.json"))
+                  decision? (fs/exists? decision-path)
+                  terminal? (contains? #{"done" "failed" "error" "cancelled"} (get-in ctx [:run :status]))
+                  pending? (and (not decision?) (= "blocked" (get-in ctx [:run :status]))
+                                (= state-id (get-in ctx [:run :state]))
+                                (= attempt (get-in ctx [:run :attempt])))
+                  handoff (cond terminal? :not-applicable
+                                (and decision? (not= "blocked" (get-in ctx [:run :status]))) :resume-requested
+                                (and pending? exact-owner?) :relaunch-requested
+                                pending? :adopted
+                                :else :not-applicable)]
+              (if-not exact-generation?
+                {:handoff :superseded :run-dir run_dir}
+                (let [completed (cond-> (assoc current :phase "finished" :listener_absent true
+                                                :lifecycle_status "complete"
+                                                :completed_at (store/now))
+                                  (= handoff :resume-requested) (assoc :resume_handoff_status "requested")
+                                  (= handoff :relaunch-requested) (assoc :relaunch_handoff_status "requested"))
+                      finalization-path (fs/path run_dir "approval-finalizations" (str approval_id ".json"))]
+                  ;; A replacement adapter owns a different tuple/capability;
+                  ;; never delete or overwrite it while completing this drain.
+                  (when exact-owner?
+                    (fs/delete-if-exists capability)
+                    (store/write-runtime-json! ctx path
+                      (assoc owner :status "stopped" :lifecycle_status "complete"
+                             :stop_reason "detached-supervisor" :stopped_at (store/now))))
+                  (store/write-runtime-json! ctx receipt-path completed)
+                  (when (and decision? (fs/exists? finalization-path))
+                    (store/write-runtime-json! ctx finalization-path
+                      (cond-> (assoc (store/read-json finalization-path)
+                                :lifecycle_status "complete" :transport_status transport_status
+                                :drain_submission_id submission_id
+                                :drain_generation (:generation claim)
+                                :lifecycle_completed_at (store/now))
+                        (= handoff :resume-requested) (assoc :resume_handoff_status "requested"))))
+                  (store/event-once! ctx {:event "approval.adapter.lifecycle-complete"
+                                          :event_id (str approval_id "/drain/" submission_id)
+                                          :approval_id approval_id :submission_id submission_id
+                                          :drain_generation (:generation claim)
+                                          :transport_status transport_status})
+                  (if (= handoff :relaunch-requested)
+                    (let [request (store/read-json (fs/path run_dir "approvals" (str approval_id ".json")))]
+                      (ensure-adapter! ctx state-id attempt request)
+                      {:handoff :relaunched :run-dir run_dir :drain-generation (:generation claim)})
+                    {:handoff handoff :run-dir run_dir :drain-generation (:generation claim)}))))))))))
 
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])

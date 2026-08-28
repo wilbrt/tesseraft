@@ -55,14 +55,18 @@ mutating resume adopts one exact live blocked adapter or, after proving the old
 PID/start tuple absent, removes stale capability data and launches one
 replacement. Focused submissions durably distinguish complete response
 `finish` from premature request/socket/response abort; disconnect never cancels
-the canonical decision child. Either transport outcome starts one detached
-internal supervisor before listener drain. After exact adapter PID/start
-absence, that supervisor serializes behind canonical decision completion,
-removes the capability, and writes a submission-specific lifecycle receipt. If
-the approval is still pending it autonomously launches one replacement even
-when the adapter was SIGKILLed after the abort receipt. A committed nonterminal
-decision records `resume_handoff_status=requested`; it is not stepped until the
-shared generation-based launcher exists.
+the canonical decision child. Either transport outcome starts two detached
+drain candidates before listener drain, but a run-locked submission record
+permits only one authoritative worker generation. The other candidate waits;
+if the exact claimed worker dies it CAS-claims the next generation, while a
+completed generation makes it exit without mutation. After exact adapter
+PID/start absence, the winning worker serializes behind canonical decision
+completion, removes only the matching capability, writes a lifecycle receipt,
+and binds transport/lifecycle/submission/generation fields into the approval
+finalization record. If the approval is still pending it autonomously launches
+one replacement even when both generation 1 and the adapter were SIGKILLed. A
+committed nonterminal decision records `resume_handoff_status=requested`; it is
+not stepped until the shared generation-based launcher exists.
 
 The durable request, evidence, decision, feedback, `issues.json`, state, and
 events are authority. The listener and browser are transient adapters.
@@ -82,10 +86,12 @@ events are authority. The listener and browser are transient adapters.
   `O_NOFOLLOW`; unsupported platforms fail before evidence publication.
   Namespace stability uses retained inode/time receipts and secure re-traversal,
   not a kernel watch-overflow receipt.
-- A stale blocked adapter is relaunched by a mutating resume. Additionally, a
-  detached per-submission supervisor autonomously relaunches a still-pending
-  endpoint after finished/aborted cleanup and survives adapter SIGKILL. Pure
-  inspection remains side-effect free; there is no general always-on reconciler.
+- A stale blocked adapter is relaunched by a mutating resume. Additionally,
+  detached per-submission candidates use one durable monotonic drain claim to
+  recover a killed worker and autonomously relaunch a still-pending endpoint
+  after finished/aborted cleanup. Pure inspection remains side-effect free;
+  recovery is bounded to the two launched candidates, not a general always-on
+  reconciler.
 - The runtime publishes an exclusive PID/start/execution claim plus cancellation
   generation in `state.edn`, crosses a compare-exact `claimed → executing`
   barrier before workflow steps and external effects, and rejects stale saves

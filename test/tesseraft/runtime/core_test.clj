@@ -130,6 +130,7 @@
                (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
                  (is (zero? (:exit result)) (:err result)) result))]
     (try
+      (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "10000")
       (fs/create-dirs repo)
       (run! "git" "init" "-q")
       (run! "git" "config" "user.name" "Review Test")
@@ -197,6 +198,7 @@
         (let [owner-file (fs/path run-dir "approval-adapters" "review" "1" "owner.json")
               capability (store/read-json capability-file)
               owner (store/read-json owner-file)
+              generation-one-worker (atom nil)
               acquired (promise)
               holder (future (store/with-run-lock run-dir #(do (deliver acquired true) (Thread/sleep 800))))]
           @acquired
@@ -214,27 +216,56 @@
                          (pos? remaining))
                 (Thread/sleep 25) (recur (dec remaining)))))
           (let [aborted-owner (store/read-json owner-file)
-                candidate (java.lang.ProcessHandle/of (long (:pid aborted-owner)))
-                handle (when (.isPresent candidate) (.get candidate))]
+                drain-dir (fs/path (fs/parent owner-file) "drains")]
             (is (= "aborted" (:transport_status aborted-owner)))
             (is (integer? (:supervisor_pid aborted-owner)))
-            (is (some? handle) "adapter exited before the deterministic kill barrier")
-            (when handle
-              (.destroyForcibly handle)
-              (.get (.onExit handle) 5 java.util.concurrent.TimeUnit/SECONDS)))
-          @holder
-          ;; No mutating inspection/resume follows the abort. The detached
-          ;; supervisor must wait for exact old-process absence, publish one
-          ;; aborted drain receipt, and autonomously relaunch the still-pending
-          ;; approval endpoint.
-          (let [drain-dir (fs/path (fs/parent owner-file) "drains")]
+            @holder
+            ;; Generation 1 must be durably claimed before the worker is killed;
+            ;; adapter-side reissue then claims generation 2 under the same lock.
+            (loop [remaining 150]
+              (let [drains (when (fs/exists? drain-dir) (vec (fs/glob drain-dir "*.json")))
+                    receipt (when (= 1 (count drains)) (store/read-json (first drains)))]
+                (when (and (or (not= 1 (:drain_generation receipt))
+                               (not= "claimed" (:phase receipt)))
+                           (pos? remaining))
+                  (Thread/sleep 10) (recur (dec remaining)))))
+            (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))
+                  candidate (java.lang.ProcessHandle/of (long (:worker_pid receipt)))
+                  worker (when (.isPresent candidate) (.get candidate))]
+              (is (= 1 (:drain_generation receipt)))
+              (is (contains? (set (:supervisor_candidate_pids aborted-owner)) (:worker_pid receipt))
+                  "durable worker must be one of the detached candidates")
+              (reset! generation-one-worker (:worker_pid receipt))
+              (is (some? worker) "generation-1 drain worker exited before kill barrier")
+              (when worker
+                (.destroyForcibly worker)))
+            ;; Kill the adapter immediately after generation 1; do not await
+            ;; child reaping because the Node parent owns that zombie boundary. The waiting
+            ;; candidate must survive both failures, claim generation 2, and
+            ;; complete against exact adapter absence.
+            (let [candidate (java.lang.ProcessHandle/of (long (:pid aborted-owner)))
+                  adapter (when (.isPresent candidate) (.get candidate))]
+              (is (some? adapter) "adapter exited before the dual-kill barrier")
+              (when adapter
+                (.destroyForcibly adapter)
+                (.get (.onExit adapter) 5 java.util.concurrent.TimeUnit/SECONDS)))
+            (loop [remaining 150]
+              (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))]
+                (when (and (< (or (:drain_generation receipt) 0) 2) (pos? remaining))
+                  (Thread/sleep 10) (recur (dec remaining)))))
+            (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))]
+              (is (= 2 (:drain_generation receipt)))
+              (is (not= @generation-one-worker (:worker_pid receipt))))
+            ;; No mutating inspection/resume follows. Generation 2 must finish
+            ;; exact cleanup and autonomously relaunch the pending endpoint.
             (loop [remaining 200]
               (let [current (store/read-json owner-file)
                     drains (when (fs/exists? drain-dir) (vec (fs/glob drain-dir "*.json")))]
                 (when (and (or (= (:pid current) (:pid owner))
                                (not= "ready" (:status current))
                                (not (fs/exists? capability-file))
-                               (empty? drains))
+                               (empty? drains)
+                               (not= "complete" (:lifecycle_status (store/read-json (first drains)))))
                            (pos? remaining))
                   (Thread/sleep 50) (recur (dec remaining)))))
             (let [current (store/read-json owner-file)
@@ -243,6 +274,7 @@
               (is (not= (:pid owner) (:pid current)))
               (is (= "ready" (:status current)))
               (is (= 1 (count drains)))
+              (is (= 2 (:drain_generation receipt)))
               (is (= "aborted" (:transport_status receipt)))
               (is (= true (:listener_absent receipt)))
               (is (= "complete" (:lifecycle_status receipt))))))
@@ -284,13 +316,21 @@
             (let [stopped-owner (store/read-json owner-file)
                   handle (java.lang.ProcessHandle/of (long (:pid stopped-owner)))
                   drains (mapv store/read-json
-                               (fs/glob (fs/path (fs/parent owner-file) "drains") "*.json"))]
+                               (fs/glob (fs/path (fs/parent owner-file) "drains") "*.json"))
+                  finished (first (filter #(= "finished" (:transport_status %)) drains))
+                  finalization (store/read-json (fs/path run-dir "approval-finalizations" "review-1.json"))]
               (is (= "stopped" (:status stopped-owner)))
               (is (or (not (.isPresent handle)) (not (.isAlive (.get handle)))))
               (is (= #{"aborted" "finished"} (set (map :transport_status drains))))
               (is (every? #(and (= "complete" (:lifecycle_status %))
-                                (= true (:listener_absent %))) drains)))))))
+                                (= true (:listener_absent %))) drains))
+              (is (= "complete" (:lifecycle_status finalization)))
+              (is (= "finished" (:transport_status finalization)))
+              (is (= (:submission_id finished) (:drain_submission_id finalization)))
+              (is (= (:drain_generation finished) (:drain_generation finalization)))
+              (is (= "requested" (:resume_handoff_status finalization))))))))
       (finally
+        (System/clearProperty "tesseraft.test.adapter-exit-delay-ms")
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
         (fs/delete-tree root)))))
