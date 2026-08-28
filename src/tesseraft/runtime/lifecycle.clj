@@ -129,12 +129,14 @@
             ;; cannot overwrite the cancellation state.
             ctx (store/load-context run-dir)
             cancelled (-> ctx
+                          (assoc :runtime-claim nil)
                           (assoc-in [:run :status] "cancelled")
                           (assoc-in [:run :updated-at] (store/now)))]
         (sessions/orphan-active-bindings! cancelled)
         (store/event! cancelled {:event "run.cancelled"
                                  :pid (:pid process)
                                  :process_found (:process_found process)
+                                 :owner_mismatch (:owner_mismatch process)
                                  :descendants (:descendants process)
                                  :descendants_enumerated (:descendants_enumerated process)
                                  :owned_processes (:owned_processes process)

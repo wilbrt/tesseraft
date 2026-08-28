@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -70,6 +70,15 @@ const initialOwner = await readJson(ownerPath);
 if (initialOwner.pid !== process.pid || initialOwner.approval_id !== approvalId || initialOwner.capability_hash !== sha256(token)) {
   throw new Error(`Owner claim mismatch (pid=${initialOwner.pid === process.pid}, approval=${initialOwner.approval_id === approvalId}, capability_hash=${initialOwner.capability_hash === sha256(token)})`);
 }
+let ownerUpdate = Promise.resolve(initialOwner);
+const updateOwner = (patch) => {
+  ownerUpdate = ownerUpdate.then(async (current) => {
+    const next = { ...current, ...patch };
+    await atomicJson(ownerPath, next);
+    return next;
+  });
+  return ownerUpdate;
+};
 const request = await readJson(requestPath);
 const review = request.review_server;
 if (!review || request.state !== state || request.attempt !== attempt || request.approval_id !== approvalId) throw new Error('Approval tuple mismatch');
@@ -90,8 +99,7 @@ const drain = async (reason) => {
   draining = true; accepting = false;
   server.close(async () => {
     await rm(capabilityPath, { force: true });
-    const owner = await readJson(ownerPath).catch(() => initialOwner);
-    await atomicJson(ownerPath, { ...owner, status: 'stopped', stop_reason: reason, stopped_at: new Date().toISOString() });
+    await updateOwner({ status: 'stopped', stop_reason: reason, stopped_at: new Date().toISOString() });
     process.exit(0);
   });
   setTimeout(() => { for (const socket of sockets) socket.destroy(); }, 1500).unref();
@@ -105,14 +113,37 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/') { const page = html(token); res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff' }); return res.end(page); }
     if (req.method === 'GET' && url.pathname === '/api/review') return json(res, 200, { request, diff, anchors: review.anchors });
     if (req.method === 'POST' && url.pathname === '/api/decision') {
+      const submissionId = randomUUID();
+      let transportStatus = 'pending';
+      const abortTransport = (phase) => {
+        if (transportStatus !== 'pending') return;
+        transportStatus = 'aborted'; accepting = false;
+        void updateOwner({ status: 'draining', submission_id: submissionId, transport_status: 'aborted',
+                           transport_aborted_at: new Date().toISOString(), abort_phase: phase });
+      };
+      req.once('aborted', () => abortTransport('request-aborted'));
+      req.socket?.once('error', () => abortTransport('socket-error'));
+      res.once('close', () => { if (!res.writableFinished) abortTransport('response-close'); });
       let body = ''; let oversized = false;
       for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > MAX_BODY) { oversized = true; break; } }
       if (oversized) return json(res, 413, { error: { code: 'payload_too_large', message: 'Decision payload exceeds 64 KiB' } });
       let payload; try { payload = JSON.parse(body); } catch { return json(res, 400, { error: { code: 'bad_request', message: 'Malformed JSON' } }); }
       accepting = false;
+      await updateOwner({ submission_id: submissionId, transport_status: 'pending', decision_started_at: new Date().toISOString() });
       const outcome = await decision(payload);
-      if (outcome.error || outcome.result?.error) { accepting = true; const failure = outcome.result || { error: { code: 'runtime_error', message: outcome.stderr || outcome.error?.message } }; return json(res, failure.status || 422, failure); }
-      res.once('finish', () => void drain('decision'));
+      if (outcome.error || outcome.result?.error) {
+        if (transportStatus === 'aborted') { void drain('transport-aborted-uncommitted'); return; }
+        accepting = true;
+        const failure = outcome.result || { error: { code: 'runtime_error', message: outcome.stderr || outcome.error?.message } };
+        return json(res, failure.status || 422, failure);
+      }
+      if (transportStatus === 'aborted') { void drain('transport-aborted'); return; }
+      res.once('finish', () => {
+        if (transportStatus !== 'pending') return;
+        transportStatus = 'finished';
+        void updateOwner({ status: 'draining', submission_id: submissionId, transport_status: 'finished',
+                           response_finished_at: new Date().toISOString() }).then(() => drain('decision'));
+      });
       json(res, 200, outcome.result);
       return;
     }
@@ -125,7 +156,7 @@ server.listen(0, '127.0.0.1', async () => {
   const endpoint = `http://127.0.0.1:${address.port}`;
   await atomicJson(capabilityPath, { version: 1, token, launch_url: `${endpoint}/?token=${encodeURIComponent(token)}` }, 0o600);
   await chmod(capabilityPath, 0o600);
-  await atomicJson(ownerPath, { ...initialOwner, status: 'ready', endpoint, ready_at: new Date().toISOString() });
+  await updateOwner({ status: 'ready', endpoint, ready_at: new Date().toISOString() });
 });
 const monitor = setInterval(async () => {
   try {

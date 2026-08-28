@@ -5,6 +5,7 @@
   authority. The adapter owns only a capability and exact process metadata."
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [cheshire.core :as json]
             [clojure.string :as str]
             [tesseraft.runtime.store :as store]))
 
@@ -18,32 +19,39 @@
 (defn owner-path [ctx state-id attempt] (fs/path (owner-dir ctx state-id attempt) "owner.json"))
 (defn capability-path [ctx state-id attempt] (fs/path (owner-dir ctx state-id attempt) "capability.json"))
 
-(defn- command! [dir args]
-  (let [result @(process/process args {:dir (str dir) :out :string :err :string :continue true
-                                      :extra-env {"GIT_OPTIONAL_LOCKS" "0"
-                                                  "GIT_NO_LAZY_FETCH" "1"
-                                                  "GIT_NO_REPLACE_OBJECTS" "1"
-                                                  "GIT_PAGER" "cat"}})]
-    (when-not (zero? (:exit result))
-      (throw (ex-info "Git review snapshot command failed"
-                      {:code :git_snapshot_failed :command (vec args)
-                       :exit (:exit result) :stderr (subs (str (:err result)) 0 (min 1000 (count (str (:err result)))))})))
-    (:out result)))
+(defn- install-root []
+  (or (System/getenv "TESSERAFT_INSTALL_ROOT") (System/getProperty "user.dir")))
 
-(defn- assert-conversion-free! [repo]
-  (let [autocrlf (str/trim (or (:out @(process/process ["git" "config" "--get" "core.autocrlf"]
-                                                       {:dir (str repo) :out :string :err :string :continue true})) ""))
-        conversion-config (or (:out @(process/process ["git" "config" "--name-only" "--get-regexp"
-                                                        "^(core\\.eol|core\\.attributesfile|filter\\..*\\.(clean|smudge|process|required))$"]
-                                                       {:dir (str repo) :out :string :err :string :continue true})) "")
-        tracked-attrs (or (:out @(process/process ["git" "ls-files" "--" "**/.gitattributes" ".gitattributes"]
-                                                    {:dir (str repo) :out :string :err :string :continue true})) "")
-        worktree-attrs (seq (fs/glob repo "**/.gitattributes"))]
-    (when (or (and (not (str/blank? autocrlf)) (not= "false" (str/lower-case autocrlf)))
-              (not (str/blank? conversion-config))
-              (not (str/blank? tracked-attrs)) worktree-attrs)
-      (throw (ex-info "Git-diff review requires a conversion-free worktree"
-                      {:code :unsupported_git_conversion})))))
+(defn- snapshot-helper []
+  (let [script (fs/path (install-root) "scripts" "git_diff_snapshot.py")]
+    (when-not (fs/exists? script)
+      (throw (ex-info "Secure Git snapshot helper is unavailable"
+                      {:code :secure_worktree_traversal_unavailable :path (str script)})))
+    (str script)))
+
+(defn- helper-snapshot! [repo max-bytes]
+  (let [input (json/generate-string {:repo (str repo) :max_diff_bytes max-bytes})
+        result @(process/process [(or (System/getenv "TESSERAFT_PYTHON") "python") (snapshot-helper)]
+                                 {:in input :out :string :err :string :continue true})
+        payload (try (json/parse-string (or (:out result) "") true)
+                     (catch Throwable _ nil))]
+    (when-not (:ok payload)
+      (let [error (:error payload)
+            code (some-> (:code error) keyword)]
+        (throw (ex-info (or (:message error) "Secure Git snapshot failed")
+                        {:code (or code :git_snapshot_failed)
+                         :details (:details error)
+                         :exit (:exit result)
+                         :stderr (subs (str (:err result)) 0 (min 1000 (count (str (:err result)))))}))))
+    (try
+      {:diff (String. (.decode (java.util.Base64/getDecoder) ^String (:diff_base64 payload)) "UTF-8")
+       :size (:size payload)
+       :head-tree (:head_tree payload)
+       :index-fingerprint (:index_fingerprint payload)
+       :context-fingerprint (:context_fingerprint payload)}
+      (catch Throwable error
+        (throw (ex-info "Secure Git snapshot returned malformed evidence"
+                        {:code :malformed_git_snapshot} error))))))
 
 (defn snapshot-diff!
   "Create bounded immutable review evidence for tracked changes. Configuration
@@ -54,10 +62,8 @@
             (throw (ex-info "review-server max-diff-bytes must be 1..10485760"
                             {:code :invalid_review_diff_bound})))
         supplied (or (get-in ctx [:run :worktree-dir]) (get-in ctx [:inputs :repo-root]) ".")
-        repo (fs/real-path (fs/path (str/trim (command! supplied ["git" "rev-parse" "--show-toplevel"]))))
-        _ (assert-conversion-free! repo)
-        diff (command! repo ["git" "-c" "core.fsmonitor=false" "--no-pager" "diff"
-                             "--no-ext-diff" "--no-textconv" "--unified=3" "HEAD" "--"])
+        snapshot (helper-snapshot! supplied requested)
+        diff (:diff snapshot)
         bytes (.getBytes diff "UTF-8")]
     (when (zero? (alength bytes))
       (throw (ex-info "There are no tracked Git changes to review" {:code :no_reviewable_changes})))
@@ -70,7 +76,10 @@
       (fs/create-dirs (fs/parent path))
       (store/write-runtime-text! ctx path diff)
       {:path (str (fs/relativize (fs/path (get-in ctx [:run :dir])) path))
-       :sha256 (store/sha256 diff) :size (alength bytes) :max_bytes requested})))
+       :sha256 (store/sha256 diff) :size (alength bytes) :max_bytes requested
+       :head_tree (:head-tree snapshot)
+       :index_fingerprint (:index-fingerprint snapshot)
+       :context_fingerprint (:context-fingerprint snapshot)})))
 
 (defn diff-anchors [diff]
   (loop [lines (map-indexed vector (str/split-lines diff)) file nil old nil new nil anchors {}]
@@ -117,11 +126,18 @@
     (.encodeToString (.withoutPadding (java.util.Base64/getUrlEncoder)) bytes)))
 
 (defn- adapter-script []
-  (let [root (or (System/getenv "TESSERAFT_INSTALL_ROOT") (System/getProperty "user.dir"))
-        script (fs/path root "web" "approval-adapter.js")]
+  (let [script (fs/path (install-root) "web" "approval-adapter.js")]
     (when-not (fs/exists? script)
       (throw (ex-info "Approval adapter script is unavailable" {:code :approval_adapter_unavailable :path (str script)})))
     (str script)))
+
+(defn- owner-process [record]
+  (let [pid (:pid record)
+        candidate (when (and (integer? pid) (pos? pid)) (java.lang.ProcessHandle/of (long pid)))
+        handle (when (and candidate (.isPresent candidate)) (.get candidate))
+        actual (some-> handle .info .startInstant (.orElse nil) str)]
+    {:handle handle :actual-start actual
+     :exact-live (boolean (and handle (.isAlive handle) (= actual (:process_started_at record))))}))
 
 (defn launch! [ctx state-id attempt request]
   (let [dir (owner-dir ctx state-id attempt)
@@ -146,6 +162,44 @@
       (store/event! ctx {:event "approval.adapter.launched" :state (name state-id) :attempt attempt
                          :approval_id (:approval_id request) :pid (.pid child)})
       record)))
+
+(defn ensure-adapter!
+  "Adopt one exact live adapter or relaunch after its PID/start tuple is proven
+  absent. A reused PID is never signalled. This is called only by mutating
+  blocked-run reconciliation, never by pure inspection."
+  [ctx state-id attempt request]
+  (let [path (owner-path ctx state-id attempt)
+        capability (capability-path ctx state-id attempt)
+        record (when (fs/exists? path) (store/read-json path))]
+    (when (and record
+               (not= [(:run_id record) (:state record) (:attempt record) (:approval_id record)]
+                     [(get-in ctx [:run :id]) (name state-id) attempt (:approval_id request)]))
+      (throw (ex-info "Approval adapter owner tuple does not match blocked approval"
+                      {:code :approval_adapter_owner_mismatch})))
+    (let [{:keys [exact-live]} (when record (owner-process record))]
+      (if exact-live
+        record
+        (do
+          (when record
+            (fs/delete-if-exists capability)
+            (store/write-runtime-json! ctx path
+              (assoc record :status "stale" :stale_at (store/now))))
+          (let [launched (launch! ctx state-id attempt request)]
+            (store/event-once! ctx {:event "approval.adapter.recovered"
+                                    :event_id (str (:approval_id request) "/adapter-recovered/" (:pid launched))
+                                    :state (name state-id) :attempt attempt
+                                    :approval_id (:approval_id request) :pid (:pid launched)})
+            launched))))))
+
+(defn reconcile-blocked! [ctx]
+  (let [state-id (get-in ctx [:run :state])
+        attempt (get-in ctx [:run :attempt])
+        approval-id (str (name state-id) "-" attempt)
+        request-path (fs/path (get-in ctx [:run :dir]) "approvals" (str approval-id ".json"))
+        request (when (fs/exists? request-path) (store/read-json request-path))]
+    (when (:review_server request)
+      (ensure-adapter! ctx state-id attempt request))
+    ctx))
 
 (defn cleanup! [ctx]
   (let [root (fs/path (get-in ctx [:run :dir]) "approval-adapters")]

@@ -137,9 +137,12 @@
 
         "step"
         (do (when (str/blank? (:run-dir opts)) (usage!))
-            (let [ctx (apply-run-options (store/load-context (:run-dir opts)) opts)
-                  wf (spec/read-workflow (get-in ctx [:workflow :file]))]
-              (print-result opts (store/save-context! (runtime/step! wf ctx)))))
+            (let [run-dir (:run-dir opts)]
+              (run-registered!
+                run-dir
+                #(let [ctx (apply-run-options (store/load-context run-dir) opts)
+                       wf (spec/read-workflow (get-in ctx [:workflow :file]))]
+                   (print-result opts (store/save-context! (runtime/step! wf ctx)))))))
 
         "resume"
         (do (when (str/blank? (:run-dir opts)) (usage!))

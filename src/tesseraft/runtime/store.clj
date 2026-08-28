@@ -90,9 +90,16 @@
 (defn save-context! [ctx]
   ;; Resolver functions are live-process dependencies: use them to scrub the
   ;; durable value, but never serialize them into restartable run state.
-  (write-edn! (fs/path (get-in ctx [:run :dir]) "state.edn")
-              (durable-data ctx (assoc (dissoc ctx :credential-resolver) :record-version 2)))
-  ctx)
+  ;; A caller may hold a context loaded immediately before another process-local
+  ;; path claimed execution. Missing claim data must never overwrite that
+  ;; authority; an explicit nil is the compare-exact release operation.
+  (let [path (fs/path (get-in ctx [:run :dir]) "state.edn")
+        durable-claim (when (and (not (contains? ctx :runtime-claim)) (fs/exists? path))
+                        (:runtime-claim (read-edn path)))
+        preserved (cond-> ctx durable-claim (assoc :runtime-claim durable-claim))]
+    (write-edn! path
+                (durable-data preserved (assoc (dissoc preserved :credential-resolver) :record-version 2)))
+    preserved))
 
 (defn load-context [run-dir]
   (let [ctx (read-edn (fs/path run-dir "state.edn"))
@@ -119,6 +126,13 @@
     (contains? event :attempt) (assoc :internal_attempt (:attempt event))
     (:fragment descriptor) (assoc :fragment (:fragment descriptor))))
 
+(defn- event-id-present? [ctx event-id]
+  (let [path (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
+    (boolean
+      (when (fs/exists? path)
+        (some #(= event-id (:event_id (json/parse-string % true)))
+              (remove str/blank? (str/split-lines (slurp (str path)))))))))
+
 (defn event! [ctx event]
   ;; A fragment-internal ctx carries a data-only :event-mirror descriptor
   ;; (parent run dir, state, attempt, fragment name) set at creation and
@@ -133,6 +147,13 @@
       (append-jsonl! (fs/path (:parent-dir descriptor) "events.jsonl")
                      (mirrored-event descriptor scrubbed))))
   ctx)
+
+(defn event-once!
+  "Append an event with a stable event_id at most once. Malformed existing
+  event lines fail closed instead of allowing a duplicate proof record."
+  [ctx event]
+  (let [event-id (:event_id event)]
+    (if (and event-id (event-id-present? ctx event-id)) ctx (event! ctx event))))
 
 (defn ensure-run-dirs! [ctx]
   (doseq [d ["logs" "prompts/generated" "pi-sessions" "sessions" "attempts"]]

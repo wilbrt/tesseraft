@@ -322,8 +322,9 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 `retry` will:
 
 - Refuse unless the run is `"failed"` or `"cancelled"`.
-- Refuse if a live process still owns the run (`runtime-process.json` with a
-  live pid). Cancel or wait for that process first.
+- Refuse if `state.edn` carries an exact live runtime claim (execution ID plus
+  PID/start fingerprint). `runtime-process.json` v3 is only a derived
+  compatibility mirror. Cancel or wait for the exact owner first.
 - Re-hash the workflow file and refuse if it has changed since the run was
   pinned, unless `--repin` is given. `--repin` records the old and new hashes
   in a `run.recovery` audit event and proceeds.
@@ -345,6 +346,21 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 | `run.max-rounds-exceeded` | The workflow is not converging within the configured round budget. | Retry only after changing the approach (workflow, inputs, or problem framing). Without a change, the run will re-fail immediately. |
 | `run.cancelled` | Operator cancelled the run. | Safe to retry. Owned processes were reaped at cancel time. |
 | Status `"running"` with liveness `stale` or `orphaned` | The runner process died but the run was never marked terminal. | Run `run cancel` first to mark the run and nested fragment runs cancelled, then `run retry`. |
+
+### Runtime execution ownership
+
+Before current CLI or control-plane step/resume paths execute, the child takes
+the OS run lock and atomically publishes `:runtime-claim` in `state.edn` with an
+execution ID and PID/start fingerprint. A verified different live owner rejects
+the contender; a stale exact claim can be replaced. `runtime-process.json` v3
+mirrors the claim for compatibility and child PID tracking, but does not grant
+execution. Release and cancellation compare the exact PID/start tuple, so a
+reused PID is never signalled.
+
+This claim closes the prior overwrite-only marker race. It is not yet a durable
+pre-spawn intent/generation protocol: launchers do not lease a generation and a
+child does not claim before loading all context. Autonomous approval handoff is
+therefore deliberately not enabled.
 
 ### Guarantees and caveats
 
