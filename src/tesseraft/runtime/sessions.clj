@@ -9,6 +9,7 @@
     [cheshire.core :as json]
     [clojure.string :as str]
     [tesseraft.executors.context :as executor-context]
+    [tesseraft.runtime.identity :as identity]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]))
 
@@ -18,15 +19,8 @@
 (defn resumable? [node]
   (= resumable-mode (get-in node [:session :mode])))
 
-(defn state-string [state-id]
-  (cond
-    (keyword? state-id) (if-let [ns (namespace state-id)]
-                          (str ns "/" (name state-id))
-                          (name state-id))
-    :else (str state-id)))
-
-(defn encoded-state-id [state-id]
-  (java.net.URLEncoder/encode (state-string state-id) "UTF-8"))
+(def state-string identity/state-string)
+(def encoded-state-id identity/encoded-state-id)
 
 (defn binding-path [ctx state-id]
   (fs/path (get-in ctx [:run :dir]) "sessions" (encoded-state-id state-id) "binding.json"))

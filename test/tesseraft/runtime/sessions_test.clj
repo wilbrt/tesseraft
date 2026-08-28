@@ -33,7 +33,9 @@
 (deftest session-identity-preserves-the-complete-state-id
   (is (= "team-a/implement" (sessions/state-string :team-a/implement)))
   (is (not= (sessions/encoded-state-id :team-a/implement)
-            (sessions/encoded-state-id :team-b/implement))))
+            (sessions/encoded-state-id :team-b/implement)))
+  (is (= "%2E" (sessions/encoded-state-id :.)))
+  (is (= "%2E%2E" (sessions/encoded-state-id :..))))
 
 (deftest configuration-hash-treats-tools-as-a-capability-set
   (is (= (sessions/configuration-hash base-ctx :implement base-node)

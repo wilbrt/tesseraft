@@ -1,7 +1,9 @@
 (ns tesseraft.runtime.operations
   (:require
+    [babashka.fs :as fs]
     [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.core :as runtime]
+    [tesseraft.runtime.identity :as identity]
     [tesseraft.runtime.process :as runtime-process]
     [tesseraft.runtime.store :as store]
     [tesseraft.spec :as spec]))
@@ -24,7 +26,7 @@
           bound-real (real-path bound-run)
           payload-real (real-path (:run_dir payload))]
       (cond
-        (not (contains? #{"run.decide" "approval.adapter.supervise"} operation))
+        (not (contains? #{"run.decide" "approval.adapter.supervise" "approval.adapter.status"} operation))
         (error 403 "adapter_operation_forbidden" "Focused adapter operation is not permitted")
 
         (or (nil? bound-real) (nil? payload-real) (not= bound-real payload-real))
@@ -90,6 +92,18 @@
                               reconciled)]
             {:ok true :operation operation
              :result {:reconciled reconciled :resume resumed}})
+          "approval.adapter.status"
+          (let [ctx (store/load-context run-dir)
+                state-id (get-in ctx [:run :state])
+                attempt (get-in ctx [:run :attempt])
+                approval-id (identity/approval-id state-id attempt)]
+            {:ok true :operation operation
+             :result {:run_id (get-in ctx [:run :id])
+                      :state (identity/state-string state-id)
+                      :attempt attempt
+                      :status (get-in ctx [:run :status])
+                      :approval_id approval-id
+                      :decision_exists (fs/exists? (runtime/approval-decision-path ctx state-id attempt))}})
           "run.decide" (let [result (runtime/decide! run-dir (:approval_id payload) (:decision payload)
                                                       (or (:message payload) (:summary payload))
                                                       (:annotations payload) (:author payload))]

@@ -6,6 +6,7 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [tesseraft.runtime.identity :as identity]
             [tesseraft.runtime.process :as runtime-process]
             [tesseraft.runtime.store :as store]))
 
@@ -15,7 +16,7 @@
 (defn evidence-path [ctx approval-id]
   (fs/path (get-in ctx [:run :dir]) "approval-evidence" approval-id "changes.diff"))
 (defn owner-dir [ctx state-id attempt]
-  (fs/path (get-in ctx [:run :dir]) "approval-adapters" (name state-id) (str attempt)))
+  (fs/path (get-in ctx [:run :dir]) "approval-adapters" (identity/encoded-state-id state-id) (str attempt)))
 (defn owner-path [ctx state-id attempt] (fs/path (owner-dir ctx state-id attempt) "owner.json"))
 (defn capability-path [ctx state-id attempt] (fs/path (owner-dir ctx state-id attempt) "capability.json"))
 
@@ -188,9 +189,12 @@
   (let [dir (owner-dir ctx state-id attempt)
         owner (owner-path ctx state-id attempt)
         secret (token)
+        state (identity/state-string state-id)
+        state-path (identity/encoded-state-id state-id)
         pb (ProcessBuilder. ^java.util.List ["node" (adapter-script)
                                              "--run-dir" (get-in ctx [:run :dir])
-                                             "--state" (name state-id) "--attempt" (str attempt)
+                                             "--state" state "--state-path" state-path
+                                             "--attempt" (str attempt)
                                              "--approval-id" (:approval_id request)])]
     (fs/create-dirs dir)
     (.redirectOutput pb (.toFile (fs/path dir "adapter.log")))
@@ -205,13 +209,13 @@
       (.put (.environment pb) "TESSERAFT_TEST_DRAIN_HOLD_THROUGH_GENERATION" generation))
     (let [child (.start pb)
           started (some-> child .toHandle .info .startInstant (.orElse nil) str)
-          record {:version 1 :run_id (get-in ctx [:run :id]) :state (name state-id) :attempt attempt
+          record {:version 1 :run_id (get-in ctx [:run :id]) :state state :attempt attempt
                   :approval_id (:approval_id request) :pid (.pid child) :process_started_at started
                   :capability_hash (store/sha256 secret) :status "launching" :created_at (store/now)}]
       (store/write-runtime-json! ctx owner record)
       (with-open [writer (java.io.OutputStreamWriter. (.getOutputStream child) "UTF-8")]
         (.write writer secret))
-      (store/event! ctx {:event "approval.adapter.launched" :state (name state-id) :attempt attempt
+      (store/event! ctx {:event "approval.adapter.launched" :state state :attempt attempt
                          :approval_id (:approval_id request) :pid (.pid child)})
       record)))
 
@@ -225,7 +229,7 @@
         record (when (fs/exists? path) (store/read-json path))]
     (when (and record
                (not= [(:run_id record) (:state record) (:attempt record) (:approval_id record)]
-                     [(get-in ctx [:run :id]) (name state-id) attempt (:approval_id request)]))
+                     [(get-in ctx [:run :id]) (identity/state-string state-id) attempt (:approval_id request)]))
       (throw (ex-info "Approval adapter owner tuple does not match blocked approval"
                       {:code :approval_adapter_owner_mismatch})))
     (let [{:keys [exact-live]} (when record (owner-process record))]
@@ -239,7 +243,7 @@
           (let [launched (launch! ctx state-id attempt request)]
             (store/event-once! ctx {:event "approval.adapter.recovered"
                                     :event_id (str (:approval_id request) "/adapter-recovered/" (:pid launched))
-                                    :state (name state-id) :attempt attempt
+                                    :state (identity/state-string state-id) :attempt attempt
                                     :approval_id (:approval_id request) :pid (:pid launched)})
             launched))))))
 
@@ -447,7 +451,7 @@
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])
         attempt (get-in ctx [:run :attempt])
-        approval-id (str (name state-id) "-" attempt)
+        approval-id (identity/approval-id state-id attempt)
         request-path (fs/path (get-in ctx [:run :dir]) "approvals" (str approval-id ".json"))
         request (when (fs/exists? request-path) (store/read-json request-path))]
     (when (:review_server request)

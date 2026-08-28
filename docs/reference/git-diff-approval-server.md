@@ -42,12 +42,15 @@ candidate evidence before approval request/adapter creation. The request binds
 the watch provider/count/overflow receipt. Configured diff, textconv, clean,
 and process helpers are never invoked. The immutable SHA-256
 and semantic line-anchor index are recorded on the durable request, then a Node
-adapter launches on
-`127.0.0.1:0`. Exact run/state/attempt, PID, process start instant, endpoint,
-and capability hash are stored below
-`approval-adapters/<state>/<attempt>/owner.json`. The capability and launch URL
-are stored separately in owner-only `capability.json` and are not returned by
-ordinary approval APIs.
+adapter launches on `127.0.0.1:0`. Workflow state identity uses the complete
+namespace-preserving wire form (`team/review`, not only `review`). Approval IDs
+and adapter path segments use its collision-free UTF-8 percent encoding, so two
+accepted states with the same local name cannot share records or ownership
+paths. Exact run/state/attempt, PID, process start instant, endpoint, and
+capability hash are stored below
+`approval-adapters/<encoded-state>/<attempt>/owner.json`. The capability and
+launch URL are stored separately in owner-only `capability.json` and are not
+returned by ordinary approval APIs.
 
 The adapter accepts no forwarded host, CORS, or remote origin. Mutations require
 the 256-bit capability and are limited to 64 KiB. Decision bodies accept only
@@ -62,8 +65,13 @@ selection hash and pinned transition/effects. Stable event IDs and a state
 receipt let a later mutating resume complete a crash after decision publication
 without accepting another choice or duplicating logical events/effects.
 
-A successful decision, run cancellation, or observed state change closes the
-listener, removes the capability, and records terminal owner metadata. Cleanup
+The adapter never parses or substring-matches `state.edn`. Its confined
+`approval.adapter.status` operation returns a structured exact
+run/state/attempt/status/approval projection and decision-presence bit; any
+mismatch or inspection failure fails closed. The first exact pending check is
+recorded in transient owner metadata. A successful decision, run cancellation,
+or observed state change closes the listener, removes the capability, and
+records terminal owner metadata. Cleanup
 kills a PID only when its persisted process start instant still matches. A
 mutating resume adopts one exact live blocked adapter or, after proving the old
 PID/start tuple absent, removes stale capability data and launches one

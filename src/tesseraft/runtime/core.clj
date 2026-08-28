@@ -8,6 +8,7 @@
     [tesseraft.runtime.approvals :as approvals]
     [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.fragment :as fragment]
+    [tesseraft.runtime.identity :as identity]
     [tesseraft.runtime.lifecycle :as lifecycle]
     [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.sessions :as sessions]
@@ -428,7 +429,7 @@
            state-id (get-in ctx [:run :state])
            attempt (get-in ctx [:run :attempt])
            node (spec/node wf state-id)
-           expected-id (str (name state-id) "-" attempt)
+           expected-id (identity/approval-id state-id attempt)
            request-path (approval-request-path ctx state-id attempt)
            request (when (fs/exists? request-path) (store/read-json request-path))
            decision (some-> decision str)
@@ -526,9 +527,9 @@
                                  (str "approval-feedback/" approval-id ".json"))
                  plan (or existing-finalization
                           {:version 1 :finalization_id finalization-id :approval_id approval-id
-                           :run_id (get-in ctx [:run :id]) :state (name state-id) :attempt attempt
+                           :run_id (get-in ctx [:run :id]) :state (identity/state-string state-id) :attempt attempt
                            :selection selection :selection_hash selection-hash
-                           :target_state (name (:next selected))
+                           :target_state (identity/state-string (:next selected))
                            :effects (mapv name (:effects selected []))
                            :decision_status "prepared" :prepared_at (store/now)})
                  _ (when-not existing-finalization
@@ -549,7 +550,7 @@
                  decision-rec (cond-> {:version 1
                                        :approval_id approval-id
                                        :run_id (get-in ctx [:run :id])
-                                       :state (name state-id)
+                                       :state (identity/state-string state-id)
                                        :attempt attempt
                                        :decision decision
                                        :message message

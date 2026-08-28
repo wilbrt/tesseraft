@@ -2,7 +2,7 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -13,13 +13,15 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((all, value, index,
   if (value.startsWith('--')) all.push([value.slice(2), values[index + 1]]);
   return all;
 }, []));
-const required = ['run-dir', 'state', 'attempt', 'approval-id'];
+const required = ['run-dir', 'state', 'state-path', 'attempt', 'approval-id'];
 for (const key of required) if (!args[key]) throw new Error(`Missing --${key}`);
 const runDir = path.resolve(args['run-dir']);
 const state = args.state;
+const statePath = args['state-path'];
 const attempt = Number(args.attempt);
 const approvalId = args['approval-id'];
-const adapterDir = path.join(runDir, 'approval-adapters', state, String(attempt));
+if (!/^[A-Za-z0-9._%+*-]+$/.test(statePath) || statePath === '.' || statePath === '..') throw new Error('Invalid state path');
+const adapterDir = path.join(runDir, 'approval-adapters', statePath, String(attempt));
 const ownerPath = path.join(adapterDir, 'owner.json');
 const capabilityPath = path.join(adapterDir, 'capability.json');
 const requestPath = path.join(runDir, 'approvals', `${approvalId}.json`);
@@ -68,8 +70,9 @@ const token = await new Promise((resolve, reject) => {
 });
 if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new Error('Invalid capability');
 const initialOwner = await readJson(ownerPath);
-if (initialOwner.pid !== process.pid || initialOwner.approval_id !== approvalId || initialOwner.capability_hash !== sha256(token)) {
-  throw new Error(`Owner claim mismatch (pid=${initialOwner.pid === process.pid}, approval=${initialOwner.approval_id === approvalId}, capability_hash=${initialOwner.capability_hash === sha256(token)})`);
+if (initialOwner.pid !== process.pid || initialOwner.state !== state || initialOwner.attempt !== attempt
+    || initialOwner.approval_id !== approvalId || initialOwner.capability_hash !== sha256(token)) {
+  throw new Error(`Owner claim mismatch (pid=${initialOwner.pid === process.pid}, state=${initialOwner.state === state}, attempt=${initialOwner.attempt === attempt}, approval=${initialOwner.approval_id === approvalId}, capability_hash=${initialOwner.capability_hash === sha256(token)})`);
 }
 let ownerUpdate = Promise.resolve(initialOwner);
 const updateOwner = (patch) => {
@@ -92,15 +95,15 @@ const installRoot = process.env.TESSERAFT_INSTALL_ROOT || path.resolve(path.dirn
 const tesseraftBin = path.join(installRoot, 'bin', 'tesseraft');
 const adapterEnv = { ...process.env, AGENT_RUN_DIR: runDir, TESSERAFT_ADAPTER_INTERNAL: 'true',
                      TESSERAFT_ADAPTER_APPROVAL_ID: approvalId };
-const decision = (payload) => new Promise((resolve) => {
+const applyOperation = (operation, payload, timeout = 30000) => new Promise((resolve) => {
   execFile(tesseraftBin, ['run', 'apply', '--input', '-'],
-    { cwd: installRoot, timeout: 30000, maxBuffer: 1024 * 1024, env: adapterEnv }, (error, stdout, stderr) => {
+    { cwd: installRoot, timeout, maxBuffer: 1024 * 1024, env: adapterEnv }, (error, stdout, stderr) => {
       try { resolve({ error, result: JSON.parse(stdout || '{}'), stderr }); }
       catch { resolve({ error: error || new Error('Runtime returned invalid JSON'), result: null, stderr }); }
-    }).stdin.end(JSON.stringify({ operation: 'run.decide', payload: {
-      decision: payload.decision, message: payload.message, annotations: payload.annotations,
-      run_dir: runDir, approval_id: approvalId
-    } }));
+    }).stdin.end(JSON.stringify({ operation, payload: { ...payload, run_dir: runDir, approval_id: approvalId } }));
+});
+const decision = (payload) => applyOperation('run.decide', {
+  decision: payload.decision, message: payload.message, annotations: payload.annotations
 });
 let supervisorsStarted = false;
 const startSupervisors = (submissionId, transportStatus) => {
@@ -208,12 +211,25 @@ server.listen(0, '127.0.0.1', async () => {
   await chmod(capabilityPath, 0o600);
   await updateOwner({ status: 'ready', endpoint, ready_at: new Date().toISOString() });
 });
+let monitoring = false;
+let monitorReceiptWritten = false;
 const monitor = setInterval(async () => {
+  if (monitoring || draining) return;
+  monitoring = true;
   try {
-    const stateText = await readFile(path.join(runDir, 'state.edn'), 'utf8');
-    const decisionExists = await stat(path.join(runDir, 'approvals', `${approvalId}-decision.json`)).then(() => true, () => false);
-    if (decisionExists || !stateText.includes(':status "blocked"') || !stateText.includes(`:state :${state}`)) void drain(decisionExists ? 'decision-observed' : 'state-changed');
+    const inspection = await applyOperation('approval.adapter.status', {}, 10000);
+    const current = inspection.result?.result;
+    const exactPending = !inspection.error && inspection.result?.ok === true
+      && current?.run_id === initialOwner.run_id && current?.state === state
+      && current?.attempt === attempt && current?.approval_id === approvalId
+      && current?.status === 'blocked' && current?.decision_exists === false;
+    if (exactPending && !monitorReceiptWritten) {
+      monitorReceiptWritten = true;
+      await updateOwner({ monitor_status: 'exact-pending', monitor_checked_at: new Date().toISOString() });
+    }
+    if (!exactPending) void drain(current?.decision_exists ? 'decision-observed' : 'state-changed');
   } catch { void drain('inspection-failed'); }
+  finally { monitoring = false; }
 }, 1000);
 monitor.unref();
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => void drain(signal));

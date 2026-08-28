@@ -1,6 +1,7 @@
 (ns tesseraft.runtime.approvals
   (:require [babashka.fs :as fs]
             [tesseraft.runtime.approval-server :as approval-server]
+            [tesseraft.runtime.identity :as identity]
             [tesseraft.runtime.store :as store]
             [tesseraft.runtime.transitions :as transitions]
             [tesseraft.spec :as spec]))
@@ -9,10 +10,10 @@
 (def finish-if-terminal transitions/finish-if-terminal)
 
 (defn approval-request-path [ctx state-id attempt]
-  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt ".json")))
+  (fs/path (get-in ctx [:run :dir]) "approvals" (str (identity/approval-id state-id attempt) ".json")))
 
 (defn approval-decision-path [ctx state-id attempt]
-  (fs/path (get-in ctx [:run :dir]) "approvals" (str (name state-id) "-" attempt "-decision.json")))
+  (fs/path (get-in ctx [:run :dir]) "approvals" (str (identity/approval-id state-id attempt) "-decision.json")))
 
 (defn approval-finalization-path [ctx approval-id]
   (fs/path (get-in ctx [:run :dir]) "approval-finalizations" (str approval-id ".json")))
@@ -103,14 +104,14 @@
                  (throw (ex-info "No approval transition matched the recorded decision"
                                  {:state state-id :decision (:decision decision)})))
           _ (when (and finalization
-                       (or (not= (:target_state finalization) (name (:next tr)))
+                       (or (not= (:target_state finalization) (identity/state-string (:next tr)))
                            (not= (:effects finalization) (mapv name (:effects tr [])))))
               (throw (ex-info "Pinned approval finalization no longer matches workflow"
                               {:code :approval_finalization_workflow_mismatch
                                :approval-id approval-id})))
           ctx ((if finalization-id store/event-once! store/event!)
                ctx (cond-> {:event "approval.decided"
-                            :state (name state-id)
+                            :state (identity/state-string state-id)
                             :attempt attempt
                             :approval_id approval-id
                             :decision (:decision decision)
@@ -119,8 +120,8 @@
                      finalization-id (assoc :event_id (str finalization-id "/approval-decided"))))
           ctx ((if finalization-id store/event-once! store/event!)
                ctx (cond-> {:event "transition.selected"
-                            :from (name state-id)
-                            :to (name (:next tr))
+                            :from (identity/state-string state-id)
+                            :to (identity/state-string (:next tr))
                             :effects (mapv name (:effects tr []))}
                      finalization-id (assoc :event_id (str finalization-id "/transition"))))
           ;; A decision releases the block. A terminal destination will replace
@@ -148,7 +149,7 @@
     ;; and park. Returning a blocked ctx makes run-until-done! stop cleanly.
     (let [req-path (approval-request-path ctx state-id attempt)
           already? (fs/exists? req-path)
-          approval-id (str (name state-id) "-" attempt)
+          approval-id (identity/approval-id state-id attempt)
           existing (when already? (store/read-json req-path))
           review-config (:review-server node)
           evidence (when (and review-config (not already?))
@@ -173,7 +174,7 @@
                       (cond-> {:version 1
                                :approval_id approval-id
                                :run_id (get-in ctx [:run :id])
-                               :state (name state-id)
+                               :state (identity/state-string state-id)
                                :attempt attempt
                                :message (:message node)
                                :artifact artifact
@@ -190,7 +191,7 @@
                   (store/write-runtime-json! ctx req-path request)
                   (when review-config (approval-server/launch! ctx state-id attempt request))
                   (store/event! ctx {:event "approval.requested"
-                                     :state (name state-id)
+                                     :state (identity/state-string state-id)
                                      :attempt attempt
                                      :approval_id approval-id
                                      :artifact (and artifact (:path artifact))})))

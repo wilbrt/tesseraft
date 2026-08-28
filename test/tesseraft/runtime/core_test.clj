@@ -7,6 +7,7 @@
     [clojure.test :refer [deftest is testing]]
     [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.core :as runtime]
+    [tesseraft.runtime.identity :as identity]
     [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.operations :as operations]
     [tesseraft.runtime.process]
@@ -406,6 +407,121 @@
           (approval-server/cleanup! (store/load-context @target-run-dir)))
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
+        (fs/delete-tree root)))))
+
+(deftest namespaced-focused-approval-preserves-identity-through-http-recovery
+  (let [root (temp-dir "tesseraft-namespaced-git-review")
+        repo (fs/path root "repo")
+        workflow-file (fs/path root "workflow.edn")
+        state-id :team/review
+        approval-id (identity/approval-id state-id 1)
+        adapter-state-path (identity/encoded-state-id state-id)
+        run-dir* (atom nil)
+        run! (fn [& command]
+               (let [result @(p/process (vec command) {:dir (str repo) :out :string :err :string :continue true})]
+                 (is (zero? (:exit result)) (:err result)) result))
+        wait-for (fn [probe]
+                   (loop [remaining 200]
+                     (let [value (try (probe) (catch Throwable _ nil))]
+                       (cond value value
+                             (zero? remaining) nil
+                             :else (do (Thread/sleep 50) (recur (dec remaining)))))))]
+    (try
+      (fs/create-dirs repo)
+      (run! "git" "init" "-q")
+      (run! "git" "config" "user.name" "Namespaced Review Test")
+      (run! "git" "config" "user.email" "namespaced-review@example.test")
+      (spit (str (fs/path repo "review.txt")) "before\n")
+      (run! "git" "add" "review.txt")
+      (run! "git" "commit" "-qm" "base")
+      (spit (str (fs/path repo "review.txt")) "after\n")
+      (spit (str (fs/path root "prompt.md")) "Implement feedback")
+      (spit (str (fs/path root "continue.md")) "Address approval feedback")
+      (spit (str workflow-file)
+            (str "{:api-version \"tesseraft.workflow/v1\" :kind :workflow :metadata {:name \"namespaced-git-review\"} "
+                 ":defaults {:max-rounds 2 :state-timeout \"1m\"} :policies {:require-timeouts true :require-max-rounds true} "
+                 ":initial :team/review :states {"
+                 ":team/review {:type :approval :message \"Review tracked changes\" :timeout \"1m\" "
+                 ":review-server {:kind :git-diff :max-diff-bytes 1048576} "
+                 ":presentation {:question \"Ready?\" :decisions [{:decision \"pass\" :label \"Pass\"} {:decision \"reject\" :label \"Reject\" :requires-message true}]} "
+                 ":transitions [{:when {:decision \"pass\"} :next :done} {:when {:decision \"reject\"} :effects [:merge-issues] :next :implement}]} "
+                 ":other/review {:type :approval :message \"Other review\" :timeout \"1m\" :transitions [{:when {:decision \"pass\"} :next :done}]} "
+                 ":implement {:type :agent :executor :pi-cli :prompt-template \"prompt.md\" :prompt-output \"prompts/generated/implement.md\" :runtime {:timeout \"1m\"} "
+                 ":session {:mode :resumable :continuation-prompt-template \"continue.md\" :continuation-prompt-output \"prompts/generated/continue-{{run.attempt}}.md\"} "
+                 ":outputs {:status {:path \"execution/status-{{run.attempt}}.json\" :required true}} :next :done} "
+                 ":done {:type :terminal :status :success}}}"))
+      (let [started (runtime/start! (str workflow-file)
+                                    {:workspace-root root :run-id "namespaced-git-review"
+                                     :executor :mock :inputs {:repo-root (str repo)}})
+            wf (spec/read-workflow workflow-file)
+            blocked (runtime/run-until-done! wf started 10)
+            run-dir (get-in blocked [:run :dir])
+            request-path (fs/path run-dir "approvals" (str approval-id ".json"))
+            decision-path (fs/path run-dir "approvals" (str approval-id "-decision.json"))
+            owner-file (fs/path run-dir "approval-adapters" adapter-state-path "1" "owner.json")
+            capability-file (fs/path run-dir "approval-adapters" adapter-state-path "1" "capability.json")]
+        (reset! run-dir* run-dir)
+        (is (not= approval-id (identity/approval-id :other/review 1)))
+        (is (not= (approval-server/owner-dir blocked state-id 1)
+                  (approval-server/owner-dir blocked :other/review 1)))
+        (is (not (fs/exists? (fs/path run-dir "approvals" "review-1.json"))))
+        (is (not (fs/exists? (fs/path run-dir "approval-adapters" "review"))))
+        (is (= "blocked" (get-in blocked [:run :status])))
+        (let [owner (wait-for #(let [record (store/read-json owner-file)]
+                                 (when (and (= "ready" (:status record))
+                                            (= "exact-pending" (:monitor_status record))
+                                            (fs/exists? capability-file))
+                                   record)))
+              request (store/read-json request-path)]
+          (is (some? owner) "adapter did not survive its exact structured monitor check")
+          (is (= "team/review" (:state request)))
+          (is (= "team/review" (:state owner)))
+          (is (= approval-id (:approval_id request)))
+          (is (= approval-id (:approval_id owner)))
+          ;; Exact stale recovery must use the same full identity and confined
+          ;; encoded path, not a local-name alias.
+          (let [initial-pid (:pid owner)
+                handle (.get (java.lang.ProcessHandle/of (long initial-pid)))]
+            (.destroyForcibly handle)
+            (.get (.onExit handle) 5 java.util.concurrent.TimeUnit/SECONDS)
+            (runtime/run-until-done! wf (store/load-context run-dir) 1)
+            (let [replacement (wait-for #(let [record (store/read-json owner-file)]
+                                           (when (and (not= initial-pid (:pid record))
+                                                      (= "ready" (:status record))
+                                                      (= "exact-pending" (:monitor_status record))
+                                                      (fs/exists? capability-file))
+                                             record)))
+                  capability (store/read-json capability-file)
+                  response @(p/process ["curl" "-sS" "-X" "POST"
+                                        "-H" "content-type: application/json"
+                                        "-H" (str "x-tesseraft-approval-token: " (:token capability))
+                                        "--data-binary" "{\"decision\":\"pass\"}"
+                                        (str (:endpoint replacement) "/api/decision")]
+                                       {:out :string :err :string :continue true})]
+              (is (some? replacement) "namespaced adapter stale recovery did not converge")
+              (is (= "team/review" (:state replacement)))
+              (is (zero? (:exit response)) (:err response))
+              (is (= true (:ok (json/parse-string (:out response) true))))))
+          (let [stopped (wait-for #(let [record (store/read-json owner-file)
+                                         candidate (java.lang.ProcessHandle/of (long (:pid record)))
+                                         absent? (or (not (.isPresent candidate))
+                                                     (not (.isAlive (.get candidate))))]
+                                     (when (and (= "stopped" (:status record)) absent?
+                                                (not (fs/exists? capability-file)))
+                                       record)))
+                decision (store/read-json decision-path)
+                finalization (store/read-json (fs/path run-dir "approval-finalizations" (str approval-id ".json")))
+                events (read-events run-dir)]
+            (is (some? stopped) "namespaced adapter cleanup did not converge")
+            (is (= "team/review" (:state decision)))
+            (is (= "team/review" (:state finalization)))
+            (is (= "done" (get-in (store/load-context run-dir) [:run :status])))
+            (is (some #(and (= "approval.requested" (:event %)) (= "team/review" (:state %))) events))
+            (is (some #(and (= "approval.adapter.recovered" (:event %)) (= "team/review" (:state %))) events))
+            (is (some #(and (= "approval.decided" (:event %)) (= "team/review" (:state %))) events)))))
+      (finally
+        (when (and @run-dir* (fs/exists? (fs/path @run-dir* "state.edn")))
+          (approval-server/cleanup! (store/load-context @run-dir*)))
         (fs/delete-tree root)))))
 
 (deftest git-diff-snapshot-rejects-conversion-before-helper-or-artifacts
