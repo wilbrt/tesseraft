@@ -114,7 +114,9 @@
       (error! "Resumable session binding lifecycle data is malformed"
               "session_binding_invalid"
               {:state expected-state}))
-    (when-not (valid-session-ref? (:session_ref binding))
+    (when (and (or (contains? binding :session_ref)
+                   (contains? #{"suspended" "closed"} (:status binding)))
+               (not (valid-session-ref? (:session_ref binding))))
       (error! "Resumable session binding has no usable exact reference"
               "session_reference_invalid"
               {:state expected-state}))
@@ -167,37 +169,48 @@
        :relative output-relative
        :sha256 (str "sha256:" (store/sha256 content))})))
 
-(defn activation-plan [ctx state-id node binding]
-  (let [operation (if binding :resume :start)
-        attempt (get-in ctx [:run :attempt])]
-    (when binding
-      (assert-binding-compatible! ctx state-id node binding)
-      (when-not (= "suspended" (:status binding))
-        (error! "Resumable session is not at a safe suspended boundary"
-                "session_not_suspended"
-                {:state (state-string state-id) :status (:status binding)})))
-    (let [sequence (if binding (inc (:activation_sequence binding)) 1)]
-      {:operation operation
-       :attempt attempt
-       :activation-sequence sequence
-       :delivery-id (delivery-id ctx state-id)
-       :session-ref (or (:session_ref binding)
-                        {:kind "id" :value (str (java.util.UUID/randomUUID))})})))
+(defn activation-plan
+  ([ctx state-id node binding]
+   (activation-plan ctx state-id node binding :preallocated))
+  ([ctx state-id node binding reference-allocation]
+   (let [operation (if binding :resume :start)
+         attempt (get-in ctx [:run :attempt])]
+     (when-not (contains? #{:preallocated :executor-emitted} reference-allocation)
+       (error! "Executor has no valid session reference allocation mode"
+               "session_reference_allocation_invalid"
+               {:state (state-string state-id) :allocation reference-allocation}))
+     (when binding
+       (assert-binding-compatible! ctx state-id node binding)
+       (when-not (= "suspended" (:status binding))
+         (error! "Resumable session is not at a safe suspended boundary"
+                 "session_not_suspended"
+                 {:state (state-string state-id) :status (:status binding)})))
+     (let [sequence (if binding (inc (:activation_sequence binding)) 1)
+           session-ref (or (:session_ref binding)
+                           (when (= :preallocated reference-allocation)
+                             {:kind "id" :value (str (java.util.UUID/randomUUID))}))]
+       (cond-> {:operation operation
+                :attempt attempt
+                :activation-sequence sequence
+                :delivery-id (delivery-id ctx state-id)}
+         session-ref (assoc :session-ref session-ref))))))
 
 (defn- public-event-fields [binding]
-  {:state (:state binding)
-   :attempt (get-in binding [:last_activation :attempt])
-   :executor (:executor binding)
-   :activation_sequence (:activation_sequence binding)
-   :delivery_id (get-in binding [:last_activation :delivery_id])
-   :prompt_file (get-in binding [:last_activation :prompt_file])
-   :prompt_sha256 (get-in binding [:last_activation :prompt_sha256])
-   :configuration_hash (:configuration_hash binding)
-   :session_ref_sha256 (str "sha256:" (store/sha256 (get-in binding [:session_ref :value])))})
+  (cond-> {:state (:state binding)
+           :attempt (get-in binding [:last_activation :attempt])
+           :executor (:executor binding)
+           :activation_sequence (:activation_sequence binding)
+           :delivery_id (get-in binding [:last_activation :delivery_id])
+           :prompt_file (get-in binding [:last_activation :prompt_file])
+           :prompt_sha256 (get-in binding [:last_activation :prompt_sha256])
+           :configuration_hash (:configuration_hash binding)}
+    (valid-session-ref? (:session_ref binding))
+    (assoc :session_ref_sha256
+           (str "sha256:" (store/sha256 (get-in binding [:session_ref :value]))))))
 
-(defn begin-activation! [wf ctx state-id node]
+(defn begin-activation! [wf ctx state-id node reference-allocation]
   (let [prior (read-binding ctx state-id)
-        plan (activation-plan ctx state-id node prior)
+        plan (activation-plan ctx state-id node prior reference-allocation)
         prompt (render-activation-prompt! wf ctx state-id node (:operation plan) (:delivery-id plan))
         now (store/now)
         activation {:attempt (:attempt plan)
@@ -213,17 +226,17 @@
                                :activation_sequence (:activation-sequence plan)
                                :last_activation activation
                                :updated_at now))
-                    {:version binding-version
-                     :run_id (get-in ctx [:run :id])
-                     :state (state-string state-id)
-                     :executor (effective-executor ctx node)
-                     :status "allocated"
-                     :session_ref (:session-ref plan)
-                     :configuration_hash (configuration-hash ctx state-id node)
-                     :activation_sequence 1
-                     :last_activation activation
-                     :created_at now
-                     :updated_at now})
+                    (cond-> {:version binding-version
+                             :run_id (get-in ctx [:run :id])
+                             :state (state-string state-id)
+                             :executor (effective-executor ctx node)
+                             :status "allocated"
+                             :configuration_hash (configuration-hash ctx state-id node)
+                             :activation_sequence 1
+                             :last_activation activation
+                             :created_at now
+                             :updated_at now}
+                      (:session-ref plan) (assoc :session_ref (:session-ref plan))))
         _ (write-binding! ctx state-id allocated)
         _ (when (= :start (:operation plan))
             (store/event! ctx (merge {:event "session.allocated"}
@@ -236,13 +249,13 @@
                               :operation (name (:operation plan))}
                              (public-event-fields active)))
     {:binding active
-     :request {:operation (:operation plan)
-               :prompt-file (:absolute prompt)
-               :delivery-id (:delivery-id plan)
-               :session-ref (:session-ref plan)
-               :activation-sequence (:activation-sequence plan)}}))
+     :request (cond-> {:operation (:operation plan)
+                       :prompt-file (:absolute prompt)
+                       :delivery-id (:delivery-id plan)
+                       :activation-sequence (:activation-sequence plan)}
+                (:session-ref plan) (assoc :session-ref (:session-ref plan)))}))
 
-(defn- assert-returned-reference! [binding result]
+(defn- bind-returned-reference! [ctx state-id binding result]
   (let [expected (:session_ref binding)
         returned (:session-ref result)]
     (when-not (valid-session-ref? returned)
@@ -250,11 +263,20 @@
               "session_reference_missing"
               {:state (:state binding) :executor (:executor binding)}))
     (when-not (= expected returned)
-      (error! "Executor returned a different resumable session reference"
-              "session_reference_mismatch"
-              {:state (:state binding) :executor (:executor binding)}))))
+      (when expected
+        (error! "Executor returned a different resumable session reference"
+                "session_reference_mismatch"
+                {:state (:state binding) :executor (:executor binding)})))
+    (if expected
+      binding
+      (write-binding! ctx state-id
+                      (assoc binding :session_ref returned :updated_at (store/now))))))
 
 (defn finish-activation! [ctx state-id binding]
+  (when-not (valid-session-ref? (:session_ref binding))
+    (error! "Resumable session cannot suspend without an exact reference"
+            "session_reference_missing"
+            {:state (:state binding) :executor (:executor binding)}))
   (let [now (store/now)
         suspended (-> binding
                       (assoc :status "suspended" :updated_at now)
@@ -284,17 +306,19 @@
   "Run one explicit session start/resume activation. `invoke` receives the
   normalized request and must return the exact :session-ref. `complete` owns
   status/output validation; the binding is suspended only after it succeeds."
-  [wf ctx state-id node invoke complete]
-  (let [{:keys [binding request]} (begin-activation! wf ctx state-id node)]
+  [wf ctx state-id node reference-allocation invoke complete]
+  (let [{:keys [binding request]} (begin-activation! wf ctx state-id node reference-allocation)
+        current-binding (atom binding)]
     (try
       (let [adapter-result (invoke request)]
         (when-not (map? adapter-result)
           (error! "Executor returned a malformed session result"
                   "session_executor_result_invalid"
                   {:state (state-string state-id)}))
-        (assert-returned-reference! binding adapter-result)
+        (reset! current-binding
+                (bind-returned-reference! ctx state-id binding adapter-result))
         (let [result (complete adapter-result)
-              suspended (finish-activation! ctx state-id binding)]
+              suspended (finish-activation! ctx state-id @current-binding)]
           (-> result
               (dissoc :session-ref)
               (assoc :session-operation (name (:operation request))
@@ -305,7 +329,7 @@
         (let [data (ex-data t)
               error-type (or (:error-type data) (:error_type data) "session_activation_ambiguous")]
           (try
-            (orphan-activation! ctx state-id binding error-type)
+            (orphan-activation! ctx state-id @current-binding error-type)
             (catch Throwable _ nil)))
         (throw t)))))
 
@@ -317,6 +341,11 @@
               "session_binding_missing"
               {:state (state-string state-id) :attempt attempt}))
     (assert-binding-compatible! ctx state-id node binding)
+    (when-not (valid-session-ref? (:session_ref binding))
+      (orphan-activation! ctx state-id binding "session_reference_missing")
+      (error! "Completed resumable activation has no exact session reference"
+              "session_reference_missing"
+              {:state (state-string state-id) :attempt attempt}))
     (when-not (= attempt (get-in binding [:last_activation :attempt]))
       (error! "Completed resumable output does not match the bound activation"
               "session_activation_attempt_mismatch"

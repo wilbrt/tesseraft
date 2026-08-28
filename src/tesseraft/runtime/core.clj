@@ -131,6 +131,11 @@
                     {:executor (:executor node)
                      :error-type "executor_session_resume_unavailable"}))))
 
+(defn session-reference-allocation [ctx node]
+  (if (mock-mode? ctx)
+    :preallocated
+    (executor-catalog/session-reference-allocation (:executor node))))
+
 (defn complete-agent-result! [ctx node exec-result]
   (when-not (:ok exec-result)
     (throw (ex-info "Agent executor failed" (dissoc exec-result :session-ref))))
@@ -269,7 +274,7 @@
                             (do
                               (assert-session-executor-supported! ctx node)
                               (sessions/run-activation!
-                                wf ctx state-id node
+                                wf ctx state-id node (session-reference-allocation ctx node)
                                 #(invoke-session-agent! wf ctx state-id node %)
                                 #(complete-agent-result! ctx node %)))
                             (complete-agent-result! ctx node (run-agent! wf ctx state-id node)))

@@ -158,6 +158,30 @@ def test_resumable_session_shapes_are_owned_by_portable_schemas():
     del fragment_package["fragment"]["states"]["implement"]["session"]["mode"]
     assert schema_errors("fragment-package.schema.json", fragment_package)
 
+    late_bound = {
+        "version": 1,
+        "run_id": "run-1",
+        "state": "implement",
+        "executor": "opencode-cli",
+        "status": "active",
+        "configuration_hash": "sha256:" + ("0" * 64),
+        "activation_sequence": 1,
+        "last_activation": {
+            "attempt": 1,
+            "operation": "start",
+            "delivery_id": "implement-1",
+            "prompt_file": "prompts/implement-1.md",
+            "prompt_sha256": "sha256:" + ("1" * 64),
+            "status": "active",
+            "started_at": "2026-08-28T00:00:00Z",
+        },
+        "created_at": "2026-08-28T00:00:00Z",
+        "updated_at": "2026-08-28T00:00:00Z",
+    }
+    assert schema_errors("session-binding.schema.json", late_bound) == []
+    late_bound["status"] = "suspended"
+    assert schema_errors("session-binding.schema.json", late_bound)
+
 
 def test_json_workflow_normalizes_session_semantics_and_lints(tmp_path):
     result, payload, codes = lint(write_workflow(tmp_path))
@@ -170,7 +194,7 @@ def test_resumable_session_lint_diagnostics_are_explicit(tmp_path):
     cases = []
 
     unsupported = workflow_contract()
-    unsupported["states"]["implement"]["executor"] = "opencode-cli"
+    unsupported["states"]["implement"]["executor"] = "pi-sdk"
     cases.append((unsupported, "resumable-session-unsupported-executor"))
 
     missing_template = workflow_contract()
@@ -444,6 +468,286 @@ execution.mkdir(parents=True, exist_ok=True)
     assert session_id not in (run_dir / "events.jsonl").read_text()
     assert session_id not in (run_dir / "logs" / "implement-1.log").read_text()
     assert session_id not in (run_dir / "logs" / "implement-3.log").read_text()
+
+
+def test_opencode_binds_emitted_session_reference_and_resumes_it_explicitly(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    workflow.write_text(workflow.read_text().replace(":executor :pi-cli", ":executor :opencode-cli"))
+    argv_log = workspace_layout.logs / "opencode-session-argv.jsonl"
+    stdin_dir = workspace_layout.logs / "opencode-prompts"
+    stub = workspace_layout.fixtures / "opencode-session-stub.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+session_id = "ses_tesseraft_emitted_123"
+with pathlib.Path(os.environ["OPENCODE_SESSION_ARGV_LOG"]).open("a") as stream:
+    stream.write(json.dumps(sys.argv[1:]) + "\\n")
+prompt_dir = pathlib.Path(os.environ["OPENCODE_SESSION_STDIN_DIR"])
+prompt_dir.mkdir(parents=True, exist_ok=True)
+attempt = os.environ["AGENT_ATTEMPT"]
+(prompt_dir / f"{attempt}.md").write_text(sys.stdin.read())
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"fake OpenCode session","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("fake OpenCode summary\\n")
+print(json.dumps({"type": "step_start", "sessionID": session_id}))
+print(json.dumps({"type": "step_finish", "sessionID": session_id}))
+'''
+    )
+    stub.chmod(0o755)
+
+    result = run_command(
+        [
+            BIN,
+            "run",
+            str(workflow),
+            "--run-id",
+            "resumable-opencode-explicit-reference",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Use one exact OpenCode session",
+            "--format",
+            "json",
+        ],
+        env={
+            "OPENCODE_BIN": str(stub),
+            "OPENCODE_SESSION_ARGV_LOG": str(argv_log),
+            "OPENCODE_SESSION_STDIN_DIR": str(stdin_dir),
+        },
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    run_dir = Path(json.loads(result.stdout)["run"]["dir"])
+    binding = json.loads((run_dir / "sessions" / "implement" / "binding.json").read_text())
+    session_id = binding["session_ref"]["value"]
+    assert session_id == "ses_tesseraft_emitted_123"
+    calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert len(calls) == 2
+    first, second = calls
+    assert "--session" not in first
+    assert second[second.index("--session") + 1] == session_id
+    assert "--continue" not in first + second
+    assert "--fork" not in first + second
+    assert "Use one exact OpenCode session" in (stdin_dir / "1.md").read_text()
+    assert "Continue the existing implementation" in (stdin_dir / "3.md").read_text()
+    assert "Use one exact OpenCode session" not in (stdin_dir / "3.md").read_text()
+    assert binding["status"] == "closed"
+    assert binding["activation_sequence"] == 2
+    assert session_id not in (run_dir / "events.jsonl").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-opencode-cli-1.log").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-opencode-cli-3.log").read_text()
+
+
+def test_opencode_missing_emitted_reference_orphans_without_starting_a_replacement(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    workflow.write_text(workflow.read_text().replace(":executor :pi-cli", ":executor :opencode-cli"))
+    calls = workspace_layout.logs / "opencode-missing-reference-calls.txt"
+    stub = workspace_layout.fixtures / "opencode-missing-reference.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+with pathlib.Path(os.environ["OPENCODE_MISSING_REF_CALLS"]).open("a") as stream:
+    stream.write(os.environ["AGENT_ATTEMPT"] + "\\n")
+sys.stdin.read()
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+attempt = os.environ["AGENT_ATTEMPT"]
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"missing reference","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("missing reference\\n")
+print(json.dumps({"type": "step_finish"}))
+'''
+    )
+    stub.chmod(0o755)
+
+    result = run_command(
+        [
+            BIN,
+            "run",
+            str(workflow),
+            "--run-id",
+            "resumable-opencode-missing-reference",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Never replace a missing session",
+            "--format",
+            "json",
+        ],
+        env={"OPENCODE_BIN": str(stub), "OPENCODE_MISSING_REF_CALLS": str(calls)},
+    )
+    assert result.returncode != 0
+    binding_paths = list(workspace_layout.workspace.rglob("sessions/implement/binding.json"))
+    assert len(binding_paths) == 1
+    binding_path = binding_paths[0]
+    run_dir = binding_path.parents[2]
+    binding = json.loads(binding_path.read_text())
+    assert schema_errors("session-binding.schema.json", binding) == []
+    assert binding["status"] == "orphaned"
+    assert "session_ref" not in binding
+    assert binding["last_activation"]["error_type"] == "session_reference_missing"
+    assert calls.read_text().splitlines() == ["1"]
+    events = read_json_lines(run_dir / "events.jsonl")
+    assert [event["event"] for event in events if event["event"].startswith("session.")] == [
+        "session.allocated",
+        "session.activation.started",
+        "session.orphaned",
+    ]
+    assert all("session_ref_sha256" not in event for event in events)
+
+
+def test_opencode_mismatched_resume_reference_fails_closed(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    workflow.write_text(workflow.read_text().replace(":executor :pi-cli", ":executor :opencode-cli"))
+    argv_log = workspace_layout.logs / "opencode-mismatch-argv.jsonl"
+    stub = workspace_layout.fixtures / "opencode-mismatch.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+args = sys.argv[1:]
+with pathlib.Path(os.environ["OPENCODE_MISMATCH_ARGV_LOG"]).open("a") as stream:
+    stream.write(json.dumps(args) + "\\n")
+sys.stdin.read()
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+attempt = os.environ["AGENT_ATTEMPT"]
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"mismatch probe","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("mismatch probe\\n")
+session_id = "ses_original" if attempt == "1" else "ses_wrong"
+print(json.dumps({"type": "step_finish", "sessionID": session_id}))
+'''
+    )
+    stub.chmod(0o755)
+
+    result = run_command(
+        [
+            BIN,
+            "run",
+            str(workflow),
+            "--run-id",
+            "resumable-opencode-mismatch",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Reject a mismatched session",
+            "--format",
+            "json",
+        ],
+        env={"OPENCODE_BIN": str(stub), "OPENCODE_MISMATCH_ARGV_LOG": str(argv_log)},
+    )
+    assert result.returncode != 0
+    binding_paths = list(workspace_layout.workspace.rglob("sessions/implement/binding.json"))
+    assert len(binding_paths) == 1
+    binding_path = binding_paths[0]
+    run_dir = binding_path.parents[2]
+    binding = json.loads(binding_path.read_text())
+    assert binding["status"] == "orphaned"
+    assert binding["session_ref"]["value"] == "ses_original"
+    assert binding["last_activation"]["error_type"] == "executor_session_reference_mismatch"
+    calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert len(calls) == 2
+    assert "--session" not in calls[0]
+    assert calls[1][calls[1].index("--session") + 1] == "ses_original"
+    assert "--continue" not in calls[0] + calls[1]
+    assert "ses_original" not in (run_dir / "events.jsonl").read_text()
+    assert "ses_wrong" not in (run_dir / "events.jsonl").read_text()
+    assert "ses_original" not in (run_dir / "logs" / "implement-opencode-cli-3.log").read_text()
+    assert "ses_wrong" not in (run_dir / "logs" / "implement-opencode-cli-3.log").read_text()
+
+
+def test_claude_code_preallocates_session_reference_and_resumes_it_explicitly(workspace_layout):
+    workflow = copy_runtime_fixture(workspace_layout.workspace)
+    workflow.write_text(workflow.read_text().replace(":executor :pi-cli", ":executor :claude-code"))
+    argv_log = workspace_layout.logs / "claude-session-argv.jsonl"
+    stdin_dir = workspace_layout.logs / "claude-prompts"
+    stub = workspace_layout.fixtures / "claude-session-stub.py"
+    stub.write_text(
+        '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+args = sys.argv[1:]
+with pathlib.Path(os.environ["CLAUDE_SESSION_ARGV_LOG"]).open("a") as stream:
+    stream.write(json.dumps(args) + "\\n")
+prompt_dir = pathlib.Path(os.environ["CLAUDE_SESSION_STDIN_DIR"])
+prompt_dir.mkdir(parents=True, exist_ok=True)
+attempt = os.environ["AGENT_ATTEMPT"]
+(prompt_dir / f"{attempt}.md").write_text(sys.stdin.read())
+run_dir = pathlib.Path(os.environ["AGENT_RUN_DIR"])
+execution = run_dir / "execution"
+execution.mkdir(parents=True, exist_ok=True)
+(execution / f"implement-status-{attempt}.json").write_text(
+    '{"status":"pass","summary":"fake Claude session","issues_file":null}\\n'
+)
+(execution / f"implement-summary-{attempt}.md").write_text("fake Claude summary\\n")
+flag = "--session-id" if "--session-id" in args else "--resume"
+session_id = args[args.index(flag) + 1]
+print(json.dumps({"type": "result", "session_id": session_id, "result": "done"}))
+'''
+    )
+    stub.chmod(0o755)
+
+    result = run_command(
+        [
+            BIN,
+            "run",
+            str(workflow),
+            "--run-id",
+            "resumable-claude-explicit-reference",
+            "--workspace-root",
+            str(workspace_layout.workspace),
+            "--input",
+            "prompt=Use one exact Claude session",
+            "--format",
+            "json",
+        ],
+        env={
+            "CLAUDE_BIN": str(stub),
+            "CLAUDE_SESSION_ARGV_LOG": str(argv_log),
+            "CLAUDE_SESSION_STDIN_DIR": str(stdin_dir),
+            "ANTHROPIC_API_KEY": "must-not-reach-claude",
+        },
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    run_dir = Path(json.loads(result.stdout)["run"]["dir"])
+    binding = json.loads((run_dir / "sessions" / "implement" / "binding.json").read_text())
+    session_id = binding["session_ref"]["value"]
+    calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    assert len(calls) == 2
+    first, second = calls
+    assert first[first.index("--session-id") + 1] == session_id
+    assert second[second.index("--resume") + 1] == session_id
+    assert "--resume" not in first
+    assert "--session-id" not in second
+    assert "--continue" not in first + second
+    assert "--output-format" in first + second
+    assert binding["status"] == "closed"
+    assert binding["activation_sequence"] == 2
+    assert session_id not in (run_dir / "events.jsonl").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-claude-code-1.log").read_text()
+    assert session_id not in (run_dir / "logs" / "implement-claude-code-3.log").read_text()
 
 
 def test_interrupted_session_with_complete_outputs_recovers_without_redelivery(workspace_layout):

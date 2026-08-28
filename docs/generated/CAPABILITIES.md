@@ -152,7 +152,7 @@ Evidence:
 
 Status: **Implemented**
 
-Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi/mock resumption.
+Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi, OpenCode, Claude Code, and mock resumption.
 
 Evidence:
 

@@ -118,9 +118,11 @@ The runtime persists one binding per `(run id, state id)` below the owning run's
 `sessions/` directory. Each graph visit is still a bounded node activation;
 only the exact external session reference persists between visits. Initial and
 continuation prompts are written before delivery and carry stable delivery
-markers. Pi uses explicit `--session-id`/`--session` selection, while mock mode
-provides deterministic local execution. Missing, changed, active, orphaned, or
-unsupported bindings fail closed rather than starting a replacement session.
+markers. Pi uses explicit `--session-id`/`--session` selection, Claude Code uses
+`--session-id`/`--resume`, and OpenCode durably binds its first emitted id before
+using `--session`. Mock mode provides deterministic local execution. Missing,
+changed, active, orphaned, or unsupported bindings fail closed rather than
+starting a replacement session.
 
 ## Asset closure
 

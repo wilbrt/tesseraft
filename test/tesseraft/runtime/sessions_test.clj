@@ -62,3 +62,14 @@
                             (sessions/activation-plan base-ctx :implement
                                                       (assoc base-node :model "different")
                                                       binding))))))
+
+(deftest executor-emitted-session-reference-is-late-bound-only-on-start
+  (let [started (sessions/activation-plan base-ctx :implement base-node nil
+                                          :executor-emitted)
+        binding (binding-for base-ctx :implement base-node)
+        resumed (sessions/activation-plan base-ctx :implement base-node binding
+                                          :executor-emitted)]
+    (is (= :start (:operation started)))
+    (is (not (contains? started :session-ref)))
+    (is (= :resume (:operation resumed)))
+    (is (= (:session_ref binding) (:session-ref resumed)))))

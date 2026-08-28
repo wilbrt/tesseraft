@@ -83,7 +83,7 @@ The server binds to `127.0.0.1:7341` by default. Non-loopback binds require the 
 | `executor-catalog` | Implemented | One catalog owns executor metadata, availability, and dispatchability. |
 | `local-control-plane` | Implemented | Structured application operations and focused services own project, workflow, run, approval, and settings mutations. |
 | `work-tracker-catalog` | Implemented | One provider catalog drives Plane, Jira, and GitHub Issues validation, metadata, mock, doctor, and live fetch behavior. |
-| `resumable-agent-sessions` | Implemented | Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi/mock resumption. |
+| `resumable-agent-sessions` | Implemented | Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi, OpenCode, Claude Code, and mock resumption. |
 
 Detailed evidence: [docs/generated/CAPABILITIES.md](docs/generated/CAPABILITIES.md).
 <!-- END STATUS -->

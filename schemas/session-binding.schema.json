@@ -10,13 +10,19 @@
     "state",
     "executor",
     "status",
-    "session_ref",
     "configuration_hash",
     "activation_sequence",
     "last_activation",
     "created_at",
     "updated_at"
   ],
+  "if": {
+    "properties": {
+      "status": { "enum": ["suspended", "closed"] }
+    },
+    "required": ["status"]
+  },
+  "then": { "required": ["session_ref"] },
   "properties": {
     "version": { "const": 1 },
     "run_id": { "type": "string", "minLength": 1 },

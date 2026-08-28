@@ -25,10 +25,11 @@ model switching in version one.
 Suggested branch: `feature/resumable-agent-sessions`.
 
 Implementation status: the portable contract, durable binding lifecycle,
-restart recovery, mock executor, explicit Pi CLI start/resume adapter, and
-maintained review-loop example are implemented on the feature branch. OpenCode,
-Claude Code, and UI authoring/inspection remain the explicitly deferred RS5–RS7
-increments; their executors continue to advertise no resume capability.
+restart recovery, mock executor, explicit Pi CLI, OpenCode CLI, and Claude Code
+start/resume adapters, and maintained review-loop example are implemented.
+OpenCode uses an executor-emitted reference on its first activation; Pi and
+Claude Code use preallocated UUIDs. UI authoring/inspection remains the
+explicitly deferred RS7 increment.
 
 ## Decision summary
 
@@ -363,7 +364,7 @@ The executor catalog remains the sole source of resume capability metadata.
 `:session {:mode :resumable}` is a lint error unless the selected executor is
 dispatchable and declares resumable-session support.
 
-Initial support order:
+Implemented support order:
 
 1. **Mock executor** — deterministic stable references and activation
    sequences, enabling default tests without credentials or network access.
@@ -371,11 +372,10 @@ Initial support order:
    `--session`, and `--session-dir` options, and the current catalog already
    declares session-resume support. Start and resume must never use ambient
    `--continue` lookup.
-3. **OpenCode CLI** — follow-up after capturing and durably binding the emitted
-   session id. Resume uses explicit `--session`; never `--continue`.
-4. **Claude Code** — follow-up after switching the adapter to a structured
-   output mode that reliably captures its session id. Resume uses explicit
-   `--resume <id>`.
+3. **OpenCode CLI** — captures and durably binds the first emitted session id.
+   Resume uses explicit `--session`; never `--continue`.
+4. **Claude Code** — preallocates an exact UUID, validates it against structured
+   result output, and resumes with explicit `--resume <id>`.
 
 An installed CLI exposing a resume flag is not sufficient. Tesseraft support
 requires a tested stable reference, explicit selection, prompt delivery, and
@@ -483,7 +483,8 @@ Acceptance:
   distinct concepts.
 - Pi has enough evidence to be the first live implementation.
 - OpenCode and Claude Code remain disabled for the feature until their binding
-  and recovery evidence is adequate.
+  and recovery evidence is adequate. RS5 and RS6 subsequently satisfied this
+  gate.
 
 ### RS1 — Portable contract and static proof
 
@@ -575,7 +576,7 @@ Acceptance:
 - The implementation trajectory is continuous; reviewer context is isolated.
 - Maximum rounds still stop a non-converging loop.
 
-### RS5 — OpenCode support
+### RS5 — OpenCode support (implemented)
 
 Outcome: OpenCode implements the same contract with an explicitly captured
 session id and `--session` resumption.
@@ -587,7 +588,7 @@ Required work:
 - Persist per-activation raw event streams without treating them as binding
   authority.
 
-### RS6 — Claude Code support
+### RS6 — Claude Code support (implemented)
 
 Outcome: Claude Code implements the same contract with structured session-id
 capture and explicit `--resume`.

@@ -69,7 +69,7 @@
   }, {
     "id" : "resumable-agent-sessions",
     "status" : "implemented",
-    "summary" : "Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi/mock resumption.",
+    "summary" : "Explicit agent session policies preserve one exact run/state-owned trajectory across bounded activations, with durable prompts, recovery evidence, and fail-closed Pi, OpenCode, Claude Code, and mock resumption.",
     "evidence" : [ "docs/design/RESUMABLE_SESSIONS.md", "schemas/session-binding.schema.json", "src/tesseraft/runtime/sessions.clj", "test/resumable_session_contract.test.py", "examples/catalog/resumable-code-review-loop/workflow.edn" ]
   } ],
   "not_yet_implemented" : [ "Full Pi SDK executor", "Database-backed or hosted runner" ]
