@@ -133,6 +133,7 @@
     (try
       (System/setProperty "tesseraft.test.adapter-exit-delay-ms" "30000")
       (System/setProperty "tesseraft.test.adapter-hold-after-abort" "true")
+      (System/setProperty "tesseraft.test.drain-hold-through-generation" "2")
       (fs/create-dirs repo)
       (run! "git" "init" "-q")
       (run! "git" "config" "user.name" "Review Test")
@@ -259,11 +260,25 @@
               (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))]
                 (when (and (< (or (:drain_generation receipt) 0) 2) (pos? remaining))
                   (Thread/sleep 10) (recur (dec remaining)))))
-            (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))]
+            (let [receipt (store/read-json (first (fs/glob drain-dir "*.json")))
+                  candidate (java.lang.ProcessHandle/of (long (:worker_pid receipt)))
+                  worker (when (.isPresent candidate) (.get candidate))]
               (is (= 2 (:drain_generation receipt)))
-              (is (not= @generation-one-worker (:worker_pid receipt))))
-            ;; No mutating inspection/resume follows. Generation 2 must finish
-            ;; exact cleanup and autonomously relaunch the pending endpoint.
+              (is (not= @generation-one-worker (:worker_pid receipt)))
+              (is (some? worker) "generation-2 drain worker exited before exhaustion barrier")
+              (when worker
+                (.destroyForcibly worker)
+                (.get (.onExit worker) 5 java.util.concurrent.TimeUnit/SECONDS)))
+            ;; Both adapter-launched candidates are now dead. An explicit
+            ;; external reconciliation pass must CAS-claim generation 3 and
+            ;; autonomously relaunch the pending endpoint.
+            (let [result (operations/apply-operation
+                           {:operation "approval.adapter.reconcile"
+                            :payload {:run_dir run-dir}})
+                  reconciled (get-in result [:result :reconciled])]
+              (is (= true (:ok result)))
+              (is (= 1 (count reconciled)))
+              (is (= 3 (:drain-generation (first reconciled)))))
             (loop [remaining 200]
               (let [current (store/read-json owner-file)
                     drains (when (fs/exists? drain-dir) (vec (fs/glob drain-dir "*.json")))]
@@ -280,7 +295,7 @@
               (is (not= (:pid owner) (:pid current)))
               (is (= "ready" (:status current)))
               (is (= 1 (count drains)))
-              (is (= 2 (:drain_generation receipt)))
+              (is (= 3 (:drain_generation receipt)))
               (is (= "aborted" (:transport_status receipt)))
               (is (= true (:listener_absent receipt)))
               (is (= "complete" (:lifecycle_status receipt))))))
@@ -350,6 +365,7 @@
       (finally
         (System/clearProperty "tesseraft.test.adapter-exit-delay-ms")
         (System/clearProperty "tesseraft.test.adapter-hold-after-abort")
+        (System/clearProperty "tesseraft.test.drain-hold-through-generation")
         (when (fs/exists? (fs/path root ".agent-runs" "git-review" "git-review" "state.edn"))
           (approval-server/cleanup! (store/load-context (fs/path root ".agent-runs" "git-review" "git-review"))))
         (fs/delete-tree root)))))

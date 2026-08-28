@@ -201,6 +201,8 @@
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_EXIT_DELAY_MS" delay))
     (when (= "true" (System/getProperty "tesseraft.test.adapter-hold-after-abort"))
       (.put (.environment pb) "TESSERAFT_TEST_ADAPTER_HOLD_AFTER_ABORT" "true"))
+    (when-let [generation (System/getProperty "tesseraft.test.drain-hold-through-generation")]
+      (.put (.environment pb) "TESSERAFT_TEST_DRAIN_HOLD_THROUGH_GENERATION" generation))
     (let [child (.start pb)
           started (some-> child .toHandle .info .startInstant (.orElse nil) str)
           record {:version 1 :run_id (get-in ctx [:run :id]) :state (name state-id) :attempt attempt
@@ -313,7 +315,14 @@
       {:handoff (:status claim) :run-dir run_dir}
 
       :else
-      (let [wait-absent (fn [attempts]
+      (let [hold-through (some-> (or (System/getProperty "tesseraft.test.drain-hold-through-generation")
+                                      (System/getenv "TESSERAFT_TEST_DRAIN_HOLD_THROUGH_GENERATION"))
+                                  parse-long)
+            _ (when (and (= "aborted" transport_status)
+                         hold-through (<= (:generation claim) hold-through))
+                ;; Deterministic aborted-drain fault barrier only; production has no hold value.
+                (loop [] (Thread/sleep 1000) (recur)))
+            wait-absent (fn [attempts]
                           (loop [remaining attempts]
                             (let [{:keys [exact-live]} (owner-process expected-adapter)]
                               (cond (not exact-live) true
@@ -391,6 +400,40 @@
                       {:handoff :relaunched :run-dir run_dir :drain-generation (:generation claim)})
                     {:handoff handoff :run-dir run_dir :drain-generation (:generation claim)
                      :execution-intent-id intent-id}))))))))))
+
+(defn reconcile-drains!
+  "External bounded reconciler for incomplete focused-approval drains. Durable
+  receipts remain authority: exact live workers are skipped and a proven-dead
+  generation is reclaimed only by supervise-drain!'s run-lock CAS."
+  [run-dir]
+  (let [_ (store/load-context run-dir)
+        root (fs/path run-dir "approval-adapters")]
+    (if-not (fs/exists? root)
+      []
+      (let [paths (vec (take 257 (fs/glob root "**/drains/*.json")))]
+        (when (> (count paths) 256)
+          (throw (ex-info "Focused approval drain reconciliation exceeds 256 receipts"
+                          {:code :approval_drain_reconcile_bound_exceeded :limit 256})))
+        (->> paths
+           (keep (fn [path]
+                   (let [receipt (store/read-json path)
+                         owner-file (fs/path (fs/parent (fs/parent path)) "owner.json")
+                         owner (when (fs/exists? owner-file) (store/read-json owner-file))
+                         worker {:pid (:worker_pid receipt)
+                                 :process_started_at (:worker_started_at receipt)}]
+                     (when (and owner
+                                (not= "complete" (:lifecycle_status receipt))
+                                (not (:exact-live (owner-process worker))))
+                       (supervise-drain!
+                         {:run_dir (str run-dir)
+                          :state (:state owner)
+                          :attempt (:attempt owner)
+                          :approval_id (:approval_id receipt)
+                          :pid (:adapter_pid receipt)
+                          :process_started_at (:process_started_at receipt)
+                          :submission_id (:submission_id receipt)
+                          :transport_status (:transport_status receipt)})))))
+           vec)))))
 
 (defn reconcile-blocked! [ctx]
   (let [state-id (get-in ctx [:run :state])

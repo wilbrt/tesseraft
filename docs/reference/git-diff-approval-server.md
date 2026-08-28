@@ -66,7 +66,10 @@ the canonical decision child. Either transport outcome starts two detached
 drain candidates before listener drain, but a run-locked submission record
 permits only one authoritative worker generation. The other candidate waits;
 if the exact claimed worker dies it CAS-claims the next generation, while a
-completed generation makes it exit without mutation. After exact adapter
+completed generation makes it exit without mutation. If both initial candidates
+die, the bounded external `approval.adapter.reconcile` operation scans durable
+incomplete receipts, skips exact live workers, and invokes the same CAS protocol
+for a later generation. After exact adapter
 PID/start absence, the winning worker serializes behind canonical decision
 completion, removes only the matching capability, writes a lifecycle receipt,
 and binds transport/lifecycle/submission/generation fields into the approval
@@ -105,8 +108,8 @@ events are authority. The listener and browser are transient adapters.
   detached per-submission candidates use one durable monotonic drain claim to
   recover a killed worker and autonomously relaunch a still-pending endpoint
   after finished/aborted cleanup. Pure inspection remains side-effect free;
-  recovery is bounded to the two launched candidates, not a general always-on
-  reconciler.
+  an explicit external reconciliation pass can recover after both initial
+  candidates die without making browser, adapter, or query state authoritative.
 - Every CLI, Web, structured apply, retry, approval-resume, and detached
   handoff execution passes through the state-authoritative execution-intent
   gateway. A parent durably leases `requested → launching` before spawn; the

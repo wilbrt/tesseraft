@@ -57,6 +57,13 @@
                           (runtime-process/launch-intent! run-dir "run.resume" {}))]
             {:ok true :operation operation
              :result (cond-> supervised resumed (assoc :resume resumed))})
+          "approval.adapter.reconcile"
+          (let [reconciled (approval-server/reconcile-drains! run-dir)
+                resumed (some #(when (= :resume-requested (:handoff %))
+                                 (runtime-process/launch-intent! run-dir "run.resume" {}))
+                              reconciled)]
+            {:ok true :operation operation
+             :result {:reconciled reconciled :resume resumed}})
           "run.decide" (let [result (runtime/decide! run-dir (:approval_id payload) (:decision payload)
                                                       (or (:message payload) (:summary payload))
                                                       (:annotations payload) (:author payload))]
