@@ -822,7 +822,8 @@ time.sleep(300)
             and json.loads(binding_path.read_text())["status"] == "active"
         )
         child = int(child_pid.read_text())
-        process.kill()
+        runtime_owner = json.loads((run_dir / "runtime-process.json").read_text())["pid"]
+        kill_pid(runtime_owner)
         process.wait(timeout=5)
         kill_pid(child)
 
@@ -925,7 +926,8 @@ time.sleep(300)
             and json.loads(binding_path.read_text())["status"] == "active"
         )
         child = int(child_pid.read_text())
-        process.kill()
+        runtime_owner = json.loads((run_dir / "runtime-process.json").read_text())["pid"]
+        kill_pid(runtime_owner)
         process.wait(timeout=5)
         kill_pid(child)
 
@@ -944,15 +946,16 @@ time.sleep(300)
             env=env,
         )
         assert resumed.returncode != 0
-        assert "Orphaned node detected" in resumed.stderr
+        assert "Orphaned node detected" in resumed.stderr, resumed.stderr
         assert calls.read_text().splitlines() == ["1"]
         binding = json.loads(binding_path.read_text())
         assert binding["status"] == "orphaned"
         assert binding["last_activation"]["error_type"] == "session_activation_interrupted"
         events = read_json_lines(run_dir / "events.jsonl")
-        assert [event["event"] for event in events][-2:] == [
+        assert [event["event"] for event in events][-3:] == [
             "session.orphaned",
             "node.orphaned",
+            "runtime.released",
         ]
     finally:
         if process.poll() is None:

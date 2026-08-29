@@ -42,6 +42,76 @@
       "type": "integer",
       "minimum": 1
     },
+    "execution_cancel_generation": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic fence captured by every runtime execution claim."
+    },
+    "execution_cancel_in_progress": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Generation currently preventing launch while exact cancellation completes."
+    },
+    "runtime_claim": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["version", "execution_id", "pid", "process_started_at", "phase", "cancel_generation", "claimed_at"],
+      "properties": {
+        "version": { "const": 1 },
+        "execution_id": { "type": "string", "minLength": 1 },
+        "pid": { "type": "integer", "minimum": 1 },
+        "process_started_at": { "type": "string", "minLength": 1 },
+        "phase": { "enum": ["claimed", "executing", "cancel-requested"] },
+        "cancel_generation": { "type": "integer", "minimum": 0 },
+        "claimed_at": { "type": "string", "minLength": 1 },
+        "executing_at": { "type": "string", "minLength": 1 },
+        "cancel_requested_at": { "type": "string", "minLength": 1 },
+        "intent_id": { "type": "string", "minLength": 1 },
+        "intent_generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "active_execution_intent_id": {
+      "type": ["string", "null"],
+      "description": "Current execution intent selected for launch, claim, recovery, or completion."
+    },
+    "execution_intents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["version", "kind", "intent_id", "generation", "phase", "operation", "options", "expected", "cancel_generation", "consumed_event_id", "requested_at"],
+        "properties": {
+          "version": { "const": 1 },
+          "kind": { "enum": ["manual", "orphan-recovery", "approval-resume"] },
+          "intent_id": { "type": "string", "minLength": 1 },
+          "generation": { "type": "integer", "minimum": 1 },
+          "phase": { "enum": ["requested", "launching", "claimed", "executing", "finished", "abandoned", "cancel-requested"] },
+          "operation": { "enum": ["run.step", "run.resume"] },
+          "options": { "type": "object" },
+          "expected": {
+            "type": "object",
+            "required": ["state", "attempt", "status"],
+            "properties": {
+              "state": { "type": "string" },
+              "attempt": { "type": "integer", "minimum": 1 },
+              "status": { "type": "string" }
+            }
+          },
+          "cancel_generation": { "type": "integer", "minimum": 0 },
+          "consumed_event_id": { "type": "string", "minLength": 1 },
+          "requested_at": { "type": "string", "minLength": 1 },
+          "launching_at": { "type": "string", "minLength": 1 },
+          "claimed_at": { "type": "string", "minLength": 1 },
+          "executing_at": { "type": "string", "minLength": 1 },
+          "finished_at": { "type": "string", "minLength": 1 },
+          "abandoned_at": { "type": "string", "minLength": 1 },
+          "cancel_requested_at": { "type": "string", "minLength": 1 },
+          "consumed": { "type": "boolean" },
+          "launcher": { "type": ["object", "null"] },
+          "owner": { "type": ["object", "null"] }
+        }
+      }
+    },
     "created_at": {
       "type": "string"
     },

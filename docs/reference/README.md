@@ -3,6 +3,7 @@
 - [Projects and local stores](PROJECTS.md)
 - [Control-plane API](CONTROL_PLANE_API.md)
 - [Workflow runs and recovery](WORKFLOW_RUNS.md)
+- [Git-diff approval server](git-diff-approval-server.md)
 - [Linter](LINTER.md)
 - [Node packages](NODES.md)
 - [Fragment packages](FRAGMENTS.md)

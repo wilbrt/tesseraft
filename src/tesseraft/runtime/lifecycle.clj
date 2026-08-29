@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [tesseraft.runtime.approval-server :as approval-server]
             [tesseraft.runtime.fragment :as fragment]
             [tesseraft.runtime.process :as runtime-process]
             [tesseraft.runtime.sessions :as sessions]
@@ -19,6 +20,7 @@
 (def runtime-process-path runtime-process/runtime-process-path)
 (def register-runtime-process! runtime-process/register!)
 (def unregister-runtime-process! runtime-process/unregister!)
+(def assert-runtime-active! runtime-process/assert-active!)
 (def run-owner-env runtime-process/owner-env)
 (def run-tracked-process! runtime-process/run-tracked!)
 (def stop-owned-processes! runtime-process/stop-owned!)
@@ -119,34 +121,81 @@
         running))))
 
 (defn cancel! [run-dir]
-  (let [before (store/load-context run-dir)]
-    (if (terminal-run? before)
-      before
-      (let [process (stop-runtime-process! run-dir)
-            ;; Reload after stopping the process so its last durable transition
-            ;; cannot overwrite the cancellation state.
-            ctx (store/load-context run-dir)
-            cancelled (-> ctx
-                          (assoc-in [:run :status] "cancelled")
-                          (assoc-in [:run :updated-at] (store/now)))]
-        (sessions/orphan-active-bindings! cancelled)
-        (store/event! cancelled {:event "run.cancelled"
-                                 :pid (:pid process)
-                                 :process_found (:process_found process)
-                                 :descendants (:descendants process)
-                                 :descendants_enumerated (:descendants_enumerated process)
-                                 :owned_processes (:owned_processes process)
-                                 :owned_processes_enumerated (:owned_processes_enumerated process)
-                                 :owned_processes_stopped (:owned_processes_stopped process)
-                                 :stopped (:stopped process)})
-        (store/save-context! cancelled)
-        ;; A fragment's own nested run dir is a full durable run in its own
-        ;; right: cancelling the parent must not leave it silently "running"
-        ;; forever once the owning parent process is gone. The parent's own
-        ;; "cancelled" status is already durable above, so a throw while
-        ;; cancelling a nested run (e.g. an unreadable state.edn) can never
-        ;; leave the parent's own cancellation unrecorded; cancel-internal-runs!
-        ;; itself isolates failures per nested attempt dir.
+  (let [{:keys [terminal fenced generation]}
+        (store/with-run-lock run-dir
+          (fn []
+            (let [ctx (store/load-context run-dir)]
+              (cond
+                (terminal-run? ctx) {:terminal ctx}
+                (:execution-cancel-in-progress ctx)
+                (throw (ex-info "Run cancellation is already in progress"
+                                {:code :runtime_cancel_in_progress
+                                 :generation (:execution-cancel-in-progress ctx)}))
+                :else
+                (let [generation (inc (or (:execution-cancel-generation ctx) 0))
+                      cancelled-at (store/now)
+                      claim (some-> (:runtime-claim ctx)
+                                    (assoc :phase :cancel-requested
+                                           :cancel-generation generation
+                                           :cancel-requested-at cancelled-at))
+                      intents (into {}
+                                    (map (fn [[id intent]]
+                                           [id (case (:phase intent)
+                                                 (:requested :launching)
+                                                 (assoc intent :phase :abandoned
+                                                        :abandon-reason :cancelled
+                                                        :abandoned-at cancelled-at)
+                                                 (:claimed :executing)
+                                                 (assoc intent :phase :cancel-requested
+                                                        :cancel-generation generation
+                                                        :cancel-requested-at cancelled-at)
+                                                 intent)]))
+                                    (:execution-intents ctx))
+                      fenced (cond-> (assoc ctx
+                                      :execution-cancel-generation generation
+                                      :execution-cancel-in-progress generation
+                                      :execution-intents intents)
+                               claim (assoc :runtime-claim claim))]
+                  (binding [store/*allow-execution-intent-update* true]
+                    (store/save-context! fenced))
+                  {:fenced fenced :generation generation})))))]
+    (if terminal
+      terminal
+      (let [_ (approval-server/cleanup! fenced)
+            process (stop-runtime-process! run-dir)
+            cancelled
+            (store/with-run-lock run-dir
+              (fn []
+                ;; Reload after exact process absence so no older writer can
+                ;; overwrite the terminal cancellation. save-context! rejects
+                ;; any process still carrying the previous generation.
+                (let [ctx (store/load-context run-dir)]
+                  (when-not (= generation (:execution-cancel-generation ctx))
+                    (throw (ex-info "Cancellation fence changed during stop"
+                                    {:code :runtime_cancel_fence_changed
+                                     :expected generation
+                                     :actual (:execution-cancel-generation ctx)})))
+                  (let [cancelled (-> ctx
+                                      (assoc :runtime-claim nil
+                                             :execution-cancel-in-progress nil)
+                                      (assoc-in [:run :status] "cancelled")
+                                      (assoc-in [:run :updated-at] (store/now)))]
+                    (sessions/orphan-active-bindings! cancelled)
+                    (store/event-once! cancelled {:event "run.cancelled"
+                                                  :event_id (str "cancel/" generation)
+                                                  :cancel_generation generation
+                                                  :pid (:pid process)
+                                                  :process_found (:process_found process)
+                                                  :owner_mismatch (:owner_mismatch process)
+                                                  :descendants (:descendants process)
+                                                  :descendants_enumerated (:descendants_enumerated process)
+                                                  :owned_processes (:owned_processes process)
+                                                  :owned_processes_enumerated (:owned_processes_enumerated process)
+                                                  :owned_processes_stopped (:owned_processes_stopped process)
+                                                  :stopped (:stopped process)})
+                    (store/save-context! cancelled)))))]
+        ;; A fragment's nested run is independent durable state and must not
+        ;; remain silently running after its owning parent is cancelled.
         (fragment/cancel-internal-runs! cancelled)
         cancelled))))
 
@@ -173,7 +222,8 @@
         executor-mode (when-let [executor (:executor opts)] (clojure.core/name executor))
         project-id (or (:project-id opts) "default")
         runtime-options (select-keys opts [:workspace-root :tesseraft-home :runs-root :workflow-roots :project-context])]
-    {:workflow {:name name
+    {:execution-cancel-generation 0
+     :workflow {:name name
                 :file (spec/workflow-file wf)
                 :version (str "sha256:" (store/sha256 content))
                 :defaults (:defaults wf {})}

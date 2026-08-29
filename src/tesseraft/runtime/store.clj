@@ -9,6 +9,9 @@
     [tesseraft.persistence.safe-write :as safe-write]
     [tesseraft.security.redaction :as redaction]))
 
+(def ^:dynamic *allow-runtime-claim-replacement* false)
+(def ^:dynamic *allow-execution-intent-update* false)
+
 (defn now [] (str (java.time.Instant/now)))
 
 (defn sha256 [s]
@@ -62,39 +65,24 @@
   (write-json! p (durable-data ctx data)))
 
 (defn with-run-lock
-  "Serialize a short run-directory mutation across runtime/control-plane
-  processes. The lock file is durable but contains no state; the authoritative
-  mutation records remain state.edn, events.jsonl, and the run artifacts."
+  "Serialize a short run-directory mutation with an OS-owned file lock.
+  Process death releases the lock; the durable lock file is never treated as
+  ownership and never removed based on age."
   [run-dir f]
-  (let [lock-path (.toPath (fs/file (fs/path run-dir ".runtime-mutation.lock")))
-        attributes (make-array java.nio.file.attribute.FileAttribute 0)
-        acquire!
-        (fn []
-          (loop [remaining 400]
-            (let [acquired? (try
-                              (java.nio.file.Files/createFile lock-path attributes)
-                              true
-                              (catch java.nio.file.FileAlreadyExistsException _ false))]
-              (if acquired?
-                true
-                (let [age-ms (try
-                               (- (System/currentTimeMillis)
-                                  (.toMillis (java.nio.file.Files/getLastModifiedTime lock-path (make-array java.nio.file.LinkOption 0))))
-                               (catch Throwable _ 0))]
-                  ;; A process can die between atomic create and cleanup. A
-                  ;; minute-old lock cannot belong to this millisecond-scale
-                  ;; mutation and is safe to reclaim.
-                  (when (> age-ms 60000)
-                    (try (java.nio.file.Files/deleteIfExists lock-path) (catch Throwable _ nil)))
-                  (when (zero? remaining)
-                    (throw (ex-info "Timed out waiting for the run mutation lock" {:run-dir (str run-dir)})))
-                  (Thread/sleep 25)
-                  (recur (dec remaining)))))))]
-    (acquire!)
-    (try
-      (f)
-      (finally
-        (java.nio.file.Files/deleteIfExists lock-path)))))
+  (let [path (fs/path run-dir ".runtime-mutation.lock")]
+    (fs/create-dirs (fs/parent path))
+    (with-open [file (java.io.RandomAccessFile. (str path) "rw")
+                channel (.getChannel file)]
+      (loop [remaining 400]
+        (if-let [lock (try (.tryLock channel) (catch Exception _ nil))]
+          ;; Closing the channel in the outer with-open releases this OS lock.
+          ;; Babashka intentionally does not expose FileLockImpl.release.
+          (f)
+          (do
+            (when (zero? remaining)
+              (throw (ex-info "Timed out waiting for the run mutation lock" {:run-dir (str run-dir)})))
+            (Thread/sleep 25)
+            (recur (dec remaining))))))))
 
 (defn write-runtime-text! [ctx p text]
   (write-text! p (durable-text ctx text)))
@@ -105,9 +93,54 @@
 (defn save-context! [ctx]
   ;; Resolver functions are live-process dependencies: use them to scrub the
   ;; durable value, but never serialize them into restartable run state.
-  (write-edn! (fs/path (get-in ctx [:run :dir]) "state.edn")
-              (durable-data ctx (assoc (dissoc ctx :credential-resolver) :record-version 2)))
-  ctx)
+  ;; Missing claim/fence data preserves current authority. A context carrying
+  ;; an older fence or a replaced owner is stale and must fail rather than
+  ;; overwrite cancellation or another execution.
+  (let [path (fs/path (get-in ctx [:run :dir]) "state.edn")
+        current (when (fs/exists? path) (read-edn path))
+        durable-claim (:runtime-claim current)
+        incoming-claim (:runtime-claim ctx)
+        durable-intents (:execution-intents current)
+        incoming-intents (:execution-intents ctx)
+        preserve-durable-intents? (and durable-intents
+                                        (not *allow-execution-intent-update*)
+                                        (not= durable-intents incoming-intents))
+        durable-generation (or (:execution-cancel-generation current) 0)
+        incoming-generation (or (:execution-cancel-generation ctx) durable-generation)
+        _ (when (and (contains? ctx :execution-cancel-generation)
+                     (< incoming-generation durable-generation))
+            (throw (ex-info "Runtime context carries an obsolete cancellation fence"
+                            {:code :runtime_cancel_fenced
+                             :context-generation incoming-generation
+                             :durable-generation durable-generation})))
+        _ (when (and incoming-claim (< (or (:cancel-generation incoming-claim) 0) durable-generation))
+            (throw (ex-info "Runtime context was invalidated by cancellation"
+                            {:code :runtime_cancel_fenced
+                             :claim-generation (:cancel-generation incoming-claim)
+                             :durable-generation durable-generation})))
+        _ (when (and incoming-claim durable-claim
+                     (not= (:execution-id incoming-claim) (:execution-id durable-claim))
+                     (not *allow-runtime-claim-replacement*))
+            (throw (ex-info "Runtime context no longer owns the durable claim"
+                            {:code :runtime_claim_lost
+                             :claim (:execution-id incoming-claim)
+                             :owner (:execution-id durable-claim)})))
+        preserved (cond-> (assoc ctx :execution-cancel-generation incoming-generation)
+                    (and (not (contains? ctx :runtime-claim)) durable-claim)
+                    (assoc :runtime-claim durable-claim)
+                    (or preserve-durable-intents?
+                        (and (not (contains? ctx :execution-intents)) durable-intents))
+                    (assoc :execution-intents durable-intents)
+                    (or preserve-durable-intents?
+                        (and (not (contains? ctx :active-execution-intent-id))
+                             (:active-execution-intent-id current)))
+                    (assoc :active-execution-intent-id (:active-execution-intent-id current))
+                    (and (not (contains? ctx :execution-cancel-in-progress))
+                         (:execution-cancel-in-progress current))
+                    (assoc :execution-cancel-in-progress (:execution-cancel-in-progress current)))]
+    (write-edn! path
+                (durable-data preserved (assoc (dissoc preserved :credential-resolver) :record-version 2)))
+    preserved))
 
 (defn load-context [run-dir]
   (let [ctx (read-edn (fs/path run-dir "state.edn"))
@@ -134,6 +167,13 @@
     (contains? event :attempt) (assoc :internal_attempt (:attempt event))
     (:fragment descriptor) (assoc :fragment (:fragment descriptor))))
 
+(defn- event-id-present? [ctx event-id]
+  (let [path (fs/path (get-in ctx [:run :dir]) "events.jsonl")]
+    (boolean
+      (when (fs/exists? path)
+        (some #(= event-id (:event_id (json/parse-string % true)))
+              (remove str/blank? (str/split-lines (slurp (str path)))))))))
+
 (defn event! [ctx event]
   ;; A fragment-internal ctx carries a data-only :event-mirror descriptor
   ;; (parent run dir, state, attempt, fragment name) set at creation and
@@ -148,6 +188,13 @@
       (append-jsonl! (fs/path (:parent-dir descriptor) "events.jsonl")
                      (mirrored-event descriptor scrubbed))))
   ctx)
+
+(defn event-once!
+  "Append an event with a stable event_id at most once. Malformed existing
+  event lines fail closed instead of allowing a duplicate proof record."
+  [ctx event]
+  (let [event-id (:event_id event)]
+    (if (and event-id (event-id-present? ctx event-id)) ctx (event! ctx event))))
 
 (defn ensure-run-dirs! [ctx]
   (doseq [d ["logs" "prompts/generated" "pi-sessions" "sessions" "attempts"]]

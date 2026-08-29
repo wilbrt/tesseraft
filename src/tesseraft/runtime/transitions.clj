@@ -25,8 +25,13 @@
       ctx)
     ctx))
 
-(defn apply-effect [ctx effect result]
-  (store/event! ctx {:event "effect.applied" :effect (name effect)})
+(defn apply-effect
+  ([ctx effect result] (apply-effect ctx effect result nil))
+  ([ctx effect result ordinal]
+   ((if (:finalization_id result) store/event-once! store/event!)
+    ctx (cond-> {:event "effect.applied" :effect (name effect)}
+          (:finalization_id result)
+          (assoc :event_id (str (:finalization_id result) "/effect/" ordinal))))
   (case effect
     :merge-issues (merge-issues! ctx result)
     :clear-issues (do (store/write-runtime-json! ctx (get-in ctx [:run :issues-file]) []) ctx)
@@ -35,10 +40,11 @@
     :fail-run (assoc-in ctx [:run :status] "failed")
     :set-context ctx
     :record-pr ctx
-    (throw (ex-info "Unknown effect" {:effect effect}))))
+    (throw (ex-info "Unknown effect" {:effect effect})))))
 
 (defn apply-effects [ctx effects result]
-  (reduce #(apply-effect %1 %2 result) ctx effects))
+  (reduce (fn [current [ordinal effect]] (apply-effect current effect result ordinal))
+          ctx (map-indexed vector effects)))
 
 (defn carry-result-context [ctx result]
   (cond-> ctx
@@ -53,17 +59,21 @@
       (update-in [:run :attempt] inc)
       (assoc-in [:run :updated-at] (store/now))))
 
-(defn finish-if-terminal [wf ctx]
-  (let [state-id (get-in ctx [:run :state])
-        node (spec/node wf state-id)]
-    (if (= :terminal (:type node))
-      (do
-        (sessions/close-bindings! ctx)
-        (store/event! ctx {:event "run.finished" :state (name state-id)})
-        (-> ctx
-            (assoc-in [:run :status] "done")
-            (assoc-in [:run :updated-at] (store/now))))
-      ctx)))
+(defn finish-if-terminal
+  ([wf ctx] (finish-if-terminal wf ctx nil))
+  ([wf ctx finalization-id]
+   (let [state-id (get-in ctx [:run :state])
+         node (spec/node wf state-id)]
+     (if (= :terminal (:type node))
+       (do
+         (sessions/close-bindings! ctx)
+         ((if finalization-id store/event-once! store/event!)
+          ctx (cond-> {:event "run.finished" :state (name state-id)}
+                finalization-id (assoc :event_id (str finalization-id "/run-finished"))))
+         (-> ctx
+             (assoc-in [:run :status] "done")
+             (assoc-in [:run :updated-at] (store/now))))
+       ctx))))
 
 (defn max-rounds-exceeded? [wf ctx]
   (let [maximum (get-in wf [:defaults :max-rounds])

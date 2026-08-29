@@ -6,7 +6,9 @@
     [tesseraft.lint.core :as lint]
     [tesseraft.spec :as spec]
     [tesseraft.runtime.approvals :as approvals]
+    [tesseraft.runtime.approval-server :as approval-server]
     [tesseraft.runtime.fragment :as fragment]
+    [tesseraft.runtime.identity :as identity]
     [tesseraft.runtime.lifecycle :as lifecycle]
     [tesseraft.runtime.liveness :as liveness]
     [tesseraft.runtime.sessions :as sessions]
@@ -28,6 +30,7 @@
 (def runtime-process-path lifecycle/runtime-process-path)
 (def register-runtime-process! lifecycle/register-runtime-process!)
 (def unregister-runtime-process! lifecycle/unregister-runtime-process!)
+(def assert-runtime-active! lifecycle/assert-runtime-active!)
 (def run-owner-env lifecycle/run-owner-env)
 (def run-tracked-process! lifecycle/run-tracked-process!)
 (def stop-owned-processes! lifecycle/stop-owned-processes!)
@@ -267,7 +270,17 @@
             (fragment/finish! ctx state-id attempt node pkg inclusion internal-wf internal-ctx)))))))
 
 (defn execute-node! [wf ctx state-id node]
-  (store/event! ctx {:event "node.started" :state (name state-id) :attempt (get-in ctx [:run :attempt])})
+  ;; Revalidate again at the last boundary before node.started and any
+  ;; executor/process/handler effect. A cancellation fence or replacement
+  ;; claim written after step dispatch therefore fails closed.
+  (assert-runtime-active! ctx)
+  (let [claim (:runtime-claim ctx)]
+    (store/event! ctx (cond-> {:event "node.started" :state (name state-id)
+                               :attempt (get-in ctx [:run :attempt])}
+                        claim (assoc :execution_id (:execution-id claim)
+                                     :intent_id (:intent-id claim)
+                                     :intent_generation (:intent-generation claim)
+                                     :cancel_generation (:cancel-generation claim)))))
   (try
     (let [result (case (:type node)
                    :agent (if (sessions/resumable? node)
@@ -343,11 +356,16 @@
 (def orphan-run! liveness/orphan-run!)
 (def approval-request-path approvals/approval-request-path)
 (def approval-decision-path approvals/approval-decision-path)
+(def approval-finalization-path approvals/approval-finalization-path)
+(def load-approval-finalization approvals/load-approval-finalization)
 (def load-approval-decision approvals/load-approval-decision)
 (def render-artifact approvals/render-artifact)
 (def approval-presentation approvals/approval-presentation)
 (def step-approval! approvals/step-approval!)
 (defn step! [wf ctx]
+  ;; Claimed execution crosses a compare-exact barrier before any state kind,
+  ;; including approval adapter launch and deterministic transition effects.
+  (assert-runtime-active! ctx)
   (if (terminal-run? ctx)
     ctx
     (let [state-id (get-in ctx [:run :state])
@@ -411,9 +429,17 @@
            state-id (get-in ctx [:run :state])
            attempt (get-in ctx [:run :attempt])
            node (spec/node wf state-id)
-           expected-id (str (name state-id) "-" attempt)
+           expected-id (identity/approval-id state-id attempt)
            request-path (approval-request-path ctx state-id attempt)
-           request (when (fs/exists? request-path) (store/read-json request-path))
+           focused? (some? (:review-server node))
+           loaded-request (when (and (not focused?) (fs/exists? request-path))
+                            (store/read-json request-path))
+           focused-validation (when (and focused?
+                                         (= "blocked" (get-in ctx [:run :status]))
+                                         (= expected-id approval-id))
+                                (approval-server/validate-focused-request ctx expected-id))
+           request (or (:request focused-validation) loaded-request)
+           validated-diff (:diff focused-validation)
            decision (some-> decision str)
            message (some-> message str)
            annotations (or annotations [])
@@ -443,8 +469,9 @@
                      (unsafe-annotation-path? (:artifact_path annotation)) "annotation artifact_path must be a safe relative path"
                      (not (contains? artifact-paths (str (:artifact_path annotation)))) "annotation artifact_path must name a declared approval artifact"
                      (not (map? (:anchor annotation))) "annotation anchor is required"
-                     :else nil))
-                 annotations)]
+                     :else (approval-server/invalid-annotation ctx request annotation validated-diff)))
+                 annotations)
+           payload-bytes (count (.getBytes (json/generate-string {:decision decision :message message :annotations annotations}) "UTF-8"))]
        (cond
        (or (nil? node) (not= :approval (:type node)))
        {:status 422 :error {:code "not_approval"
@@ -459,6 +486,10 @@
                             :message (str "Approval id " approval-id
                                           " does not match the current pending approval " expected-id)
                             :details {:expected expected-id :provided approval-id}}}
+
+       (and focused? (not (:valid focused-validation)))
+       {:status 409 :error {:code "approval_authority_invalid"
+                            :message "The durable focused approval request or evidence is unavailable or invalid"}}
 
        (fs/exists? (approval-decision-path ctx state-id attempt))
        {:status 409 :error {:code "conflict"
@@ -477,6 +508,10 @@
        {:status 422 :error {:code "message_too_long"
                             :message "Decision message is too long"}}
 
+       (> payload-bytes 65536)
+       {:status 413 :error {:code "payload_too_large"
+                            :message "Approval decision payload exceeds 64 KiB"}}
+
        (> (count annotations) 200)
        {:status 422 :error {:code "too_many_annotations"
                             :message "A decision may contain at most 200 annotations"}}
@@ -492,24 +527,58 @@
                           :email (str (:email author-overrides))})
                        (get-in ctx [:run :git-user])
                        {:name "unknown" :email "unknown@tesseraft.local"})
-             decision-rec {:version 1
-                           :approval_id approval-id
-                           :run_id (get-in ctx [:run :id])
-                           :state (name state-id)
-                           :attempt attempt
-                           :decision decision
-                           :message message
-                           ;; Preserve the v1 reader field while callers move
-                           ;; to the clearer `message` name.
-                           :summary message
-                           :annotations annotations
-                           :author author
-                           :decided_at (store/now)}
-             dec-path (approval-decision-path ctx state-id attempt)]
-         (store/write-runtime-json! ctx dec-path decision-rec)
-         ;; step! now sees the decision record and advances the run.
-         {:run (:run (step! wf ctx))
-          :last-approval (:last-approval (store/load-context run-dir))})))))))
+             selected (some #(when (= decision (str (get-in % [:when :decision]))) %) (spec/transitions node))
+             selection {:decision decision :message message :annotations annotations :author author}
+             selection-hash (store/sha256 (json/generate-string selection))
+             finalization-id (str approval-id "/" (subs selection-hash 0 16))
+             existing-finalization (approvals/load-approval-finalization ctx approval-id)]
+         (if (and existing-finalization (not= selection-hash (:selection_hash existing-finalization)))
+           {:status 409 :error {:code "finalization_conflict"
+                                :message "A different approval decision is already being finalized"}}
+           (let [feedback-path (when (and focused? (= "reject" decision))
+                                 (str "approval-feedback/" approval-id ".json"))
+                 plan (or existing-finalization
+                          {:version 1 :finalization_id finalization-id :approval_id approval-id
+                           :run_id (get-in ctx [:run :id]) :state (identity/state-string state-id) :attempt attempt
+                           :selection selection :selection_hash selection-hash
+                           :target_state (identity/state-string (:next selected))
+                           :effects (mapv name (:effects selected []))
+                           :decision_status "prepared" :prepared_at (store/now)})
+                 _ (when-not existing-finalization
+                     (approvals/write-approval-finalization! ctx approval-id plan))
+                 _ (when feedback-path
+                     (store/write-runtime-json!
+                       ctx (fs/path run-dir feedback-path)
+                       [{:id (str "approval/" finalization-id)
+                         :source "human-approval"
+                         :severity "major"
+                         :title (str "Changes requested at " approval-id)
+                         :details (str message
+                                       (when (seq annotations)
+                                         (str "\n\nLine annotations:\n"
+                                              (str/join "\n" (map #(str "- " (get-in % [:anchor :file]) ":"
+                                                                            (get-in % [:anchor :line]) " — " (:body %)) annotations)))))
+                         :acceptance_criteria "Address the overall review message and every line annotation before requesting approval again."}]))
+                 decision-rec (cond-> {:version 1
+                                       :approval_id approval-id
+                                       :run_id (get-in ctx [:run :id])
+                                       :state (identity/state-string state-id)
+                                       :attempt attempt
+                                       :decision decision
+                                       :message message
+                                       :summary message
+                                       :annotations annotations
+                                       :author author
+                                       :finalization_id finalization-id
+                                       :selection_hash selection-hash
+                                       :decided_at (store/now)}
+                                feedback-path (assoc :feedback_path feedback-path))
+                 dec-path (approval-decision-path ctx state-id attempt)]
+             (store/write-runtime-json! ctx dec-path decision-rec)
+             ;; A prepared plan plus immutable decision lets resume repair a
+             ;; crash at this exact boundary without accepting another choice.
+             {:run (:run (step! wf ctx))
+              :last-approval (:last-approval (store/load-context run-dir))})))))))))
 
 (defn assert-lint-ok! [workflow-file]
   (let [result (lint/lint-file workflow-file)]
@@ -533,10 +602,19 @@
     (when (> n max-steps) (throw (ex-info "Exceeded max steps" {:max-steps max-steps})))
     (let [status (get-in ctx [:run :status])]
       (cond
-        ;; A run is "blocked" when it parked at an :approval node awaiting a
-        ;; human decision. Stop advancing; the run is resumed by decide!
-        ;; (which writes a decision record and calls step!), not by looping.
-        (or (contains? terminal-run-statuses status) (= "blocked" status)) ctx
+        (contains? terminal-run-statuses status) ctx
+
+        ;; A public decision may have been written immediately before process
+        ;; failure. Its prepared finalization plan reserves the choice; resume
+        ;; deterministically completes that approval instead of stranding the
+        ;; run or accepting a second decision.
+        (= "blocked" status)
+        (let [state-id (get-in ctx [:run :state])
+              attempt (get-in ctx [:run :attempt])]
+          (if (load-approval-decision ctx state-id attempt)
+            (recur (store/save-context! (step! wf ctx)) (inc n))
+            (approval-server/reconcile-blocked! ctx)))
+
         ;; Pre-check: stop cleanly (park) before starting a node we cannot let
         ;; finish. max-steps is the number of steps we are allowed to start.
         ;; n is the number of steps already started. If (= n max-steps) the

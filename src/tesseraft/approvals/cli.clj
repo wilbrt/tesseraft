@@ -3,9 +3,7 @@
             [clojure.string :as str]
             [tesseraft.control-plane.core :as control-plane]
             [tesseraft.control-plane.operations :as operations]
-            [tesseraft.runtime.core :as runtime]
-            [tesseraft.runtime.store :as store]
-            [tesseraft.spec :as spec]))
+            [tesseraft.runtime.process :as runtime-process]))
 
 (defn usage! []
   (binding [*out* *err*]
@@ -73,13 +71,9 @@
     (if (:error resolved)
       resolved
       (let [run-dir (str (:run-dir resolved))
-            pid (runtime/register-runtime-process! run-dir)]
-        (try
-          (let [ctx (store/load-context run-dir)
-                wf (spec/read-workflow (get-in ctx [:workflow :file]))]
-            {:run (:run (runtime/run-until-done! wf ctx (:max-steps opts)))})
-          (finally
-            (runtime/unregister-runtime-process! run-dir pid)))))))
+            result (runtime-process/launch-intent! run-dir "run.resume"
+                                                   {:max_steps (:max-steps opts)})]
+        {:run (get-in result [:result :run])}))))
 
 (defn decide! [opts run-id approval-id decision message annotations resume?]
   (let [request {:operation "run.decide"

@@ -107,6 +107,20 @@ Resume with a bounded number of steps:
   --format json
 ```
 
+Every execution command is a launcher, not the workflow-state writer. Under
+the run lock it writes a versioned `execution-intents` entry in `state.edn`,
+leases the exact generation with its PID/start fingerprint and spawn nonce,
+then starts a minimal bootstrap child. The child must atomically publish its
+own exact claim before loading the workflow. Immediately before the first node
+or external effect it crosses the intent from `claimed` to `executing` and
+emits `execution.intent.consumed`; clean release records `finished`. Competing
+live launchers/owners are rejected, expired or dead pre-step generations are
+reissued, and cancellation advances the generation fence while abandoning or
+cancel-requesting active intents. A death after `node.started` follows the
+existing fail-closed orphan policy rather than replaying an ambiguous effect.
+The same gateway serves CLI, Web, structured apply, retry, approval CLI, and
+autonomous focused-approval handoff execution.
+
 Review every run currently waiting at an approval gate with the interactive
 approval inbox:
 
@@ -172,8 +186,9 @@ Inspect current state with:
 Useful run files and directories include:
 
 - `state.edn` — current run context, state, status, round, attempt, workflow
-  file, and inputs. External/runtime failures mark the run `failed` without
-  advancing to a declared transition.
+  file, inputs, versioned execution intents, and the exact active runtime
+  claim. External/runtime failures mark the run `failed` without advancing to
+  a declared transition.
 - `events.jsonl` — run, node, transition, and effect events. A started node is
   closed by `node.finished` for declared workflow outcomes or `node.failed` for
   external/runtime failures.
@@ -322,8 +337,9 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 `retry` will:
 
 - Refuse unless the run is `"failed"` or `"cancelled"`.
-- Refuse if a live process still owns the run (`runtime-process.json` with a
-  live pid). Cancel or wait for that process first.
+- Refuse if `state.edn` carries an exact live runtime claim (execution ID plus
+  PID/start fingerprint). `runtime-process.json` v3 is only a derived
+  compatibility mirror. Cancel or wait for the exact owner first.
 - Re-hash the workflow file and refuse if it has changed since the run was
   pinned, unless `--repin` is given. `--repin` records the old and new hashes
   in a `run.recovery` audit event and proceeds.
@@ -345,6 +361,47 @@ refuse to drive it again. Use `run retry` to continue the run's durable lineage:
 | `run.max-rounds-exceeded` | The workflow is not converging within the configured round budget. | Retry only after changing the approach (workflow, inputs, or problem framing). Without a change, the run will re-fail immediately. |
 | `run.cancelled` | Operator cancelled the run. | Safe to retry. Owned processes were reaped at cancel time. |
 | Status `"running"` with liveness `stale` or `orphaned` | The runner process died but the run was never marked terminal. | Run `run cancel` first to mark the run and nested fragment runs cancelled, then `run retry`. |
+
+### Runtime execution ownership
+
+Every CLI, control-plane, Web, retry, and approval-resume execution path first
+takes the OS run lock and writes a versioned `requested` execution intent in
+`state.edn`. The launcher leases that immutable operation/options/expected tuple
+as `launching`, recording its PID/start fingerprint, spawn nonce, deadline, and
+the current cancellation generation before any child exists. A minimal bootstrap
+child must then claim that exact intent generation and atomically publish its own
+PID/start `:runtime-claim` before loading workflow context. A verified different
+live launcher or owner rejects the contender; a proven-dead pre-step generation
+may be reissued monotonically.
+
+Immediately before the first workflow step, `node.started`, or an external
+effect, the child compare-exactly validates intent, claim, expected run tuple,
+and cancellation fence, then crosses `claimed → executing` and emits the stable
+`execution.intent.consumed` receipt. Exact release records `finished` and clears
+only the matching claim. `runtime-process.json` v3 mirrors child/process metadata
+for compatibility and cancellation, but never grants execution authority.
+
+Cancellation first advances `:execution-cancel-generation` and records
+`:execution-cancel-in-progress` under the run lock. Requested or launching
+intents become `abandoned`; claimed or executing intents and the exact runtime
+claim become `cancel-requested`. Tesseraft then fingerprint-stops the matching
+owner and commits terminal state. Older contexts, delayed children, replaced
+owners, and reused PIDs cannot cross the fence or overwrite newer receipts. A
+death after `node.started` follows fail-closed orphan recovery rather than
+replaying an ambiguous effect.
+
+Focused approval cleanup uses a separate durable drain-generation claim. Two
+initial detached candidates compete for one generation, and the bounded
+`approval.adapter.reconcile` operation can claim a later generation after both
+candidates are exactly absent. Lifecycle and generation receipts are bound into
+the approval finalization record. Pending approvals relaunch an endpoint after
+exact cleanup. For a committed nonterminal decision, the same lifecycle-complete
+run-lock transaction creates one deterministic `:approval-resume` execution
+intent; the supervising or reconciling operation then leases it through the
+shared launcher, and its bootstrap child claims it before destination execution.
+No destination step runs before focused lifecycle completion. External
+reconciliation remains explicit and idempotent, and may safely skip a pass while
+another runtime still reports an exact worker live.
 
 ### Guarantees and caveats
 
