@@ -117,8 +117,10 @@ events are authority. The listener and browser are transient adapters.
 - Tracked textual changes against `HEAD` only. Untracked, unborn, binary,
   sparse/conflicted, rename-specific, and arbitrary-range review are not
   supported.
-- Review is rejected when autocrlf, attributes, or custom Git conversion
-  filters are detected. A conversion-free review worktree is required.
+- Review is rejected when autocrlf, core.eol, or any effective Git attributes
+  source is detected. Configured conversion drivers without attributes are
+  inert and accepted; the fixed plumbing and direct worktree reads never invoke
+  them. A conversion-free review worktree is required.
 - The endpoint is local-only and single-reviewer. There is no remote sharing,
   TLS, authored port, or long-lived service.
 - Diff size defaults to 2 MiB and may be authored from 1 byte through 10 MiB.

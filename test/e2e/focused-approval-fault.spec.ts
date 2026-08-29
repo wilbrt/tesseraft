@@ -78,6 +78,10 @@ test('browser abort plus candidate and adapter SIGKILL converges through externa
     await execFile('git', ['init', '-q'], { cwd: gitDir });
     await execFile('git', ['config', 'user.name', 'Focused Browser'], { cwd: gitDir });
     await execFile('git', ['config', 'user.email', 'browser@example.test'], { cwd: gitDir });
+    // Hosted runners commonly define conversion drivers such as Git LFS.
+    // Without an attributes source this driver is inert and must not prevent a
+    // direct, helper-free snapshot.
+    await execFile('git', ['config', 'filter.hosted-runner.clean', 'git-lfs clean -- %f'], { cwd: gitDir });
     await fs.writeFile(path.join(gitDir, 'review.txt'), 'before\n');
     await execFile('git', ['add', 'review.txt'], { cwd: gitDir });
     await execFile('git', ['commit', '-qm', 'base'], { cwd: gitDir });

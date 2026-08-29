@@ -262,8 +262,13 @@ def index_entries(repo: str) -> dict[str, tuple[str, str]]:
 def assert_conversion_free(repo: str, head: dict[str, tuple[str, str]], index: dict[str, tuple[str, str]]) -> None:
     autocrlf = git(repo, "config", "--get", "core.autocrlf", allow_one=True).decode("utf-8", "strict").strip().lower()
     names = git(repo, "config", "--name-only", "--get-regexp",
-                r"^(core\.eol|core\.attributesfile|filter\..*\.(clean|smudge|process|required))$",
+                r"^(core\.eol|core\.attributesfile)$",
                 allow_one=True).decode("utf-8", "strict").strip()
+    # A configured conversion driver is inert unless attributes select it. We
+    # reject every repository, worktree, info, global, and system attributes
+    # source below, so rejecting unreferenced drivers would only make the
+    # snapshot depend on unrelated host configuration (for example Git LFS on
+    # a CI runner). Fixed plumbing and direct file reads never invoke drivers.
     if (autocrlf and autocrlf != "false") or names:
         fail("unsupported_git_conversion", "Git-diff review requires a conversion-free worktree")
     if any(path == ".gitattributes" or path.endswith("/.gitattributes") for path in set(head) | set(index)):
