@@ -36,7 +36,7 @@ jobs:
           echo "python=$(awk '$1 == "python" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Babashka
-        uses: DeLaGuardo/setup-clojure@13.4
+        uses: DeLaGuardo/setup-clojure@13.5
         with:
           bb: ${{ steps.toolchain.outputs.bb }}
 
